@@ -1,8 +1,8 @@
 /**
- * half-duplex-app.js — Half-Duplex Audio page entry
+ * half-duplex-omni-app.js — Half-Duplex Omni page entry
  *
- * Mic audio → WebSocket → Server-side VAD → Model inference → Audio response
- * Uses duplex-shared.css design language.
+ * Audio + Camera → WebSocket → Server-side VAD → Model inference (audio+frames) → Audio response
+ * Based on half-duplex-app.js with camera frame capture additions.
  */
 
 import { AudioDeviceSelector } from '../lib/audio-device-selector.js';
@@ -13,7 +13,7 @@ const SAMPLE_RATE = 16000;
 const SAMPLE_RATE_OUT = 24000;
 const CHUNK_DURATION_S = 0.5;
 const CHUNK_SIZE = SAMPLE_RATE * CHUNK_DURATION_S;
-const STORAGE_KEY = 'half_duplex_settings';
+const STORAGE_KEY = 'half_duplex_omni_settings';
 
 // DOM refs
 const btnStart = document.getElementById('btnStart');
@@ -24,6 +24,7 @@ const lampTimer = document.getElementById('lampTimer');
 const waveformOverlay = document.getElementById('waveformOverlay');
 const waveformPlaceholder = document.getElementById('waveformPlaceholder');
 const waveformCanvas = document.getElementById('waveformCanvas');
+const videoBorderOverlay = document.getElementById('videoBorderOverlay');
 const chatLog = document.getElementById('chatLog');
 const chatEmpty = document.getElementById('chatEmpty');
 const chatSessionInfo = document.getElementById('chatSessionInfo');
@@ -32,6 +33,11 @@ const stateValue = document.getElementById('stateValue');
 const turnValue = document.getElementById('turnValue');
 const remainingValue = document.getElementById('remainingValue');
 const queueValue = document.getElementById('queueValue');
+const cameraPreview = document.getElementById('cameraPreview');
+const videoPlaceholder = document.getElementById('videoPlaceholder');
+const camFlipBtn = document.getElementById('camFlipBtn');
+const mirrorBtn = document.getElementById('mirrorBtn');
+const fullscreenBtn = document.getElementById('fullscreenBtn');
 
 // State
 let ws = null;
@@ -47,11 +53,19 @@ let aiSpeaking = false;
 let waveformRunning = false;
 let turnIndex = 0;
 
+// Camera state
+let cameraStream = null;
+let frameCanvas = null;
+let frameCtx = null;
+let cameraReady = false;
+let useFrontCamera = true;
+let mirrorFlip = false;
+
 // Recording
 let sessionRecorder = null;
 let lastRecordingBlob = null;
 const _saveShareUI = typeof SaveShareUI !== 'undefined'
-    ? new SaveShareUI({ containerId: 'save-share-container', appType: 'half_duplex_audio' })
+    ? new SaveShareUI({ containerId: 'save-share-container', appType: 'half_duplex_omni' })
     : null;
 
 // ============================================================
@@ -68,6 +82,8 @@ const DEFAULTS = {
     genTemperature: 0.7,
     ttsEnabled: true,
     sessionTimeout: 300,
+    visionFrameInterval: 1.0,
+    visionMaxSlices: 1,
 };
 
 function saveSettings() {
@@ -83,21 +99,29 @@ function saveSettings() {
 }
 
 function loadSettings() {
-    let data;
-    try { data = JSON.parse(localStorage.getItem(STORAGE_KEY)); } catch (_) { /* empty */ }
-    const vals = { ...DEFAULTS, ...(data || {}) };
-    for (const [key, val] of Object.entries(vals)) {
+    try {
+        const raw = localStorage.getItem(STORAGE_KEY);
+        if (!raw) return;
+        const data = JSON.parse(raw);
+        for (const [key, val] of Object.entries(data)) {
+            const el = document.getElementById(key);
+            if (!el) continue;
+            if (el.type === 'checkbox') el.checked = val;
+            else el.value = val;
+        }
+    } catch { /* ignore */ }
+    updateRangeDisplay();
+}
+
+function resetSettings() {
+    for (const [key, val] of Object.entries(DEFAULTS)) {
         const el = document.getElementById(key);
         if (!el) continue;
         if (el.type === 'checkbox') el.checked = val;
         else el.value = val;
     }
-    updateRangeDisplay();
-}
-
-function resetSettings() {
     localStorage.removeItem(STORAGE_KEY);
-    loadSettings();
+    updateRangeDisplay();
 }
 
 function getSettings() {
@@ -115,6 +139,10 @@ function getSettings() {
         },
         tts: {
             enabled: document.getElementById('ttsEnabled').checked,
+        },
+        vision: {
+            frame_interval_s: parseFloat(document.getElementById('visionFrameInterval').value),
+            max_slice_nums: parseInt(document.getElementById('visionMaxSlices').value),
         },
         session: {
             timeout_s: parseInt(document.getElementById('sessionTimeout').value),
@@ -138,7 +166,7 @@ document.querySelectorAll('.panel-config input, .panel-sysconfig textarea').forE
 
 btnResetSettings.addEventListener('click', () => {
     if (confirm('Reset all settings to defaults?')) {
-        localStorage.removeItem('half_duplex_preset');
+        localStorage.removeItem('half_duplex_omni_preset');
         deviceSelector.clearSaved();
         resetSettings();
         deviceSelector.enumerate();
@@ -153,14 +181,36 @@ const deviceSelector = new AudioDeviceSelector({
     micSelectEl: document.getElementById('micDevice'),
     speakerSelectEl: document.getElementById('speakerDevice'),
     refreshBtnEl: document.getElementById('btnRefreshDevices'),
-    storagePrefix: 'half_duplex',
+    storagePrefix: 'half_duplex_omni',
 });
 
 // ============================================================
-// System Content Editor (same schema as turn-based)
+// Camera device selector
 // ============================================================
 
-/** system_content 列表，与 turnbased 使用相同 schema */
+const cameraSelect = document.getElementById('cameraDevice');
+async function enumerateCameras() {
+    try {
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const cameras = devices.filter(d => d.kind === 'videoinput');
+        cameraSelect.innerHTML = '';
+        cameras.forEach((cam, i) => {
+            const opt = document.createElement('option');
+            opt.value = cam.deviceId;
+            opt.textContent = cam.label || `Camera ${i + 1}`;
+            cameraSelect.appendChild(opt);
+        });
+    } catch (e) {
+        console.warn('Failed to enumerate cameras:', e);
+    }
+}
+
+document.getElementById('btnRefreshDevices')?.addEventListener('click', enumerateCameras);
+
+// ============================================================
+// System Content Editor
+// ============================================================
+
 let _systemContentList = [
     { type: 'text', text: '模仿音频样本的音色并生成新的内容。' },
     { type: 'audio', data: null, name: '', duration: 0 },
@@ -179,7 +229,6 @@ if (typeof SystemContentEditor !== 'undefined') {
     _sceHdx.setItems(_systemContentList);
 }
 
-/** 加载默认参考音频并填充到 system_content 中无数据的 audio 项 */
 async function _fetchDefaultRefAudio() {
     try {
         const resp = await fetch('/api/default_ref_audio');
@@ -194,46 +243,65 @@ async function _fetchDefaultRefAudio() {
     } catch (e) { console.warn('Failed to load default ref audio:', e); }
 }
 
-/** 应用 preset 到 SystemContentEditor（与 turnbased 相同逻辑） */
 function _applyPreset(preset, { audioLoaded } = {}) {
     if (!preset || !preset.system_content) return;
-    const items = preset.system_content.map(item => {
-        if (item.type === 'audio') {
-            return { type: 'audio', data: (audioLoaded ? item.data : null) || null, name: item.name || '', duration: item.duration || 0 };
+    _systemContentList = JSON.parse(JSON.stringify(preset.system_content));
+    if (_sceHdx) _sceHdx.setItems(_systemContentList);
+
+    if (preset.config) {
+        const c = preset.config;
+        if (c.vad) {
+            if (c.vad.threshold != null) document.getElementById('vadThreshold').value = c.vad.threshold;
+            if (c.vad.min_silence_duration_ms != null) document.getElementById('vadMinSilence').value = c.vad.min_silence_duration_ms;
         }
-        return { type: 'text', text: item.text || '' };
-    });
-    _systemContentList = items;
-    if (_sceHdx) _sceHdx.setItems(items);
-    saveSettings();
+        if (c.generation) {
+            if (c.generation.max_new_tokens != null) document.getElementById('genMaxTokens').value = c.generation.max_new_tokens;
+            if (c.generation.length_penalty != null) document.getElementById('genLengthPenalty').value = c.generation.length_penalty;
+            if (c.generation.temperature != null) document.getElementById('genTemperature').value = c.generation.temperature;
+        }
+        updateRangeDisplay();
+        saveSettings();
+    }
 }
 
-const _hdxPreset = typeof PresetSelector !== 'undefined'
-    ? new PresetSelector({
-        container: document.getElementById('presetSelectorHdx'),
-        page: 'half_duplex_audio',
-        detailsEl: document.getElementById('hdxSysPromptDetails'),
-        onSelect: (preset, opts) => _applyPreset(preset, opts),
-        storageKey: 'half_duplex_preset',
-    })
-    : null;
+let _hdxPreset = null;
+if (typeof PresetSelector !== 'undefined') {
+    _hdxPreset = new PresetSelector({
+        containerId: 'presetSelectorHdx',
+        appType: 'half_duplex_audio',
+        storageKey: 'half_duplex_omni_preset',
+        onApply: (preset, opts) => _applyPreset(preset, opts),
+    });
+}
 
 // ============================================================
-// Waveform visualization
+// Idle waveform placeholder
 // ============================================================
 
 function drawIdleWaveform() {
     const canvas = waveformCanvas;
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
-    canvas.width = canvas.offsetWidth * (window.devicePixelRatio || 1);
-    canvas.height = canvas.offsetHeight * (window.devicePixelRatio || 1);
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = canvas.offsetWidth * dpr;
+    canvas.height = canvas.offsetHeight * dpr;
+    const w = canvas.width, h = canvas.height;
     ctx.fillStyle = '#111';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillRect(0, 0, w, h);
+    ctx.strokeStyle = '#333';
+    ctx.lineWidth = 1 * dpr;
+    ctx.beginPath();
+    ctx.moveTo(0, h / 2);
+    ctx.lineTo(w, h / 2);
+    ctx.stroke();
 }
 
+// ============================================================
+// Waveform animation
+// ============================================================
+
 function startWaveformLoop() {
-    if (waveformRunning || !analyserNode) return;
+    if (!analyserNode) return;
     waveformRunning = true;
     const canvas = waveformCanvas;
     const ctx = canvas.getContext('2d');
@@ -276,7 +344,107 @@ function stopWaveformLoop() {
 }
 
 // ============================================================
-// Audio capture (AudioWorklet, 16kHz)
+// Camera capture
+// ============================================================
+
+async function startCamera() {
+    if (cameraStream) return;
+    try {
+        const facing = useFrontCamera ? 'user' : 'environment';
+        const constraints = {
+            audio: false,
+            video: { facingMode: facing },
+        };
+        cameraStream = await navigator.mediaDevices.getUserMedia(constraints);
+        cameraPreview.srcObject = cameraStream;
+        cameraPreview.style.display = 'block';
+        _updateMirrorTransform();
+        videoPlaceholder.style.display = 'none';
+        cameraReady = true;
+
+        camFlipBtn.classList.add('visible');
+        mirrorBtn.classList.add('visible');
+        mirrorBtn.classList.toggle('active', mirrorFlip);
+        fullscreenBtn.classList.add('visible');
+
+        if (!frameCanvas) {
+            frameCanvas = document.createElement('canvas');
+            frameCtx = frameCanvas.getContext('2d');
+        }
+    } catch (e) {
+        console.warn('Camera not available:', e);
+        cameraReady = false;
+        videoPlaceholder.style.display = 'flex';
+        camFlipBtn.classList.remove('visible');
+        mirrorBtn.classList.remove('visible');
+        fullscreenBtn.classList.remove('visible');
+    }
+}
+
+function stopCamera() {
+    if (cameraStream) {
+        cameraStream.getTracks().forEach(t => t.stop());
+        cameraStream = null;
+    }
+    cameraReady = false;
+    cameraPreview.srcObject = null;
+    cameraPreview.style.display = 'none';
+    videoPlaceholder.style.display = 'flex';
+    camFlipBtn.classList.remove('visible');
+    mirrorBtn.classList.remove('visible');
+    fullscreenBtn.classList.remove('visible');
+}
+
+async function flipCamera() {
+    useFrontCamera = !useFrontCamera;
+    if (cameraStream) {
+        cameraStream.getTracks().forEach(t => t.stop());
+        cameraStream = null;
+        cameraReady = false;
+    }
+    await startCamera();
+}
+
+function toggleMirror() {
+    mirrorFlip = !mirrorFlip;
+    mirrorBtn.classList.toggle('active', mirrorFlip);
+    _updateMirrorTransform();
+}
+
+function _updateMirrorTransform() {
+    const shouldFlip = useFrontCamera !== mirrorFlip;
+    cameraPreview.style.transform = shouldFlip ? 'scaleX(-1)' : 'none';
+}
+
+function toggleFullscreen() {
+    const container = document.getElementById('videoContainer');
+    if (!document.fullscreenElement) {
+        container.requestFullscreen?.() || container.webkitRequestFullscreen?.();
+    } else {
+        document.exitFullscreen?.() || document.webkitExitFullscreen?.();
+    }
+}
+
+function captureFrameBase64() {
+    if (!cameraReady || !frameCanvas) return null;
+    const v = cameraPreview;
+    if (!v.videoWidth) return null;
+    const cw = v.videoWidth;
+    const ch = v.videoHeight;
+    frameCanvas.width = cw;
+    frameCanvas.height = ch;
+    // 前置摄像头：翻转回正（视频预览是镜像的，但发给模型的帧应为原始方向）
+    if (useFrontCamera) {
+        frameCtx.translate(cw, 0);
+        frameCtx.scale(-1, 1);
+    }
+    frameCtx.drawImage(v, 0, 0, cw, ch);
+    frameCtx.setTransform(1, 0, 0, 1, 0, 0);
+    return frameCanvas.toDataURL('image/jpeg', 0.7).split(',')[1];
+}
+
+// ============================================================
+// Audio capture (AudioWorklet, 16kHz) + frame attachment
 // ============================================================
 
 async function startCapture() {
@@ -306,8 +474,12 @@ async function startCapture() {
             const float32 = e.data.audio;
             if (sessionRecorder) sessionRecorder.pushLeft(float32);
             if (ws && ws.readyState === WebSocket.OPEN && !aiSpeaking) {
-                const b64 = float32ToBase64(float32);
-                ws.send(JSON.stringify({ type: 'audio_chunk', audio_base64: b64 }));
+                const msg = { type: 'audio_chunk', audio_base64: float32ToBase64(float32) };
+                const frameB64 = captureFrameBase64();
+                if (frameB64) {
+                    msg.frame_base64_list = [frameB64];
+                }
+                ws.send(JSON.stringify(msg));
             }
         }
     };
@@ -339,7 +511,7 @@ function float32ToBase64(float32Array) {
 }
 
 // ============================================================
-// AI speaking → listening resume (wait for audio to finish)
+// AI speaking → listening resume
 // ============================================================
 
 function scheduleListeningResume() {
@@ -347,28 +519,26 @@ function scheduleListeningResume() {
         aiSpeaking = false;
         setLampState('live', 'Listening');
         updateState('Listening');
-        waveformOverlay.classList.remove('visible');
+        hideWaveformOverlay();
         return;
     }
     const ctx = audioPlayer.ctx;
     const remainingAudio = Math.max(0, audioPlayer.nextTime - ctx.currentTime);
-    const delayMs = remainingAudio * 1000 + 800;
 
     setLampState('generating', 'AI speaking');
     updateState('Playing');
-    waveformOverlay.classList.add('visible');
-    waveformOverlay.querySelector('span').textContent = 'AI responding...';
+    showWaveformOverlay('AI responding...');
 
     setTimeout(() => {
         aiSpeaking = false;
         setLampState('live', 'Listening');
         updateState('Listening');
-        waveformOverlay.classList.remove('visible');
-    }, delayMs);
+        hideWaveformOverlay();
+    }, remainingAudio * 1000 + 800);
 }
 
 // ============================================================
-// Audio playback (24kHz model output) — with stop-all support
+// Audio playback (24kHz model output)
 // ============================================================
 
 function initAudioPlayer() {
@@ -427,13 +597,13 @@ function resetAudioPlayer() {
 // ============================================================
 
 function generateSessionId() {
-    return 'hdx_' + Math.random().toString(36).substring(2, 10);
+    return 'hdomni_' + Math.random().toString(36).substring(2, 10);
 }
 
 async function startSession() {
     const sessionId = generateSessionId();
     const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-    const url = `${proto}://${location.host}/ws/half_duplex/${sessionId}`;
+    const url = `${proto}://${location.host}/ws/half_duplex_omni/${sessionId}`;
 
     turnIndex = 0;
     turnValue.textContent = '0';
@@ -449,6 +619,8 @@ async function startSession() {
     btnStart.disabled = true;
     setLampState('preparing', 'Preparing');
     updateState('Connecting');
+
+    if (!cameraStream) await startCamera();
 
     ws = new WebSocket(url);
     ws.onopen = () => {
@@ -494,6 +666,7 @@ function handleMessage(msg) {
             clearChat();
             setLampState('live', 'Listening');
             updateState('Listening');
+            hideWaveformOverlay();
             startTimer(msg.timeout_s || 300);
             startCapture();
             initAudioPlayer();
@@ -503,12 +676,13 @@ function handleMessage(msg) {
             if (msg.speaking) {
                 setLampState('speaking', 'Speaking');
                 updateState('Speaking');
-                waveformOverlay.classList.add('visible');
-                waveformOverlay.querySelector('span').textContent = 'Speaking...';
+                showWaveformOverlay('Speaking...');
+                setBorderActive(true);
             } else {
                 setLampState('live', 'Listening');
                 updateState('Listening');
-                waveformOverlay.classList.remove('visible');
+                hideWaveformOverlay();
+                setBorderActive(false);
             }
             break;
 
@@ -517,8 +691,14 @@ function handleMessage(msg) {
             stopAllAudio();
             setLampState('generating', 'Thinking');
             updateState('Generating');
-            waveformOverlay.classList.add('visible');
-            waveformOverlay.querySelector('span').textContent = `Generating (${msg.speech_duration_ms}ms speech)`;
+            setBorderActive(false);
+            {
+                const frames = msg.video_frames || 0;
+                const info = frames > 0
+                    ? `Generating (${msg.speech_duration_ms}ms speech, ${frames} frames)`
+                    : `Generating (${msg.speech_duration_ms}ms speech)`;
+                showWaveformOverlay(info);
+            }
             break;
 
         case 'chunk':
@@ -579,12 +759,33 @@ function endSession() {
     updateState('Idle');
     queueValue.textContent = '—';
     remainingValue.textContent = '—';
-    waveformOverlay.classList.remove('visible');
+    hideWaveformOverlay();
+    setBorderActive(false);
 }
 
 // ============================================================
 // UI helpers
 // ============================================================
+
+function showWaveformOverlay(text) {
+    if (waveformOverlay) {
+        waveformOverlay.style.display = 'flex';
+        const span = waveformOverlay.querySelector('span');
+        if (span) span.textContent = text;
+    }
+}
+
+function hideWaveformOverlay() {
+    if (waveformOverlay) waveformOverlay.style.display = 'none';
+}
+
+function setBorderActive(active) {
+    if (videoBorderOverlay) {
+        videoBorderOverlay.style.display = active ? 'block' : 'none';
+        videoBorderOverlay.classList.toggle('active', active);
+        videoBorderOverlay.style.inset = '0';
+    }
+}
 
 function setLampState(state, label) {
     statusLamp.className = 'status-lamp visible ' + state;
@@ -627,7 +828,7 @@ function stopTimer() {
 }
 
 // ============================================================
-// Chat log (duplex-style conversation entries)
+// Chat log
 // ============================================================
 
 let _currentAssistantEntry = null;
@@ -642,7 +843,7 @@ function addSpeechIndicator(turnIdx) {
     entry.className = 'conv-entry user';
     entry.innerHTML = `
         <div class="conv-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/></svg></div>
-        <div class="conv-text"><span class="speaker user-tag">You</span>Voice input (turn ${turnIdx})</div>
+        <div class="conv-text"><span class="speaker user-tag">You</span>Voice + video input (turn ${turnIdx})</div>
     `;
     chatLog.appendChild(entry);
     chatLog.scrollTop = chatLog.scrollHeight;
@@ -711,12 +912,15 @@ async function checkHealth() {
 
 btnStart.addEventListener('click', startSession);
 btnStop.addEventListener('click', endSession);
+camFlipBtn.addEventListener('click', flipCamera);
+mirrorBtn.addEventListener('click', toggleMirror);
+fullscreenBtn.addEventListener('click', toggleFullscreen);
 document.getElementById('btnDownloadRec')?.addEventListener('click', () => {
     if (!lastRecordingBlob) return;
     const url = URL.createObjectURL(lastRecordingBlob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `half-duplex-${new Date().toISOString().slice(0, 19).replace(/:/g, '')}.wav`;
+    a.download = `half-duplex-omni-${new Date().toISOString().slice(0, 19).replace(/:/g, '')}.wav`;
     a.click();
     URL.revokeObjectURL(url);
 });
@@ -726,7 +930,11 @@ drawIdleWaveform();
 checkHealth();
 setInterval(checkHealth, 15000);
 deviceSelector.init();
+enumerateCameras();
 
 _fetchDefaultRefAudio();
 if (_hdxPreset) _hdxPreset.init();
 initDataTipTooltips();
+
+// 页面加载时自动启动摄像头预览（与双工 omni 一致）
+startCamera();

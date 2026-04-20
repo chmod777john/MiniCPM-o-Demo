@@ -63,6 +63,9 @@ class WorkerConnection:
     current_request_type: Optional[str] = None
     task_started_at: Optional[datetime] = None
     _gateway_dispatched: bool = False
+    # Streaming / KV 亲和：Gateway 侧用于把同一会话路由到同一 Worker（测试与 Admin 可观测）
+    cached_hash: Optional[str] = None
+    last_cache_used_at: Optional[datetime] = None
 
     @property
     def url(self) -> str:
@@ -136,6 +139,15 @@ class EtaTracker:
     维护 Admin 配置的基准值和运行时 EMA 动态值。
     """
 
+    _EMA_KEYS = (
+        "chat",
+        "streaming",
+        "duplex",
+        "half_duplex_audio",
+        "audio_duplex",
+        "omni_duplex",
+    )
+
     def __init__(self, eta_config: EtaConfig, ema_alpha: float = 0.3,
                  ema_min_samples: int = 3) -> None:
         self.config = eta_config
@@ -144,26 +156,37 @@ class EtaTracker:
 
         # EMA 状态
         self._ema: Dict[str, float] = {}
-        self._samples: Dict[str, int] = {"chat": 0, "half_duplex_audio": 0, "audio_duplex": 0, "omni_duplex": 0}
+        self._samples: Dict[str, int] = {k: 0 for k in self._EMA_KEYS}
+
+    @staticmethod
+    def _normalize_request_type(request_type: Optional[str]) -> str:
+        """与队列/Worker 标记对齐的 ETA 类别（chat_ws → chat）。"""
+        if not request_type:
+            return "chat"
+        if request_type == "chat_ws":
+            return "chat"
+        return request_type
 
     def get_eta(self, request_type: str) -> float:
         """获取指定类型的预估耗时
 
         有足够 EMA 样本时用 EMA，否则用 Admin 基准值。
         """
-        if self._samples.get(request_type, 0) >= self.ema_min_samples:
-            return self._ema.get(request_type, self._get_base(request_type))
-        return self._get_base(request_type)
+        rt = self._normalize_request_type(request_type)
+        if self._samples.get(rt, 0) >= self.ema_min_samples:
+            return self._ema.get(rt, self._get_base(rt))
+        return self._get_base(rt)
 
     def record_duration(self, request_type: str, duration_s: float) -> None:
         """记录一次请求的实际耗时，更新 EMA"""
-        count = self._samples.get(request_type, 0)
+        rt = self._normalize_request_type(request_type)
+        count = self._samples.get(rt, 0)
         if count == 0:
-            self._ema[request_type] = duration_s
+            self._ema[rt] = duration_s
         else:
-            old = self._ema.get(request_type, duration_s)
-            self._ema[request_type] = self.ema_alpha * duration_s + (1 - self.ema_alpha) * old
-        self._samples[request_type] = count + 1
+            old = self._ema.get(rt, duration_s)
+            self._ema[rt] = self.ema_alpha * duration_s + (1 - self.ema_alpha) * old
+        self._samples[rt] = count + 1
 
     def update_config(self, new_config: EtaConfig) -> None:
         """更新 Admin 配置的基准值（含可选 ema_alpha）"""
@@ -177,20 +200,28 @@ class EtaTracker:
             config=self.config,
             ema_alpha=self.ema_alpha,
             ema_chat_s=self._ema.get("chat"),
+            ema_streaming_s=self._ema.get("streaming"),
             ema_half_duplex_s=self._ema.get("half_duplex_audio"),
             ema_audio_duplex_s=self._ema.get("audio_duplex"),
             ema_omni_duplex_s=self._ema.get("omni_duplex"),
+            ema_duplex_s=self._ema.get("duplex"),
             ema_chat_samples=self._samples.get("chat", 0),
+            ema_streaming_samples=self._samples.get("streaming", 0),
             ema_half_duplex_samples=self._samples.get("half_duplex_audio", 0),
             ema_audio_duplex_samples=self._samples.get("audio_duplex", 0),
             ema_omni_duplex_samples=self._samples.get("omni_duplex", 0),
+            ema_duplex_samples=self._samples.get("duplex", 0),
         )
 
     def _get_base(self, request_type: str) -> float:
         """获取 Admin 配置的基准值"""
         if request_type == "chat":
             return self.config.eta_chat_s
-        elif request_type == "half_duplex_audio":
+        elif request_type == "streaming":
+            return self.config.eta_streaming_s
+        elif request_type == "duplex":
+            return self.config.eta_duplex_s
+        elif request_type in ("half_duplex_audio", "half_duplex_omni"):
             return self.config.eta_half_duplex_s
         elif request_type == "audio_duplex":
             return self.config.eta_audio_duplex_s
@@ -251,6 +282,7 @@ class WorkerPool:
 
         # 健康检查任务
         self._health_check_task: Optional[asyncio.Task] = None
+        self._recovery_tasks: Dict[str, asyncio.Task] = {}
 
         # 解析 Worker 地址
         for i, addr in enumerate(worker_addresses):
@@ -282,6 +314,10 @@ class WorkerPool:
 
     async def stop(self) -> None:
         """停止连接池"""
+        for task in list(self._recovery_tasks.values()):
+            task.cancel()
+        self._recovery_tasks.clear()
+
         if self._health_check_task:
             self._health_check_task.cancel()
             try:
@@ -367,12 +403,48 @@ class WorkerPool:
 
     # ========== 路由策略 ==========
 
-    def _get_idle_worker(self) -> Optional[WorkerConnection]:
-        """获取任意空闲 Worker"""
-        for w in self.workers.values():
-            if w.is_idle:
+    _CACHE_ROUTED_TYPES = frozenset({
+        "chat",
+        "chat_ws",
+        "streaming",
+        "duplex",
+        "half_duplex_audio",
+        "audio_duplex",
+        "omni_duplex",
+    })
+
+    def _idle_workers_ordered(self) -> List[WorkerConnection]:
+        return sorted(
+            (w for w in self.workers.values() if w.is_idle),
+            key=lambda w: w.worker_id,
+        )
+
+    def _pick_idle_worker(
+        self,
+        request_type: str,
+        history_hash: Optional[str],
+    ) -> Optional[WorkerConnection]:
+        """在空闲 Worker 中选择：streaming 可按 history_hash 亲和；其余优先无 KV 槽位，否则 LRU。"""
+        idle = self._idle_workers_ordered()
+        if not idle:
+            return None
+
+        if request_type not in self._CACHE_ROUTED_TYPES:
+            return idle[0]
+
+        if request_type == "streaming" and history_hash is not None:
+            for w in idle:
+                if w.cached_hash == history_hash:
+                    return w
+
+        for w in idle:
+            if w.cached_hash is None:
                 return w
-        return None
+
+        return min(
+            idle,
+            key=lambda w: w.last_cache_used_at or datetime.min,
+        )
 
     # ========== FIFO 队列核心 ==========
 
@@ -384,6 +456,7 @@ class WorkerPool:
         self,
         request_type: str,
         session_id: Optional[str] = None,
+        history_hash: Optional[str] = None,
     ) -> Tuple[QueueTicket, "asyncio.Future[Optional[WorkerConnection]]"]:
         """入队请求
 
@@ -393,6 +466,7 @@ class WorkerPool:
         Args:
             request_type: "chat" | "half_duplex_audio" | "audio_duplex" | "omni_duplex"
             session_id: 会话 ID
+            history_hash: Streaming 会话历史哈希（可选，用于 KV 亲和路由）
 
         Returns:
             (ticket, future)
@@ -402,7 +476,7 @@ class WorkerPool:
         """
         loop = asyncio.get_running_loop()
 
-        worker = self._get_idle_worker()
+        worker = self._pick_idle_worker(request_type, history_hash)
 
         if worker is not None:
             dispatch_status = self._DISPATCH_STATUS_MAP.get(
@@ -436,7 +510,7 @@ class WorkerPool:
             session_id=session_id,
         )
         future = loop.create_future()
-        entry = QueueEntry(ticket=ticket, future=future)
+        entry = QueueEntry(ticket=ticket, future=future, history_hash=history_hash)
         self._queue[ticket.ticket_id] = entry
 
         self._recalc_positions_and_eta()
@@ -451,6 +525,9 @@ class WorkerPool:
 
     _DISPATCH_STATUS_MAP: Dict[str, GatewayWorkerStatus] = {
         "chat": GatewayWorkerStatus.BUSY_CHAT,
+        "chat_ws": GatewayWorkerStatus.BUSY_CHAT,
+        "streaming": GatewayWorkerStatus.BUSY_CHAT,
+        "duplex": GatewayWorkerStatus.DUPLEX_ACTIVE,
         "half_duplex_audio": GatewayWorkerStatus.BUSY_HALF_DUPLEX,
         "audio_duplex": GatewayWorkerStatus.DUPLEX_ACTIVE,
         "omni_duplex": GatewayWorkerStatus.DUPLEX_ACTIVE,
@@ -474,7 +551,10 @@ class WorkerPool:
                 self._queue.pop(ticket_id, None)
                 continue
 
-            worker = self._get_idle_worker()
+            worker = self._pick_idle_worker(
+                entry.ticket.request_type,
+                entry.history_hash,
+            )
 
             if worker is None:
                 break
@@ -502,23 +582,61 @@ class WorkerPool:
         if self._queue:
             self._recalc_positions_and_eta()
 
+    async def _wait_worker_ready(self, worker_id: str, timeout_s: float = 30.0, poll_s: float = 1.0) -> None:
+        """等待指定 worker 从 LOADING 恢复到 IDLE，再触发队列调度。"""
+        started = datetime.now()
+        try:
+            while (datetime.now() - started).total_seconds() < timeout_s:
+                worker = self.workers.get(worker_id)
+                if worker is None:
+                    return
+                await self._refresh_worker_status(worker)
+                if worker.status == GatewayWorkerStatus.IDLE:
+                    self._dispatch_next()
+                    return
+                await asyncio.sleep(poll_s)
+        except asyncio.CancelledError:
+            pass
+        finally:
+            self._recovery_tasks.pop(worker_id, None)
+
     def release_worker(self, worker: WorkerConnection, request_type: Optional[str] = None,
-                       duration_s: Optional[float] = None) -> None:
+                       duration_s: Optional[float] = None,
+                       post_release_status: GatewayWorkerStatus = GatewayWorkerStatus.IDLE) -> None:
         """释放 Worker（任务完成后调用）
 
         Args:
             worker: 要释放的 Worker
             request_type: 完成的任务类型（用于 EMA 更新）
             duration_s: 任务实际耗时（用于 EMA 更新）
+            post_release_status: 释放后状态。默认 IDLE；需要等待内部重初始化时可设为 LOADING。
         """
-        worker.mark_idle()
+        worker.current_request_type = None
+        worker.task_started_at = None
+        worker.current_session_id = None
+        worker._gateway_dispatched = False
+        worker.status = post_release_status
 
         # 更新 EMA
         if request_type and duration_s is not None and duration_s > 0:
             self.eta_tracker.record_duration(request_type, duration_s)
 
-        # 尝试调度下一个
-        self._dispatch_next()
+        if post_release_status == GatewayWorkerStatus.IDLE:
+            # 尝试调度下一个
+            self._dispatch_next()
+            return
+
+        # 非 IDLE（如 LOADING）时，不可立即分配；启动快速就绪探测
+        prev_task = self._recovery_tasks.get(worker.worker_id)
+        if prev_task and not prev_task.done():
+            prev_task.cancel()
+        try:
+            self._recovery_tasks[worker.worker_id] = asyncio.create_task(
+                self._wait_worker_ready(worker.worker_id)
+            )
+        except RuntimeError:
+            # 无运行中的事件循环时，退化为依赖周期性 health check
+            pass
 
     def cancel(self, ticket_id: str) -> bool:
         """取消排队
