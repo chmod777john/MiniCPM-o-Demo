@@ -89,6 +89,19 @@ GATEWAY_CONFIG: Dict[str, Any] = {}
 _cleanup_task: Optional[asyncio.Task] = None
 
 
+def _infer_gateway_backend() -> Optional[str]:
+    """从 Worker 健康检查结果中推断当前 gateway 连接的后端类型。"""
+    configured_backend = GATEWAY_CONFIG.get("backend")
+    if worker_pool is None:
+        return configured_backend
+    backends = sorted({w.backend for w in worker_pool.workers.values() if w.backend})
+    if len(backends) == 1:
+        return backends[0]
+    if len(backends) > 1:
+        return ",".join(backends)
+    return configured_backend
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """应用生命周期"""
@@ -167,6 +180,7 @@ async def health():
     """健康检查"""
     return {
         "status": "healthy",
+        "backend": _infer_gateway_backend(),
         "timestamp": datetime.now().isoformat(),
     }
 
@@ -179,6 +193,7 @@ async def status():
 
     return ServiceStatus(
         gateway_healthy=True,
+        backend=_infer_gateway_backend(),
         total_workers=len(worker_pool.workers),
         idle_workers=worker_pool.idle_count,
         busy_workers=worker_pool.busy_count,
@@ -827,7 +842,6 @@ async def duplex_ws(ws: WebSocket, session_id: str):
 
         if worker:
             duration = (datetime.now() - task_start).total_seconds() if task_start else 0
-            # Duplex 结束后 Worker 端会执行 full_reinit，期间不可被重新分配。
             worker_pool.release_worker(
                 worker,
                 request_type=duplex_type,
@@ -1174,11 +1188,9 @@ async def update_eta_config(new_config: EtaConfig):
     alpha_str = f", ema_alpha={new_config.ema_alpha}" if new_config.ema_alpha is not None else ""
     logger.info(
         f"ETA config updated: chat={new_config.eta_chat_s}s, "
-        f"streaming={new_config.eta_streaming_s}s, "
         f"half_duplex={new_config.eta_half_duplex_s}s, "
         f"audio_duplex={new_config.eta_audio_duplex_s}s, "
-        f"omni_duplex={new_config.eta_omni_duplex_s}s, "
-        f"duplex={new_config.eta_duplex_s}s{alpha_str}"
+        f"omni_duplex={new_config.eta_omni_duplex_s}s{alpha_str}"
     )
     return worker_pool.eta_tracker.get_status()
 
@@ -1530,22 +1542,22 @@ def main():
     # Worker 地址：优先命令行，否则根据 num_workers 自动生成
     if args.workers:
         worker_list = args.workers.split(",")
-    elif args.num_workers is not None:
+    elif args.num_workers:
         worker_list = cfg.worker_addresses(args.num_workers)
     else:
-        worker_list = cfg.worker_addresses(cfg.num_workers)
+        # 默认 1 个 Worker
+        worker_list = cfg.worker_addresses(1)
 
     GATEWAY_CONFIG.update({
+        "backend": cfg.backend,
         "workers": worker_list,
         "max_queue_size": args.max_queue_size or cfg.max_queue_size,
         "timeout": args.timeout or cfg.request_timeout,
         "eta_config": {
             "eta_chat_s": cfg.eta_chat_s,
-            "eta_streaming_s": cfg.eta_streaming_s,
             "eta_half_duplex_s": cfg.eta_half_duplex_s,
             "eta_audio_duplex_s": cfg.eta_audio_duplex_s,
             "eta_omni_duplex_s": cfg.eta_omni_duplex_s,
-            "eta_duplex_s": cfg.eta_duplex_s,
         },
         "eta_ema_alpha": cfg.eta_ema_alpha,
         "eta_ema_min_samples": cfg.eta_ema_min_samples,

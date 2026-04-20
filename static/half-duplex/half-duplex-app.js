@@ -549,7 +549,6 @@ function handleMessage(msg) {
 }
 
 function endSession() {
-    aiSpeaking = false;
     stopCapture();
     stopAllAudio();
     stopTimer();
@@ -691,9 +690,11 @@ function escapeHtml(str) {
 
 async function checkHealth() {
     try {
-        const resp = await fetch('/health');
+        const resp = await fetch('/status');
         if (resp.ok) {
-            serviceStatus.textContent = 'Online';
+            const data = await resp.json();
+            const backend = data.backend ? String(data.backend).toUpperCase() : null;
+            serviceStatus.textContent = backend ? `Online · ${backend}` : 'Online';
             serviceStatus.classList.add('online');
         } else {
             serviceStatus.textContent = 'Error';

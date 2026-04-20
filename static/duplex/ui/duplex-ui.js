@@ -378,7 +378,9 @@ export function initHealthCheck(badgeId) {
         try {
             const resp = await fetch('/status');
             const data = await resp.json();
-            statusEl.textContent = `Workers: ${data.idle_workers}/${data.total_workers}`;
+            const backend = data.backend ? String(data.backend).toUpperCase() : null;
+            const workerText = `Workers: ${data.idle_workers}/${data.total_workers}`;
+            statusEl.textContent = backend ? `${backend} · ${workerText}` : workerText;
             statusEl.className = 'status-badge' + (data.idle_workers > 0 ? ' online' : '');
         } catch {
             statusEl.textContent = 'Offline';

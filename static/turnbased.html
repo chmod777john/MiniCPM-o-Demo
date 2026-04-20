@@ -1364,7 +1364,11 @@ async function checkServiceStatus() {
         const resp = await fetch(`${API_BASE}/status`);
         const data = await resp.json();
         const el = document.getElementById('serviceStatus');
+        const backend = data.backend ? String(data.backend).toUpperCase() : null;
         let text = `Workers: ${data.idle_workers}/${data.total_workers} idle`;
+        if (backend) {
+            text = `${backend} | ${text}`;
+        }
         if (data.queue_length > 0) {
             text += ` | Queue: ${data.queue_length}`;
         }
