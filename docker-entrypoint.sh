@@ -7,7 +7,8 @@
 #
 #   Expected workspace layout:
 #     my-workspace/
-#     ├── models/MiniCPM-o-4_5/   # Model weights (required)
+#     ├── models/MiniCPM-o-4_5/   # PyTorch model weights (required for backend=pytorch)
+#     ├── llama.cpp-omni/         # Optional: cpp backend runtime tree (user-prepared)
 #     ├── config.json              # Custom config (optional)
 #     ├── certs/                   # TLS certs (optional, for HTTPS)
 #     ├── data/                    # Auto-created: persistent session data
@@ -104,6 +105,7 @@ fi
 
 GATEWAY_PORT="${GATEWAY_PORT:-$(python -c "from config import get_config; print(get_config().gateway_port)" 2>/dev/null || echo 8006)}"
 WORKER_BASE_PORT="${WORKER_BASE_PORT:-$(python -c "from config import get_config; print(get_config().worker_base_port)" 2>/dev/null || echo 22400)}"
+BACKEND="${BACKEND:-$(python -c "from config import get_config; print(get_config().backend)" 2>/dev/null || echo pytorch)}"
 
 # ============ Detect GPUs ============
 
@@ -125,6 +127,7 @@ echo "=================================================="
 echo "  MiniCPM-o 4.5 Service (Docker)"
 echo "=================================================="
 echo "  GPUs:    $GPU_LIST ($NUM_GPUS)"
+echo "  Backend: $BACKEND"
 echo "  Gateway: ${GATEWAY_PROTO}://0.0.0.0:$GATEWAY_PORT"
 echo "  Workers: localhost:$WORKER_BASE_PORT ~ localhost:$((WORKER_BASE_PORT + NUM_GPUS - 1))"
 echo "=================================================="
@@ -166,7 +169,12 @@ for GPU_ID in $(echo "$GPU_LIST" | tr ',' ' '); do
 done
 
 echo ""
-echo "Waiting for Workers to load models (~30-90s)..."
+if [ "$BACKEND" = "cpp" ]; then
+    echo "Waiting for Workers to load models (~2-5min for cpp backend)..."
+    echo "[Note] backend=cpp requires a user-prepared llama.cpp-omni + llama-server + GGUF environment."
+else
+    echo "Waiting for Workers to load models (~30-90s for pytorch backend)..."
+fi
 
 sleep 5
 for i in $(seq 0 $((NUM_GPUS - 1))); do

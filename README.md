@@ -1,10 +1,12 @@
-# MiniCPM-o 4.5 PyTorch Simple Demo System
+# MiniCPM-o 4.5 Optional PyTorch / C++ Demo System
 
 [中文简介](README_zh.md) | [Detailed Documentation](https://openbmb.github.io/MiniCPM-o-Demo/site/en/index.html)
 
 [Ready-to-use Demo Website](https://openbmb.github.io/MiniCPM-o-Demo/) | [Discord](https://discord.gg/UTbTeCQe) | [Feishu Group](https://applink.feishu.cn/client/chat/chatter/add_by_link?link_token=228m5ca0-dfa1-464c-9406-b8b2f86d76ea)
 
-This demo system is officially provided by the `MiniCPM-o 4.5` model training team. It uses a PyTorch + CUDA inference backend, combined with a lightweight frontend-backend design, aiming to demonstrate the full audio-video omnimodal full-duplex capabilities of MiniCPM-o 4.5 in a transparent, concise, and lossless manner.
+This demo system is officially provided by the `MiniCPM-o 4.5` model training team. The default and recommended inference path is PyTorch + CUDA, while an optional C++ `llama.cpp-omni` backend can also be deployed. The goal is to keep the integration shallow and low-risk, so users can deploy either backend separately, optionally expose both through a shared homepage backend switch, and still let each case page clearly display which backend the current deployment is connected to.
+
+> The frontend does **not** switch backend inside an individual case page. If `frontend.backend_options` is configured, the homepage can provide a backend switch that routes to different deployment entrypoints; once you enter a page, it only displays the backend type of that deployment.
 
 ## About MiniCPM-o 4.5
 
@@ -366,8 +368,10 @@ minicpmo45_service/
 
 | Page | URL |
 |------|-----|
-| Turn-based Chat | https://localhost:8006 |
+| Home | https://localhost:8006/ |
+| Turn-based Chat | https://localhost:8006/turnbased |
 | Half-Duplex Audio | https://localhost:8006/half_duplex |
+| Half-Duplex Omni (optional) | https://localhost:8006/half_duplex_omni |
 | Omnimodal Full-Duplex | https://localhost:8006/omni |
 | Audio Full-Duplex | https://localhost:8006/audio_duplex |
 | Dashboard | https://localhost:8006/admin |

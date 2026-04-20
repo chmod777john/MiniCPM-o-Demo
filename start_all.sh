@@ -3,6 +3,7 @@
 #     (1) bash start_all.sh
 #     (2) CUDA_VISIBLE_DEVICES=0,1,2,3 bash start_all.sh
 #
+# backend is controlled via config.json: "backend": "pytorch" | "cpp"
 # torch.compile is controlled via config.json: "service": { "compile": true }
 # Pre-compile with: PYTHONPATH=. .venv/base/bin/python precompile.py
 
@@ -29,6 +30,7 @@ VENV_PYTHON="$PROJECT_DIR/.venv/base/bin/python"
 
 GATEWAY_PORT=$($VENV_PYTHON -c "import sys; sys.path.insert(0,'$PROJECT_DIR'); from config import get_config; print(get_config().gateway_port)" 2>/dev/null || echo "10024")
 WORKER_BASE_PORT=$($VENV_PYTHON -c "import sys; sys.path.insert(0,'$PROJECT_DIR'); from config import get_config; print(get_config().worker_base_port)" 2>/dev/null || echo "22400")
+BACKEND=$($VENV_PYTHON -c "import sys; sys.path.insert(0,'$PROJECT_DIR'); from config import get_config; print(get_config().backend)" 2>/dev/null || echo "pytorch")
 
 # ============ 检测 GPU ============
 if [ -z "$CUDA_VISIBLE_DEVICES" ]; then
@@ -43,6 +45,7 @@ echo "=================================================="
 echo "  MiniCPMO45 Service Launcher"
 echo "=================================================="
 echo "  GPUs: $GPU_LIST ($NUM_GPUS)"
+echo "  Backend: $BACKEND"
 echo "  Gateway: ${GATEWAY_PROTO}://localhost:$GATEWAY_PORT"
 echo "  Workers: localhost:$WORKER_BASE_PORT ~ localhost:$((WORKER_BASE_PORT + NUM_GPUS - 1)) (HTTP, internal)"
 echo "=================================================="
@@ -77,7 +80,11 @@ for GPU_ID in $(echo "$GPU_LIST" | tr ',' ' '); do
 done
 
 echo ""
-echo "Waiting for Workers to load models (~30-90s)..."
+if [ "$BACKEND" = "cpp" ]; then
+    echo "Waiting for Workers to load models (~2-5min for cpp backend)..."
+else
+    echo "Waiting for Workers to load models (~30-90s for pytorch backend)..."
+fi
 
 # 等待所有 Worker 就绪
 sleep 5

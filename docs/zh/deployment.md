@@ -94,6 +94,41 @@ cp config.example.json config.json
 CLI 参数 > config.json > Pydantic 默认值
 ```
 
+### 后端选择（PyTorch / C++）
+
+- `backend: "pytorch"`：默认路径，使用 PyTorch + CUDA + HuggingFace / 本地模型目录。
+- `backend: "cpp"`：可选路径，使用 C++ `llama.cpp-omni` 后端；需要用户自行准备：
+  - `llama.cpp-omni` 代码目录
+  - 可执行的 `llama-server`
+  - GGUF 模型目录
+  - 对应的 CUDA / 编译环境
+- 具体 case 页面**不会在页面内切换 backend**，只会展示当前 deployment 对应的 backend 类型。
+- 如果你希望同时提供两种体验，建议分别启动两套 gateway / worker：
+  - `gateway-py + worker-py`
+  - `gateway-cpp + worker-cpp`
+  然后通过不同 URL 分别访问。
+- 如果你希望首页提供 backend switch，请在两套 gateway 的配置里都写入相同的 `frontend.backend_options`。首页 switch 只负责切换目标 deployment entrypoint，并不会把两种 backend 合并成一个运行时栈。
+
+### 首页 Backend Switch
+
+当配置了 `frontend.backend_options` 后，首页（`/`）可以显示 `CPP / PyTorch` 这样的 backend switch。
+
+```json
+{
+  "backend": "cpp",
+  "frontend": {
+    "backend_options": [
+      { "id": "cpp", "label": "CPP", "base_url": "http://127.0.0.1:8035" },
+      { "id": "pytorch", "label": "PyTorch", "base_url": "http://127.0.0.1:8036" }
+    ]
+  }
+}
+```
+
+- `backend` 控制当前 gateway 实际使用的推理后端。
+- `frontend.backend_options` 只控制首页的跳转链接和 switch 展示文案。
+- 如果你希望两个 deployment 的首页都能看到同一组 backend switch，请在两份配置里保持相同的 `frontend.backend_options` 列表。
+
 ### 完整字段说明
 
 #### model — 模型配置
@@ -134,6 +169,25 @@ CLI 参数 > config.json > Pydantic 默认值
 |------|------|--------|------|
 | `pause_timeout` | float | 60.0 | Duplex 暂停超时（秒），超时后自动释放 Worker |
 
+#### frontend — 前端展示配置
+
+| 字段 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| `backend_options` | list | `[]` | 可选的首页 backend switch 配置。每一项包含 `id`、`label`、`base_url`。为空时首页不显示 backend switch。 |
+
+#### cpp_backend — C++ 后端配置
+
+仅当 `backend="cpp"` 时生效：
+
+| 字段 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| `llamacpp_root` | str | `""` | `llama.cpp-omni` 项目根目录（必填） |
+| `model_dir` | str | `""` | GGUF 模型目录（必填） |
+| `llm_model` | str | `""` | LLM GGUF 文件名，留空则自动检测 |
+| `cpp_server_port` | int/null | null | `llama-server` 端口，默认按 `19060 + gpu_id` 推导 |
+| `ctx_size` | int | 32768 | C++ 后端上下文窗口大小 |
+| `n_gpu_layers` | int | 99 | GPU offload 层数 |
+
 ### 最小配置
 
 ```json
@@ -148,6 +202,7 @@ CLI 参数 > config.json > Pydantic 默认值
 
 ```json
 {
+  "backend": "pytorch",
   "model": {
     "model_path": "openbmb/MiniCPM-o-4_5",
     "pt_path": null,
@@ -174,6 +229,12 @@ CLI 参数 > config.json > Pydantic 默认值
   },
   "duplex": {
     "pause_timeout": 60.0
+  },
+  "frontend": {
+    "backend_options": [
+      { "id": "cpp", "label": "CPP", "base_url": "http://127.0.0.1:8035" },
+      { "id": "pytorch", "label": "PyTorch", "base_url": "http://127.0.0.1:8036" }
+    ]
   }
 }
 ```
