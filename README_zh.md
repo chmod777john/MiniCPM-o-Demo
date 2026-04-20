@@ -1,10 +1,12 @@
-# MiniCPM-o 4.5 PyTorch 简易演示系统
+# MiniCPM-o 4.5 可选 PyTorch / C++ 演示系统
 
 [English Documentation](README.md) | [详细文档](https://openbmb.github.io/MiniCPM-o-Demo/site/zh/index.html)
 
 [可直接使用的在线演示系统](https://openbmb.github.io/MiniCPM-o-Demo/) | [Discord](https://discord.gg/UTbTeCQe) | [飞书群](https://applink.feishu.cn/client/chat/chatter/add_by_link?link_token=228m5ca0-dfa1-464c-9406-b8b2f86d76ea)
 
-本演示系统为 `MiniCPM-o 4.5` 模型训练团队官方提供的演示系统。本演示系统使用 PyTorch + CUDA 推理后端，结合简易的前后端设计，旨在以透明、简洁、无性能损失的方式，全面地演示 MiniCPM-o 4.5 的音视频全模态全双工能力。
+本演示系统为 `MiniCPM-o 4.5` 模型训练团队官方提供的演示系统。默认推荐使用 PyTorch + CUDA 推理后端，同时支持可选的 C++ `llama.cpp-omni` 后端。整体目标是以透明、简洁、低侵入的方式，让用户可以分别部署 PyTorch 或 C++ 版本的 Demo，也可以通过共享首页上的 backend switch 统一入口；进入具体页面后，页面仍然只展示自己当前连接的后端类型。
+
+> 当前设计中，前端**不会在具体 case 页面内切换 backend**。如果配置了 `frontend.backend_options`，首页可以提供 backend switch，把用户路由到不同 deployment entrypoint；进入页面后，只展示该 deployment 对应的 backend 类型。
 
 ## 关于 MiniCPM-o 4.5
 
@@ -369,8 +371,10 @@ minicpmo45_service/
 
 | 页面 | URL |
 |------|-----|
-| 轮次对话 | https://localhost:8006 |
+| 首页 | https://localhost:8006/ |
+| 轮次对话 | https://localhost:8006/turnbased |
 | 半双工语音 | https://localhost:8006/half_duplex |
+| Half-Duplex Omni（可选） | https://localhost:8006/half_duplex_omni |
 | 全模态全双工 | https://localhost:8006/omni |
 | 语音全双工 | https://localhost:8006/audio_duplex |
 | 仪表盘 | https://localhost:8006/admin |

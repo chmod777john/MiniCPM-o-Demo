@@ -30,6 +30,7 @@ class WorkerInfo(BaseModel):
     host: str
     port: int
     gpu_id: int
+    backend: Optional[str] = None
     status: GatewayWorkerStatus
     current_session_id: Optional[str] = None
     total_requests: int = 0
@@ -89,6 +90,7 @@ class QueueStatus(BaseModel):
 class ServiceStatus(BaseModel):
     """服务全局状态"""
     gateway_healthy: bool = True
+    backend: Optional[str] = None
     total_workers: int = 0
     idle_workers: int = 0
     busy_workers: int = 0
