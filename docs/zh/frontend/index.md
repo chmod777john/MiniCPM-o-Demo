@@ -6,7 +6,7 @@
 
 ```
 static/
-├── index.html                          # 首页（模式选择 + 最近会话）
+├── index.html                          # 首页（模式选择 + backend switch + 最近会话）
 ├── turnbased.html                      # 轮次对话页面
 ├── admin.html                          # 管理面板
 ├── session-viewer.html                 # 会话回放查看器
@@ -46,7 +46,7 @@ static/
 
 | 页面 | URL | 说明 |
 |------|-----|------|
-| 首页 | `/` | 模式选择卡片、最近会话列表 |
+| 首页 | `/` | 模式选择卡片、可选 backend switch、最近会话列表 |
 | 轮次对话 | `/turnbased` | Turn-based Chat 交互 |
 | Omni 全双工 | `/omni` | 视觉 + 语音全双工 |
 | 音频全双工 | `/audio_duplex` | 纯音频全双工 |

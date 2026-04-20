@@ -208,6 +208,32 @@ class DuplexSectionConfig(BaseModel):
     )
 
 
+class FrontendBackendOption(BaseModel):
+    """首页 backend 切换项"""
+
+    id: str = Field(
+        description="backend 标识，如 pytorch / cpp",
+        pattern="^(pytorch|cpp)$",
+    )
+    label: Optional[str] = Field(
+        default=None,
+        description="首页展示名称；为空时使用 id",
+    )
+    base_url: str = Field(
+        default="",
+        description="该 backend 对应的 gateway 根地址，如 http://127.0.0.1:8035",
+    )
+
+
+class FrontendConfig(BaseModel):
+    """前端展示配置"""
+
+    backend_options: List[FrontendBackendOption] = Field(
+        default_factory=list,
+        description="首页 backend 切换选项；为空时首页不显示 backend switch",
+    )
+
+
 # ============ 顶层配置 ============
 
 
@@ -244,6 +270,10 @@ class ServiceConfig(BaseModel):
     recording: RecordingConfig = Field(
         default_factory=RecordingConfig,
         description="Session 录制配置",
+    )
+    frontend: FrontendConfig = Field(
+        default_factory=FrontendConfig,
+        description="前端展示配置（如首页 backend switch）",
     )
     cpp_backend: CppBackendConfig = Field(
         default_factory=CppBackendConfig,
@@ -344,8 +374,21 @@ class ServiceConfig(BaseModel):
 
     def frontend_defaults(self) -> dict:
         """返回前端页面需要的默认配置（供 /api/frontend_defaults 使用）"""
+        backend_options = []
+        for option in self.frontend.backend_options:
+            base_url = (option.base_url or "").strip().rstrip("/")
+            if not base_url:
+                continue
+            backend_options.append({
+                "id": option.id,
+                "label": option.label or option.id.upper(),
+                "base_url": base_url,
+            })
+
         return {
             "playback_delay_ms": self.playback_delay_ms,
+            "backend": self.backend,
+            "backend_options": backend_options,
         }
 
 

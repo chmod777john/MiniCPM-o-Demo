@@ -94,6 +94,41 @@ cp config.example.json config.json
 CLI arguments > config.json > Pydantic defaults
 ```
 
+### Backend Selection (PyTorch / C++)
+
+- `backend: "pytorch"`: default path, using PyTorch + CUDA + HuggingFace/local model directories.
+- `backend: "cpp"`: optional path, using the C++ `llama.cpp-omni` backend. The user must prepare:
+  - a `llama.cpp-omni` source/runtime tree
+  - a runnable `llama-server`
+  - GGUF model files
+  - matching CUDA / build environment
+- Case pages do **not** switch backend in-page. They only display the backend type of the current deployment.
+- If you want to offer both experiences at the same time, run two independent gateway/worker stacks:
+  - `gateway-py + worker-py`
+  - `gateway-cpp + worker-cpp`
+  and expose them on different URLs.
+- If you want the home page to provide a backend switch, configure the same `frontend.backend_options` list on both gateways. The home page switch only changes the target deployment entrypoint; it does not merge the two backends into one runtime stack.
+
+### Homepage Backend Switch
+
+When `frontend.backend_options` is configured, the home page (`/`) can show a backend switch such as `CPP / PyTorch`.
+
+```json
+{
+  "backend": "cpp",
+  "frontend": {
+    "backend_options": [
+      { "id": "cpp", "label": "CPP", "base_url": "http://127.0.0.1:8035" },
+      { "id": "pytorch", "label": "PyTorch", "base_url": "http://127.0.0.1:8036" }
+    ]
+  }
+}
+```
+
+- `backend` controls the actual inference backend of the current gateway.
+- `frontend.backend_options` only controls the home page links and switch labels.
+- To make the switch visible from both deployments, keep the same `frontend.backend_options` list in both configs.
+
 ### Complete Field Reference
 
 #### model — Model Configuration
@@ -134,6 +169,25 @@ CLI arguments > config.json > Pydantic defaults
 |------|------|--------|------|
 | `pause_timeout` | float | 60.0 | Duplex pause timeout (seconds); the Worker is automatically released after timeout |
 
+#### frontend — Frontend Presentation Configuration
+
+| Field | Type | Default | Description |
+|------|------|--------|------|
+| `backend_options` | list | `[]` | Optional homepage backend switch config. Each item contains `id`, `label`, and `base_url`. When empty, the homepage hides the backend switch. |
+
+#### cpp_backend — C++ Backend Configuration
+
+Only used when `backend="cpp"`:
+
+| Field | Type | Default | Description |
+|------|------|--------|------|
+| `llamacpp_root` | str | `""` | `llama.cpp-omni` project root (required) |
+| `model_dir` | str | `""` | GGUF model directory (required) |
+| `llm_model` | str | `""` | LLM GGUF filename; auto-detected when empty |
+| `cpp_server_port` | int/null | null | `llama-server` port; defaults to `19060 + gpu_id` |
+| `ctx_size` | int | 32768 | C++ backend context window size |
+| `n_gpu_layers` | int | 99 | GPU offload layer count |
+
 ### Minimal Configuration
 
 ```json
@@ -148,6 +202,7 @@ CLI arguments > config.json > Pydantic defaults
 
 ```json
 {
+  "backend": "pytorch",
   "model": {
     "model_path": "openbmb/MiniCPM-o-4_5",
     "pt_path": null,
@@ -174,6 +229,12 @@ CLI arguments > config.json > Pydantic defaults
   },
   "duplex": {
     "pause_timeout": 60.0
+  },
+  "frontend": {
+    "backend_options": [
+      { "id": "cpp", "label": "CPP", "base_url": "http://127.0.0.1:8035" },
+      { "id": "pytorch", "label": "PyTorch", "base_url": "http://127.0.0.1:8036" }
+    ]
   }
 }
 ```

@@ -6,7 +6,7 @@ The frontend is built with pure **HTML + JavaScript + CSS**, with no framework d
 
 ```
 static/
-├── index.html                          # Home page (mode selection + recent sessions)
+├── index.html                          # Home page (mode selection + backend switch + recent sessions)
 ├── turnbased.html                      # Turn-based chat page
 ├── admin.html                          # Admin panel
 ├── session-viewer.html                 # Session replay viewer
@@ -46,7 +46,7 @@ static/
 
 | Page | URL | Description |
 |------|-----|-------------|
-| Home | `/` | Mode selection cards, recent session list |
+| Home | `/` | Mode selection cards, optional backend switch, recent session list |
 | Turn-based Chat | `/turnbased` | Turn-based Chat interaction |
 | Omni Full-Duplex | `/omni` | Vision + voice full-duplex |
 | Audio Full-Duplex | `/audio_duplex` | Audio-only full-duplex |

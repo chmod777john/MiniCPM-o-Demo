@@ -58,6 +58,54 @@
             color: #666;
             margin-bottom: 32px;
         }
+        .backend-section {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 10px;
+            margin-top: -8px;
+            margin-bottom: 4px;
+        }
+        .backend-label {
+            font-size: 12px;
+            color: #888;
+            text-transform: uppercase;
+            letter-spacing: 0.4px;
+        }
+        .backend-switch {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px;
+            border-radius: 999px;
+            border: 1px solid #e5e5e0;
+            background: #fff;
+            box-shadow: 0 4px 16px rgba(0,0,0,0.04);
+        }
+        .backend-option {
+            border: none;
+            border-radius: 999px;
+            background: transparent;
+            color: #666;
+            font-size: 13px;
+            font-weight: 500;
+            padding: 8px 16px;
+            cursor: pointer;
+            transition: background 0.15s, color 0.15s;
+        }
+        .backend-option:hover {
+            background: #f0f0eb;
+            color: #2d2d2d;
+        }
+        .backend-option.selected {
+            background: #2d2d2d;
+            color: #fff;
+        }
+        .backend-help {
+            font-size: 12px;
+            color: #777;
+            text-align: center;
+        }
 
         .mode-cards {
             display: flex;
@@ -218,6 +266,11 @@
     <main class="home-main">
         <div class="home-title">Choose mode</div>
         <!-- <div class="home-subtitle">Text · Image · Audio · Video — Multimodal inference</div> -->
+        <div class="backend-section" id="backend-section" style="display:none;">
+            <div class="backend-label">Backend</div>
+            <div class="backend-switch" id="backend-switch"></div>
+            <div class="backend-help" id="backend-help"></div>
+        </div>
 
         <div class="mode-cards" id="mode-cards"></div>
 
@@ -231,29 +284,157 @@
     </main>
 
     <script type="module">
-    import { initNav } from '/static/shared/app-nav.js';
-
     const APP_CARD_META = {
         turnbased: { css: 'turnbased', icon: '💬', desc: 'Multi-turn chat: text and audio input with streaming output. For Q&A, editing, and multi-turn tasks.' },
+        half_duplex_audio: { css: 'audio', icon: '🎧', desc: 'Half-duplex voice interaction: push-to-start style voice turns with lower coordination complexity than full duplex.' },
         omni:      { css: 'omni',      icon: '🎥', desc: 'Full-duplex real-time: camera + mic or local video/audio file; speak and see with live replies. Live / File modes.' },
         audio_duplex: { css: 'audio', icon: '🎤', desc: 'Voice-only full-duplex: live mic or local audio file, low-latency voice conversation. Live / File modes.' },
     };
+    const FRONTEND_SWITCH_KEY = 'minicpmo45_home_backend';
+    const HOME_STATE = {
+        apps: [],
+        frontendDefaults: {
+            backend: null,
+            backend_options: [],
+        },
+        selectedBackendId: null,
+    };
+
+    function escapeHtml(value) {
+        return String(value ?? '').replace(/[&<>"']/g, (ch) => ({
+            '&': '&amp;',
+            '<': '&lt;',
+            '>': '&gt;',
+            '"': '&quot;',
+            "'": '&#39;',
+        }[ch]));
+    }
+
+    function normalizeBaseUrl(url) {
+        return String(url || '').trim().replace(/\/+$/, '');
+    }
+
+    function getSelectedBackendOption() {
+        const options = HOME_STATE.frontendDefaults.backend_options || [];
+        return options.find((option) => option.id === HOME_STATE.selectedBackendId) || null;
+    }
+
+    function routeHref(route) {
+        const normalizedRoute = String(route || '').startsWith('/') ? String(route) : `/${route}`;
+        const selected = getSelectedBackendOption();
+        const baseUrl = normalizeBaseUrl(selected?.base_url);
+        return baseUrl ? `${baseUrl}${normalizedRoute}` : normalizedRoute;
+    }
+
+    function renderNav() {
+        const navEl = document.querySelector('.nav-links');
+        if (!navEl) return;
+
+        const links = ['<a href="/" class="active">Home</a>'];
+        for (const app of HOME_STATE.apps) {
+            links.push(`<a href="${escapeHtml(routeHref(app.route))}">${escapeHtml(app.name)}</a>`);
+        }
+        navEl.innerHTML = links.join('');
+    }
+
+    function renderCards() {
+        const cardsEl = document.getElementById('mode-cards');
+        cardsEl.innerHTML = HOME_STATE.apps.map((app) => {
+            const meta = APP_CARD_META[app.app_id] || { css: '', icon: '📦', desc: '' };
+            const backendLabel = getSelectedBackendOption()?.label || HOME_STATE.frontendDefaults.backend || 'current backend';
+            return `<a href="${escapeHtml(routeHref(app.route))}" class="mode-card ${meta.css}">
+                <div class="card-icon" aria-hidden="true">${meta.icon}</div>
+                <div class="card-title">${escapeHtml(app.name)}</div>
+                <div class="card-desc">${escapeHtml(meta.desc)}</div>
+                <div class="card-enter">Open with ${escapeHtml(backendLabel)} →</div>
+            </a>`;
+        }).join('');
+    }
+
+    function renderBackendSwitch() {
+        const sectionEl = document.getElementById('backend-section');
+        const switchEl = document.getElementById('backend-switch');
+        const helpEl = document.getElementById('backend-help');
+        const options = HOME_STATE.frontendDefaults.backend_options || [];
+
+        if (options.length <= 1) {
+            sectionEl.style.display = 'none';
+            return;
+        }
+
+        sectionEl.style.display = 'flex';
+        switchEl.innerHTML = options.map((option) => {
+            const selectedClass = option.id === HOME_STATE.selectedBackendId ? ' selected' : '';
+            return `<button type="button" class="backend-option${selectedClass}" data-backend-id="${escapeHtml(option.id)}">${escapeHtml(option.label || option.id)}</button>`;
+        }).join('');
+
+        switchEl.querySelectorAll('[data-backend-id]').forEach((button) => {
+            button.addEventListener('click', () => {
+                HOME_STATE.selectedBackendId = button.dataset.backendId;
+                localStorage.setItem(FRONTEND_SWITCH_KEY, HOME_STATE.selectedBackendId);
+                renderBackendSwitch();
+                renderNav();
+                renderCards();
+            });
+        });
+
+        const selected = getSelectedBackendOption();
+        helpEl.textContent = selected
+            ? `Mode cards and top navigation will open with ${selected.label || selected.id}.`
+            : '';
+    }
+
+    async function fetchApps() {
+        try {
+            const resp = await fetch('/api/apps');
+            if (!resp.ok) return [];
+            const data = await resp.json();
+            return data.apps || [];
+        } catch {
+            return [];
+        }
+    }
+
+    async function fetchFrontendDefaults() {
+        try {
+            const resp = await fetch('/api/frontend_defaults');
+            if (!resp.ok) return { backend: null, backend_options: [] };
+            return await resp.json();
+        } catch {
+            return { backend: null, backend_options: [] };
+        }
+    }
+
+    function chooseInitialBackend() {
+        const options = HOME_STATE.frontendDefaults.backend_options || [];
+        if (!options.length) return null;
+
+        const saved = localStorage.getItem(FRONTEND_SWITCH_KEY);
+        if (saved && options.some((option) => option.id === saved)) {
+            return saved;
+        }
+
+        const currentBackend = HOME_STATE.frontendDefaults.backend;
+        if (currentBackend && options.some((option) => option.id === currentBackend)) {
+            return currentBackend;
+        }
+
+        return options[0].id;
+    }
 
     (async function() {
-        const apps = await initNav(null);
+        const [apps, frontendDefaults] = await Promise.all([
+            fetchApps(),
+            fetchFrontendDefaults(),
+        ]);
 
-        if (apps) {
-            const cardsEl = document.getElementById('mode-cards');
-            cardsEl.innerHTML = apps.map(a => {
-                const m = APP_CARD_META[a.app_id] || { css: '', icon: '📦', desc: '' };
-                return `<a href="${a.route}" class="mode-card ${m.css}">
-                    <div class="card-icon" aria-hidden="true">${m.icon}</div>
-                    <div class="card-title">${a.name}</div>
-                    <div class="card-desc">${m.desc}</div>
-                    <div class="card-enter">Enter →</div>
-                </a>`;
-            }).join('');
-        }
+        HOME_STATE.apps = apps;
+        HOME_STATE.frontendDefaults = frontendDefaults;
+        HOME_STATE.selectedBackendId = chooseInitialBackend();
+
+        renderBackendSwitch();
+        renderNav();
+        renderCards();
     })();
 
     (function() {

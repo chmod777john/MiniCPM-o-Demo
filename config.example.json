@@ -33,6 +33,22 @@
         "pause_timeout": 60.0
     },
 
+    "frontend": {
+        "_comment": "首页可选 backend 入口；留空则不显示首页 backend switch",
+        "backend_options": [
+            {
+                "id": "cpp",
+                "label": "CPP",
+                "base_url": "http://127.0.0.1:8035"
+            },
+            {
+                "id": "pytorch",
+                "label": "PyTorch",
+                "base_url": "http://127.0.0.1:8036"
+            }
+        ]
+    },
+
     "cpp_backend": {
         "_comment": "backend='cpp' 时生效，使用 C++ llama.cpp-omni 推理",
         "llamacpp_root": "/cache/caitianchi/code/llama.cpp-omni",
