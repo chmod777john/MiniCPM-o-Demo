@@ -98,6 +98,7 @@ class WorkerState(BaseModel):
 class WorkerHealthResponse(BaseModel):
     """健康检查响应"""
     status: str
+    backend: str = "pytorch"
     worker_status: WorkerStatus
     gpu_id: int
     model_loaded: bool
@@ -749,6 +750,7 @@ async def health():
     if worker is None:
         return WorkerHealthResponse(
             status="initializing",
+            backend=WORKER_CONFIG.get("backend", "pytorch"),
             worker_status=WorkerStatus.LOADING,
             gpu_id=0,
             model_loaded=False,
@@ -779,6 +781,7 @@ async def health():
 
     return WorkerHealthResponse(
         status=status,
+        backend=WORKER_CONFIG.get("backend", "pytorch"),
         worker_status=worker_status,
         gpu_id=worker.gpu_id,
         model_loaded=model_loaded,
