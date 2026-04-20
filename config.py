@@ -95,6 +95,14 @@ class ServiceSectionConfig(BaseModel):
         default=22400,
         description="Worker 起始端口（Worker 0 = 22400, Worker 1 = 22401, ...）",
     )
+    num_workers: int = Field(
+        default=1,
+        ge=1,
+        description=(
+            "Gateway 默认连接的 Worker 数量（仅当启动 gateway 时未传 --workers / --num-workers 时使用；"
+            "start_all.sh 会显式传入 --workers 覆盖此项）"
+        ),
+    )
     max_queue_size: int = Field(
         default=1000,
         description="最大排队请求数",
@@ -102,6 +110,10 @@ class ServiceSectionConfig(BaseModel):
     eta_chat_s: float = Field(
         default=15.0,
         description="Chat 预估耗时基准（秒），Admin 可动态调整",
+    )
+    eta_streaming_s: float = Field(
+        default=180.0,
+        description="Turn-based 流式 Chat 预估耗时基准（秒），队列 request_type=streaming 与 Admin 使用",
     )
     eta_half_duplex_s: float = Field(
         default=180.0,
@@ -114,6 +126,10 @@ class ServiceSectionConfig(BaseModel):
     eta_omni_duplex_s: float = Field(
         default=90.0,
         description="Omni Duplex 预估耗时基准（秒），Admin 可动态调整",
+    )
+    eta_duplex_s: float = Field(
+        default=90.0,
+        description="泛化 duplex 队列类型的 ETA 基准（秒），与 omni_duplex 可分别配置",
     )
     eta_ema_alpha: float = Field(
         default=0.3,
@@ -154,6 +170,35 @@ class RecordingConfig(BaseModel):
     )
 
 
+class CppBackendConfig(BaseModel):
+    """C++ llama.cpp-omni 后端配置（backend="cpp" 时生效）"""
+
+    llamacpp_root: str = Field(
+        default="",
+        description="llama.cpp-omni 项目根目录（必须指定）",
+    )
+    model_dir: str = Field(
+        default="",
+        description="GGUF 模型文件目录（必须指定）",
+    )
+    llm_model: str = Field(
+        default="",
+        description="LLM GGUF 文件名（留空则自动检测，优先 Q8_0，其次 Q4_K_M）",
+    )
+    cpp_server_port: Optional[int] = Field(
+        default=None,
+        description="C++ llama-server 端口（默认 19060 + gpu_id）",
+    )
+    ctx_size: int = Field(
+        default=32768,
+        description="LLM 上下文窗口大小",
+    )
+    n_gpu_layers: int = Field(
+        default=99,
+        description="GPU offload 层数",
+    )
+
+
 class DuplexSectionConfig(BaseModel):
     """双工对话配置"""
 
@@ -173,6 +218,14 @@ class ServiceConfig(BaseModel):
     用户只需在 config.json 中写需要覆盖的字段。
     """
 
+    backend: str = Field(
+        default="pytorch",
+        description=(
+            "推理后端: 'pytorch'（默认，使用 PyTorch + CUDA）"
+            "或 'cpp'（使用 C++ llama.cpp-omni，需配置 cpp_backend 段）"
+        ),
+        pattern="^(pytorch|cpp)$",
+    )
     model: ModelConfig = Field(
         description="模型加载配置",
     )
@@ -192,6 +245,10 @@ class ServiceConfig(BaseModel):
         default_factory=RecordingConfig,
         description="Session 录制配置",
     )
+    cpp_backend: CppBackendConfig = Field(
+        default_factory=CppBackendConfig,
+        description="C++ 后端配置（backend='cpp' 时生效）",
+    )
 
     # ========== 便捷属性（兼容旧代码） ==========
 
@@ -202,6 +259,10 @@ class ServiceConfig(BaseModel):
     @property
     def worker_base_port(self) -> int:
         return self.service.worker_base_port
+
+    @property
+    def num_workers(self) -> int:
+        return self.service.num_workers
 
     @property
     def max_queue_size(self) -> int:
@@ -220,12 +281,20 @@ class ServiceConfig(BaseModel):
         return self.service.eta_half_duplex_s
 
     @property
+    def eta_streaming_s(self) -> float:
+        return self.service.eta_streaming_s
+
+    @property
     def eta_audio_duplex_s(self) -> float:
         return self.service.eta_audio_duplex_s
 
     @property
     def eta_omni_duplex_s(self) -> float:
         return self.service.eta_omni_duplex_s
+
+    @property
+    def eta_duplex_s(self) -> float:
+        return self.service.eta_duplex_s
 
     @property
     def eta_ema_alpha(self) -> float:
@@ -313,15 +382,36 @@ def load_config(path: str = _CONFIG_PATH) -> ServiceConfig:
     with open(path, "r", encoding="utf-8") as f:
         data = json.load(f)
 
-    # 检查必填字段：model.model_path
+    backend = data.get("backend", "pytorch")
+
+    # pytorch 后端必须有 model.model_path；cpp 后端可以没有（用 GGUF）
     model_section = data.get("model")
-    if not model_section or not model_section.get("model_path"):
-        raise ValueError(
-            f"config.json 缺少必填字段 model.model_path\n"
-            f"请编辑 {path}，设置模型路径：\n"
-            f'\n'
-            f'{{"model": {{"model_path": "/path/to/your/model"}}}}'
-        )
+    if backend == "pytorch":
+        if not model_section or not model_section.get("model_path"):
+            raise ValueError(
+                f"config.json 缺少必填字段 model.model_path\n"
+                f"请编辑 {path}，设置模型路径：\n"
+                f'\n'
+                f'{{"model": {{"model_path": "/path/to/your/model"}}}}'
+            )
+    elif backend == "cpp":
+        # cpp 后端 model.model_path 不是必须的，给一个占位值
+        if not model_section:
+            data["model"] = {"model_path": "unused-for-cpp-backend"}
+        elif not model_section.get("model_path"):
+            data["model"]["model_path"] = "unused-for-cpp-backend"
+
+        cpp_section = data.get("cpp_backend", {})
+        if not cpp_section.get("llamacpp_root"):
+            raise ValueError(
+                f"backend='cpp' 时必须配置 cpp_backend.llamacpp_root\n"
+                f"请编辑 {path}，添加 C++ 后端配置"
+            )
+        if not cpp_section.get("model_dir"):
+            raise ValueError(
+                f"backend='cpp' 时必须配置 cpp_backend.model_dir\n"
+                f"请编辑 {path}，添加 GGUF 模型目录"
+            )
 
     config = ServiceConfig(**data)
     logger.info(
