@@ -1542,11 +1542,10 @@ def main():
     # Worker 地址：优先命令行，否则根据 num_workers 自动生成
     if args.workers:
         worker_list = args.workers.split(",")
-    elif args.num_workers:
+    elif args.num_workers is not None:
         worker_list = cfg.worker_addresses(args.num_workers)
     else:
-        # 默认 1 个 Worker
-        worker_list = cfg.worker_addresses(1)
+        worker_list = cfg.worker_addresses(cfg.num_workers)
 
     GATEWAY_CONFIG.update({
         "backend": cfg.backend,
