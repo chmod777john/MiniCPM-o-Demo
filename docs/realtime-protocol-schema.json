@@ -98,7 +98,7 @@
             "type": "array",
             "items": { "$ref": "#/definitions/base64_string" },
             "maxItems": 4,
-            "description": "JPEG frames, base64-encoded. Required in video mode, forbidden in audio mode."
+            "description": "JPEG frames, base64-encoded. Recommended in video mode; behavior is undefined if sent in audio mode."
           },
           "force_listen":   { "type": "boolean", "default": false, "description": "Force model into listen state (interrupt speaking)" },
           "max_slice_nums": { "type": "integer", "minimum": 1, "maximum": 9, "description": "Override vision slices for this chunk (video mode only)" }

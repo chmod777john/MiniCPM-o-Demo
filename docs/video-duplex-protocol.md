@@ -19,7 +19,7 @@
 | 帧格式 | JSON 文本帧 |
 | 上行音频 | **16 kHz**，单声道，float32 PCM，base64 编码 |
 | 下行音频 | **24 kHz**，单声道，float32 PCM，base64 编码 |
-| 上行视频 | JPEG，base64 编码，**每个 append 必须携带** |
+| 上行视频 | JPEG，base64 编码，建议每个 append 携带 |
 | 会话总时长上限 | **300 秒（5 分钟）**，含所有等待和空闲时间 |
 | 有效对话时间 | **约 90 秒**（总时长包含排队、初始化、用户沉默等，实际模型活跃推理时间约 90 秒） |
 | 上下文窗口 | **8192 tokens**，不可配置。满时服务端主动关闭会话 |
@@ -52,7 +52,7 @@ Server  → session.created     "好的，准备就绪"
 上行流（Client → Server）:            下行流（Server → Client）:
 每秒发一个包，包含：                    模型随时推送：
   - 1 秒的 16kHz 音频                   - 回复的 24kHz 音频片段
-  - 1 帧 JPEG 视频截图（必须）            - 回复的文字
+  - 1 帧 JPEG 视频截图（建议）            - 回复的文字
                                         - "我在听"状态信号
 ```
 
@@ -128,7 +128,7 @@ Server  → session.created     "好的，准备就绪"
 | 字段 | 类型 | 必填 | 说明 |
 |------|------|------|------|
 | `audio` | string | **是** | 16 kHz 单声道 float32 PCM，1 秒 = 16000 samples = 64000 bytes，base64 编码。最小 4000 samples (250ms) |
-| `video_frames` | string[] | **是**（视频模式） | JPEG 帧列表（通常 1 帧），base64 编码。视频双工模式下**每个 append 必须携带** |
+| `video_frames` | string[] | 否 | JPEG 帧列表（通常 1 帧），base64 编码。视频双工模式下建议每个 append 携带，不携带时为未定义行为 |
 | `force_listen` | bool | 否 | 强制模型进入 listen 状态（打断模型说话），默认 false |
 | `max_slice_nums` | int | 否 | 覆盖本次 chunk 的视频切片数（1~9） |
 
@@ -316,7 +316,7 @@ Client:  session.close ──→
              │ 收到 session.created
              ▼
     ┌──── ACTIVE ─────┐
-    │                  │    允许发: append (必须含 video_frames) / close
+    │                  │    允许发: append (建议含 video_frames) / close
     │                  │    append 中可携带 force_listen=true
     └────────┬─────────┘
              │ close / timeout / context_full / 异常
@@ -334,7 +334,7 @@ Client:  session.close ──→
 |------|------|---------|
 | `not_ready` | 会话未建立就发数据 | 否 |
 | `unknown_event` | 不认识的事件 type | 否 |
-| `missing_field` | 必填字段缺失（如视频模式缺少 `video_frames`） | 否 |
+| `missing_field` | 必填字段缺失 | 否 |
 | `invalid_payload` | 字段值非法（base64/JPEG 解码失败） | 否 |
 
 ### 服务端错误
@@ -354,7 +354,7 @@ Client:  session.close ──→
     "type": "error",
     "error": {
         "code": "missing_field",
-        "message": "video_frames is required in video duplex mode",
+        "message": "audio field is required",
         "type": "client_error"
     }
 }

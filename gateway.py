@@ -1608,6 +1608,8 @@ async def realtime_ws(ws: WebSocket):
     Uses the same FIFO queue + Worker allocation as /ws/duplex.
     """
     session_id = ws.query_params.get("session_id", f"rt_{int(datetime.now().timestamp()*1000)}")
+    mode = ws.query_params.get("mode", "video")
+    max_duration_s = 300 if mode == "video" else 600
 
     if worker_pool is None:
         await ws.close(code=1013, reason="Service not ready")
@@ -1618,7 +1620,7 @@ async def realtime_ws(ws: WebSocket):
 
     # Enqueue
     try:
-        duplex_type = "omni_duplex"
+        duplex_type = "omni_duplex" if mode == "video" else "audio_duplex"
         ticket, future = worker_pool.enqueue(duplex_type, session_id=session_id)
     except WorkerPool.QueueFullError:
         await ws.send_json({
@@ -1677,6 +1679,7 @@ async def realtime_ws(ws: WebSocket):
 
     worker.mark_busy(GatewayWorkerStatus.DUPLEX_ACTIVE, duplex_type, session_id=session_id)
     task_start = datetime.now()
+    session_closed = asyncio.Event()
 
     worker_ws = None
 
@@ -1696,6 +1699,18 @@ async def realtime_ws(ws: WebSocket):
                 else:
                     raise
 
+        async def session_timeout_watchdog():
+            """Total session duration watchdog."""
+            await asyncio.sleep(max_duration_s)
+            if session_closed.is_set():
+                return
+            logger.info(f"Realtime session timeout ({max_duration_s}s): session={session_id}")
+            try:
+                await ws.send_json({"type": "session.closed", "reason": "timeout"})
+            except Exception:
+                pass
+            session_closed.set()
+
         async def client_to_worker():
             """Client (OpenAI Realtime) → Worker (old protocol): translate on the fly"""
             try:
@@ -1704,12 +1719,11 @@ async def realtime_ws(ws: WebSocket):
                     msg_type = msg.get("type", "")
 
                     if msg_type == "session.update":
-                        # Translate session.update → prepare
                         session_cfg = msg.get("session", {})
                         worker_msg = {
                             "type": "prepare",
                             "system_prompt": session_cfg.get("instructions", "You are a helpful assistant."),
-                            "deferred_finalize": session_cfg.get("deferred_finalize", True),
+                            "deferred_finalize": True,
                             "max_slice_nums": session_cfg.get("max_slice_nums", 1),
                         }
                         if session_cfg.get("ref_audio"):
@@ -1734,23 +1748,8 @@ async def realtime_ws(ws: WebSocket):
                             worker_msg["max_slice_nums"] = msg["max_slice_nums"]
                         await worker_ws.send(json.dumps(worker_msg))
 
-                    elif msg_type == "session.pause":
-                        worker.update_duplex_status(GatewayWorkerStatus.DUPLEX_PAUSED)
-                        await worker_ws.send(json.dumps({"type": "pause", "timeout": msg.get("timeout", 300)}))
-
-                    elif msg_type == "session.resume":
-                        worker.update_duplex_status(GatewayWorkerStatus.DUPLEX_ACTIVE)
-                        await worker_ws.send(json.dumps({"type": "resume"}))
-
                     elif msg_type == "session.close":
                         await worker_ws.send(json.dumps({"type": "stop"}))
-
-                    elif msg_type == "response.cancel":
-                        await worker_ws.send(json.dumps({"type": "interrupt"}))
-
-                    else:
-                        # Forward unknown events as-is (backward compat)
-                        await worker_ws.send(raw)
 
             except WebSocketDisconnect:
                 pass
@@ -1770,11 +1769,12 @@ async def realtime_ws(ws: WebSocket):
                         })
 
                     elif msg_type == "result":
+                        kv_len = msg.get("kv_cache_length", 0)
                         if msg.get("is_listen"):
                             await ws.send_json({
                                 "type": "response.listen",
                                 "current_time": msg.get("current_time"),
-                                "kv_cache_length": msg.get("kv_cache_length"),
+                                "kv_cache_length": kv_len,
                                 "cost_all_ms": msg.get("cost_all_ms"),
                                 "wall_clock_ms": msg.get("wall_clock_ms"),
                                 "vision_slices": msg.get("vision_slices"),
@@ -1787,7 +1787,7 @@ async def realtime_ws(ws: WebSocket):
                                 "audio": msg.get("audio_data"),
                                 "end_of_turn": msg.get("end_of_turn", False),
                                 "current_time": msg.get("current_time"),
-                                "kv_cache_length": msg.get("kv_cache_length"),
+                                "kv_cache_length": kv_len,
                                 "cost_all_ms": msg.get("cost_all_ms"),
                                 "cost_llm_ms": msg.get("cost_llm_ms"),
                                 "cost_tts_ms": msg.get("cost_tts_ms"),
@@ -1796,12 +1796,10 @@ async def realtime_ws(ws: WebSocket):
                                 "vision_slices": msg.get("vision_slices"),
                                 "vision_tokens": msg.get("vision_tokens"),
                             })
-                            if msg.get("end_of_turn"):
-                                await ws.send_json({
-                                    "type": "response.done",
-                                    "current_time": msg.get("current_time"),
-                                })
-
+                        if kv_len >= 8192 and not session_closed.is_set():
+                            logger.info(f"Realtime context full (kv={kv_len}): session={session_id}")
+                            await ws.send_json({"type": "session.closed", "reason": "context_full"})
+                            session_closed.set()
                     elif msg_type == "audio_only":
                         await ws.send_json({
                             "type": "response.output_audio.delta",
@@ -1810,12 +1808,6 @@ async def realtime_ws(ws: WebSocket):
                             "end_of_turn": False,
                             "source": "tts_async",
                         })
-
-                    elif msg_type == "paused":
-                        await ws.send_json({"type": "session.paused", "timeout": msg.get("timeout")})
-
-                    elif msg_type == "resumed":
-                        await ws.send_json({"type": "session.resumed"})
 
                     elif msg_type == "stopped":
                         await ws.send_json({"type": "session.closed", "reason": "stopped"})
@@ -1845,6 +1837,7 @@ async def realtime_ws(ws: WebSocket):
             [
                 asyncio.create_task(client_to_worker()),
                 asyncio.create_task(worker_to_client()),
+                asyncio.create_task(session_timeout_watchdog()),
             ],
             return_when=asyncio.FIRST_COMPLETED,
         )
