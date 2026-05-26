@@ -161,8 +161,8 @@ from typing import List, Optional
 
 from pydantic import BaseModel, Field
 
-from core.schemas.common import (
-    Message,
+from core.schemas.content import Message
+from core.schemas.options import (
     GenerationConfig,
     ImageConfig,
     TTSSamplingParams,

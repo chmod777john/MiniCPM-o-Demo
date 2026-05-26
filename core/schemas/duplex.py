@@ -136,7 +136,7 @@ from typing import List, Optional
 
 from pydantic import BaseModel, Field
 
-from core.schemas.common import TTSSamplingParams
+from core.schemas.options import TTSSamplingParams
 
 
 # =============================================================================

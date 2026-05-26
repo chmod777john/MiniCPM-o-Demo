@@ -5,10 +5,13 @@
 模块组织：
 =========
 
-- common.py: 通用类型（Message, Role, ContentItem, TTSConfig 等）
+- content.py: 消息角色、多模态内容、Message
+- options.py: 可复用参数（GenerationConfig, TTSConfig, TTSSamplingParams 等）
+- common.py: 兼容旧入口，重导出 content/options
 - chat.py: 单工对话（ChatRequest, ChatResponse）
 - streaming.py: 流式对话（StreamingRequest, StreamingChunk 等）
 - duplex.py: 双工对话（DuplexConfig, DuplexGenerateResult 等）
+- backend.py: InferenceBackend 协议参数
 
 快速入门：
 =========
@@ -43,8 +46,8 @@ from core.schemas import (
 | Duplex | 全双工实时 | 语音助手、打断对话 |
 """
 
-# 通用类型
-from core.schemas.common import (
+# 通用内容类型
+from core.schemas.content import (
     # 枚举
     Role,
     TTSMode,
@@ -59,7 +62,10 @@ from core.schemas.common import (
     
     # 消息
     Message,
-    
+)
+
+# 通用参数类型
+from core.schemas.options import (
     # 配置
     TTSSamplingParams,
     TTSConfig,
@@ -91,6 +97,34 @@ from core.schemas.duplex import (
     DuplexOfflineInput,
     DuplexChunkResult,
     DuplexOfflineOutput,
+)
+
+# Backend 协议
+from core.schemas.backend import (
+    BackendControl,
+    BackendError,
+    BackendEvent,
+    BackendEventType,
+    BackendInitParams,
+    BackendCloseMessage,
+    BackendControlMessage,
+    BackendInputMessage,
+    BackendMessage,
+    BackendMessageType,
+    BackendMetrics,
+    BackendMode,
+    ClosePayload,
+    FullDuplexBackendInit,
+    FullDuplexStreamInput,
+    InputBundle,
+    InputHints,
+    TurnBasedBackendInit,
+    TurnBasedStreamInput,
+    TurnBasedUnaryUsage,
+    TurnBasedUnaryRequest,
+    TurnBasedUnaryResult,
+    UnaryRequest,
+    UnaryResult,
 )
 
 __all__ = [
@@ -134,4 +168,30 @@ __all__ = [
     "DuplexOfflineInput",
     "DuplexChunkResult",
     "DuplexOfflineOutput",
+
+    # Backend 协议
+    "BackendControl",
+    "BackendError",
+    "BackendEvent",
+    "BackendEventType",
+    "BackendInitParams",
+    "BackendCloseMessage",
+    "BackendControlMessage",
+    "BackendInputMessage",
+    "BackendMessage",
+    "BackendMessageType",
+    "BackendMetrics",
+    "BackendMode",
+    "ClosePayload",
+    "FullDuplexBackendInit",
+    "FullDuplexStreamInput",
+    "InputBundle",
+    "InputHints",
+    "TurnBasedBackendInit",
+    "TurnBasedStreamInput",
+    "TurnBasedUnaryUsage",
+    "TurnBasedUnaryRequest",
+    "TurnBasedUnaryResult",
+    "UnaryRequest",
+    "UnaryResult",
 ]

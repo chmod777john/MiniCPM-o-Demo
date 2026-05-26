@@ -91,11 +91,11 @@ from typing import Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
-from core.schemas.common import (
-    Message,
-    TTSConfig,
+from core.schemas.content import Message
+from core.schemas.options import (
     GenerationConfig,
     ImageConfig,
+    TTSConfig,
     TTSSamplingParams,
 )
 
