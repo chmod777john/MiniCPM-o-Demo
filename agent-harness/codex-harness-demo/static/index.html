@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Codex Harness Demo</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar">
+      <div class="brand">
+        <div>
+          <h1>Harness Demo</h1>
+          <p>o45 指挥 Codex 编辑 HTML</p>
+        </div>
+        <button id="newSessionBtn" type="button">New</button>
+      </div>
+      <div class="session-meta">
+        <div>
+          <span>Session</span>
+          <strong id="sessionId">-</strong>
+        </div>
+        <div>
+          <span>Codex</span>
+          <strong id="codexBin">-</strong>
+        </div>
+        <div>
+          <span>Sandbox</span>
+          <strong id="sandboxMode">-</strong>
+        </div>
+      </div>
+      <div id="eventList" class="events"></div>
+      <form id="messageForm" class="composer">
+        <textarea id="messageInput" rows="4" placeholder="假装 o45：把页面改成一个 SaaS 产品介绍页，主色蓝色，包含 CTA。"></textarea>
+        <div class="composer-actions">
+          <button id="resetBtn" type="button">Reset</button>
+          <button id="sendBtn" type="submit">Send to Codex</button>
+        </div>
+      </form>
+    </aside>
+    <main class="preview-pane">
+      <header class="preview-bar">
+        <div>
+          <span>Preview</span>
+          <strong id="previewVersion">v0</strong>
+        </div>
+        <a id="openPreview" href="#" target="_blank" rel="noreferrer">Open</a>
+      </header>
+      <iframe id="previewFrame" title="HTML preview" sandbox="allow-scripts allow-forms allow-popups"></iframe>
+    </main>
+  </div>
+  <script src="/static/app.js"></script>
+</body>
+</html>

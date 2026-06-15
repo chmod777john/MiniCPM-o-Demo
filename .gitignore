@@ -26,6 +26,8 @@ mobile_gateway_*.log
 
 # 运行时数据
 data/
+agent-harness/codex-harness-demo/.data/
+agent-harness/codex-harness-demo/__pycache__/
 
 # 临时文件
 tmp/
