@@ -1,0 +1,136 @@
+# O5 最简协议场景样例
+
+此文件由 `agent-harness/scripts/o5_simple_grammar_pynini.py` 生成。
+
+每个样例由一个场景约束与展开后的 visible DFA 求交，再取最短 accepted path 得到。
+
+## think_empty_body
+
+```text
+UNIT_START
+NON_INFER
+SPOKEN
+THINK_START
+THINK_END
+UNIT_END
+```
+
+## think_with_body
+
+```text
+UNIT_START
+NON_INFER
+SPOKEN
+THINK_START
+THINK_TOKEN
+THINK_END
+UNIT_END
+```
+
+## think_cross_unit
+
+```text
+UNIT_START
+NON_INFER
+SPOKEN
+THINK_START
+THINK_TOKEN
+UNIT_END
+UNIT_START
+NON_INFER
+SPOKEN
+THINK_END
+UNIT_END
+```
+
+## tool_call_end
+
+```text
+UNIT_START
+NON_INFER
+SPOKEN
+TOOL_CALL_START
+TOOL_CALL_END
+UNIT_END
+```
+
+## tool_call_abort
+
+```text
+UNIT_START
+NON_INFER
+SPOKEN
+TOOL_CALL_START
+TOOL_ABORT
+UNIT_END
+```
+
+## tool_response
+
+```text
+UNIT_START
+NON_INFER
+SPOKEN
+TOOL_RESPONSE_START
+TOOL_RESPONSE_JSON_ID_RESULT
+TOOL_RESPONSE_END
+UNIT_END
+```
+
+## budget_ignored
+
+```text
+UNIT_START
+NON_INFER
+SPOKEN
+BUDGET_REACHED
+THINK_START
+BUDGET_REACHED
+THINK_END
+UNIT_END
+```
+
+## two_items_one_unit
+
+```text
+UNIT_START
+NON_INFER
+SPOKEN
+THINK_START
+THINK_END
+TOOL_RESPONSE_START
+TOOL_RESPONSE_JSON_ID_RESULT
+TOOL_RESPONSE_END
+UNIT_END
+```
+
+## tool_call_cross_unit
+
+```text
+UNIT_START
+NON_INFER
+SPOKEN
+TOOL_CALL_START
+UNIT_END
+UNIT_START
+NON_INFER
+SPOKEN
+TOOL_CALL_END
+UNIT_END
+```
+
+## tool_response_cross_unit
+
+```text
+UNIT_START
+NON_INFER
+SPOKEN
+TOOL_RESPONSE_START
+TOOL_RESPONSE_JSON_ID_RESULT
+UNIT_END
+UNIT_START
+NON_INFER
+SPOKEN
+TOOL_RESPONSE_END
+UNIT_END
+```
