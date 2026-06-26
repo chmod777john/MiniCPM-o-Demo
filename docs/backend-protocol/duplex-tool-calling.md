@@ -1,14 +1,18 @@
 # Duplex Tool Calling Protocol Draft
 
-本文描述 backend 与 runtime 之间用于双工 tool calling 的最小扩展草案，不替代现有
-session 生命周期、WebSocket 有序流、close 完成语义。
+本文描述引入 duplex tool-call 功能之后，对 backend 与 runtime 既有协议的补充说明。
+它不替代现有 session 生命周期、WebSocket 有序流、close 完成语义。
+本补充继续适用于原 full-duplex 输入里的两种模态：`audio` 与 `video`；tool-call
+能力是在同一条双工音视频流上新增的事件能力。
 
 本文只定义最小必要协议面：
 
-- 单条 WebSocket 连接内，事件接收顺序就是流式拼接顺序。
-- `think` 不带 id，不带 seq。
-- `tool_call` 带 `tool_call_id`，不带 seq。
-- 工具结果由 runtime 通过同一个 `tool_call_id` 回填。
+## 宏观上的注意事项
+- 1.客户端不需要对 unit 的组织负责。 比如，客户端可以在任意时候发送 tool-result ，不需要把它跟某个视频帧绑定到一个 unit。  服务端足够智能地处理这些 unit 组织关系。
+- 2.为了最大程度保证resume（当然这个功能现在还没实现），服务端会推送各种 type:response.output.sp_tokens 的数据包。但这些客户端不应根据这些信息来做业务操作，只应该单纯把它们存下来。
+- 3.客户端每个 input 的时候，可选传入 max-tokens, 这样会控制模型在推理的时候不会进行过长的跨 unit 的 think 和 tool-call 。但这个问题现在还没想清楚。
+- 4.tool definitions 在 init 时传入，格式跟 openai 对齐
+
 
 ## 1. 传输与排序
 
@@ -18,31 +22,90 @@ session 内按接收顺序生效。
 协议不要求 `idx`、`event_seq` 或 chunk-level `seq`。如果将来引入多连接转发、消息队列
 重放或断线恢复，可以在不改变本文语义的前提下补充诊断序号。
 
-## 2. 上行输入
+## 2. Init: tool definitions
 
-### 2.1 input.standalone
+duplex tool-call 的工具定义在 `session.init.payload.tools` 中传入。格式采用 OpenAI-compatible
+`tools` 数组；backend 负责校验、保存，并把它按当前模型模板注入模型上下文。
+
+```json
+{
+  "type": "session.init",
+  "payload": {
+    "mode": "full_duplex",
+    "tools": [
+      {
+        "type": "function",
+        "function": {
+          "name": "read_file",
+          "description": "Read a UTF-8 text file from the workspace.",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "path": {
+                "type": "string",
+                "description": "Workspace-relative path."
+              }
+            },
+            "required": ["path"],
+            "additionalProperties": false
+          }
+        }
+      }
+    ]
+  }
+}
+```
+
+约束：
+
+- `payload.tools` MAY 缺省；缺省表示本 session 不启用 tool calling。
+- `payload.tools` MUST 在 `session.init` 时一次性给出。当前草案不定义 session 中途增删工具。
+- backend MUST 按 tool name 建立 definition 索引，用于后续
+  `response.tool_call.args.raw` 的收束和 schema-guided 参数解析。
+- backend 下发 `response.tool_call.args.raw` 时，MUST 使用与模型生成时同一份 tool definition。
+- runtime 执行工具时不需要也不应该重新调用 O5 SDK serializer；它消费 backend 下发的
+  `response.tool_call.args.raw`。
+- 如果 `tools` 非法、重名、或 backend 不支持其中某个 schema，backend 应按既有 fail-fast
+  规则终止 session，而不是在运行中下发可恢复错误事件。
+
+`payload.tools` 是协议字段；工具具体实现和权限仍属于 runtime/tool 执行层，不属于 backend
+推理协议。
+
+## 3. 上行输入
+
+### 3.1 input.standalone
 
 `input.standalone` 表示双工模式下用户或上游系统给模型看的独立文本输入。
 
 ```json
 {
   "type": "input.standalone",
-  "text": "https://arxiv.org/abs/..."
+  "contents": [
+    {
+      "kind": "text",
+      "text": "https://arxiv.org/abs/..."
+    }
+  ]
 }
 ```
 
-`text` 是完整文本。本文不区分来源，不增加 `source` 字段。
+`contents` 预留多模态结构，但当前只实现单个 `text`。
 
-### 2.2 input.tool_result
+### 3.2 input.tool_result
 
 `input.tool_result` 表示外部工具执行完成后的结果。backend 将其作为 tool response 注入
-模型上下文，并用 `tool_call_id` 与之前的模型 tool call 配对。
+模型上下文，并用 `tool_call_id` 与之前的模型 tool call 配对。它是非流式完整结果。
 
 ```json
 {
   "type": "input.tool_result",
   "tool_call_id": "tc_xxx",
-  "content": "工具返回内容"
+  "contents": [
+    {
+      "kind": "text",
+      "text": "工具返回内容"
+    }
+  ]
 }
 ```
 
@@ -50,12 +113,103 @@ session 内按接收顺序生效。
 
 - `tool_call_id` MUST 等于 backend 已经下发过的某个 `response.tool_call.args.begin`
   中的 id。
-- `content` 是完整工具结果文本。当前草案不定义流式 tool result。
-- 成功与失败不在协议字段中区分；错误也作为 `content` 返回。
+- `contents` 是完整工具结果内容列表。
+- 成功与失败不在协议字段中区分；错误也作为 `contents` 返回。
 
-## 3. 下行输出
+### 3.3 input.tool_result.delta / done
 
-### 3.1 response.think
+如果工具本身支持流式输出，runtime MAY 用 `input.tool_result.delta` 把工具结果分块回填给
+backend，并用 `input.tool_result.done` 收束。backend 将这些 delta 按接收顺序作为同一个
+tool response 注入模型上下文。
+
+```json
+{
+  "type": "input.tool_result.delta",
+  "tool_call_id": "tc_xxx",
+  "delta": {
+    "kind": "text",
+    "text": "第一段结果..."
+  }
+}
+```
+
+```json
+{
+  "type": "input.tool_result.done",
+  "tool_call_id": "tc_xxx"
+}
+```
+
+约束：
+
+- `input.tool_result` 和 `input.tool_result.delta` / `done` 是互斥的两种回填方式；同一个
+  `tool_call_id` MUST 只选择其中一种。
+- 每个 `input.tool_result.delta` MUST 属于一个已开始但尚未 done 的 streaming tool result。
+- `delta.kind` 当前只定义 `text`；后续可扩展其他内容类型。
+- runtime MUST 在最后一个 delta 后发送 `input.tool_result.done`。
+- backend MAY 在模型内部用 `<|tool_response_streaming|>` 等 input-event special token 标记
+  流式工具结果，但这些 token 不作为 `response.output.sp_tokens` 下发。
+
+## 4. 下行输出
+
+### 4.1 response.output.sp_tokens
+
+`response.output.sp_tokens` 表示模型输出侧 special-token 的只读语义观测。它主要服务于
+尚未实现的 semantic resume / 事件日志，避免把 `budget_reached`、`tts_pad`、slot/turn eos
+这类信息在拼接文本时丢掉。
+
+```json
+{
+  "type": "response.output.sp_tokens",
+  "token": "spoken_slot_eos"
+}
+```
+
+约束：
+
+- `token` 是协议枚举，不是 tokenizer 的 raw token 文本，也不是 token id。
+- 一个 special token MUST 独占一条 `response.output.sp_tokens` 事件。连续 special token
+  MUST 按模型输出顺序拆成多条事件下发。
+- 事件顺序就是模型输出顺序；runtime SHOULD 按接收顺序把它与 text/audio/think/tool_call
+  事件一起写入 semantic resume 日志。
+- `response.output.sp_tokens` 是只读信息。runtime MUST NOT 根据它执行控制行为，例如启动工具、
+  取消工具、打断模型、关闭 session、强制 listen。
+- backend SHOULD NOT 下发纯结构骨架 token，例如 `<unit>`、`</unit>`、slot start/end、
+  image/audio placeholder。这些由 backend 在 canonicalize/replay 时按模板重建。
+- input-event 侧 special token，例如 `<|tool_started|>`、`<|event_budget_reached|>`、
+  `<|tool_response_streaming|>`，不属于 `response.output.sp_tokens` 的默认输出范围。
+- 如果同一个模型推进步骤同时产生文本和 sp token，backend SHOULD 按模型可见顺序拆成多条事件。
+
+当前输出侧 sp-token 枚举：
+
+| `token` | 来源语义 | 说明 |
+|------------|----------|------|
+| `listen` | `<|listen|>` | 当前 unit 模型决定继续听，不产生 spoken text。可作为旧的 `response.output.delta kind=listen` 的只读日志补充。 |
+| `tts_pad` | `<|tts_pad|>` | spoken lane 仍在时间结构中，但当前 unit 没有新增 spoken text。 |
+| `speak` | `<|speak|>` | 当前 unit 开始/包含 spoken text；如果 text/audio delta 已明确表达发声，backend MAY 省略。 |
+| `spoken_slot_eos` | `<|spoken_slot_eos|>` / 兼容目标中的 `<|chunk_eos|>` | 当前 spoken slot 结束，但 spoken turn 未结束。 |
+| `spoken_turn_eos` | `<|spoken_turn_eos|>` / 兼容目标中的 `<|turn_eos|>` | 当前 spoken turn 结束。 |
+| `no_action` | `<|no_action|>` | 当前 non-spoken lane 无动作。 |
+| `non_spoken_eos` | `<|non_spoken_eos|>` | 当前 non-spoken decode 正常结束。 |
+| `non_spoken_budget_reached` | `<|non_spoken_budget_reached|>` | 当前 non-spoken decode 因预算用尽中断，后续 unit 可继续。 |
+| `non_spoken_hold` | `<|non_spoken_hold|>` | 模型要求 non-spoken lane 暂停/保持。 |
+| `non_spoken_abort` | `<|non_spoken_abort|>` | 模型要求中止当前 non-spoken 动作。 |
+
+示例：
+
+```json
+{ "type": "response.output.sp_tokens", "token": "spoken_slot_eos" }
+```
+
+```json
+{ "type": "response.output.sp_tokens", "token": "non_spoken_budget_reached" }
+```
+
+```json
+{ "type": "response.output.sp_tokens", "token": "spoken_turn_eos" }
+```
+
+### 4.2 response.think
 
 `think` 是模型生成的非口语思考文本流。它需要 begin/end 边界，但不需要 id 或 seq。
 
@@ -77,10 +231,11 @@ session 内按接收顺序生效。
 - `response.think.delta` 的文本按 WebSocket 接收顺序拼接。
 - `response.think.end` 表示当前 think span 正常闭合。
 
-### 3.2 response.tool_call.args
+### 4.3 response.tool_call.args
 
 `response.tool_call.args.*` 表示模型正在生成一个工具调用参数流。`tool_call_id` 由 backend
-分配并贴到所有相关事件上。
+分配并贴到所有相关事件上。这里保留 chunk，同时在结束后给出 backend 已解析好的
+raw tool call。
 
 ```json
 {
@@ -104,17 +259,35 @@ session 内按接收顺序生效。
 }
 ```
 
+```json
+{
+  "type": "response.tool_call.args.raw",
+  "tool_call_id": "tc_xxx",
+  "raw": {
+    "type": "function_call",
+    "name": "write_file",
+    "arguments": "{\"path\":\"a.txt\",\"content\":\"hello\"}"
+  }
+}
+```
+
 约束：
 
 - `tool_call_id` MUST 由 backend 分配。
 - runtime MUST 按接收顺序拼接同一个 `tool_call_id` 的 `delta`。
-- `response.tool_call.args.end` 表示参数流闭合，可以解析并执行。
+- `response.tool_call.args.end` 表示参数流闭合。
+- `response.tool_call.args.raw` 表示 backend 已完成收束和解析后的 tool call 结果，runtime
+  MUST 以它作为执行工具的依据。
+- runtime MAY 拼接 `delta` 用于展示、日志或诊断，但执行工具时不需要、也不应该再调用 SDK
+  serializer 解析参数流。
+- `raw` 内 MUST NOT 重复携带 `id`、`call_id` 或 `tool_call_id`；事件外层的
+  `tool_call_id` 是 runtime 回填结果时使用的唯一关联 id。
 - 当前草案不定义 chunk-level `seq`。
 
 `tool_call_id` 是 backend-worker wire 层对象 id。模型 token 流内部是否显式包含 id，
 不由本文规定。
 
-### 3.3 response.tool_call.abort
+### 4.4 response.tool_call.abort
 
 模型可能在参数流完成前放弃一个工具调用。backend 用 `response.tool_call.abort` 通知
 runtime。
@@ -133,7 +306,7 @@ runtime。
   runtime/tool 实现决定。
 - 被 abort 的 tool call 不要求 runtime 回传 `input.tool_result`。
 
-## 4. 最小生命周期
+## 5. 最小生命周期
 
 一次普通工具调用的下行与上行顺序如下：
 
@@ -145,8 +318,22 @@ backend -> runtime: response.think.end
 backend -> runtime: response.tool_call.args.begin { tool_call_id }
 backend -> runtime: response.tool_call.args.delta*
 backend -> runtime: response.tool_call.args.end { tool_call_id }
+backend -> runtime: response.tool_call.args.raw { tool_call_id, raw }
 
-runtime -> backend: input.tool_result { tool_call_id, content }
+runtime -> backend: input.tool_result { tool_call_id, contents }
+```
+
+一次流式工具结果回填：
+
+```text
+backend -> runtime: response.tool_call.args.begin { tool_call_id }
+backend -> runtime: response.tool_call.args.delta*
+backend -> runtime: response.tool_call.args.end { tool_call_id }
+backend -> runtime: response.tool_call.args.raw { tool_call_id, raw }
+
+runtime -> backend: input.tool_result.delta { tool_call_id, delta }
+runtime -> backend: input.tool_result.delta { tool_call_id, delta }
+runtime -> backend: input.tool_result.done { tool_call_id }
 ```
 
 一次被放弃的工具调用：
@@ -162,75 +349,80 @@ backend -> runtime: response.tool_call.abort { tool_call_id }
 ```text
 runtime -> backend: input.standalone
 runtime -> backend: input.tool_result
+runtime -> backend: input.tool_result.delta / input.tool_result.done
 ```
 
 backend 负责把这些上行事件按模型内部 unit/text input slot 策略注入上下文。本文不规定
 具体 unit 分配算法。
 
-## 5. 工具参数解析
+## 7. 可选 token 观测
 
-runtime 收到完整工具参数流后，按 WebSocket 接收顺序拼接同一个 `tool_call_id` 的
-`response.tool_call.args.delta`：
+backend MAY 在调试或分析模式下为任意下行事件附加 `token_observations` 字段，类似
+OpenAI API 的 `logprobs` / `top_logprobs` 能力。
 
-```text
-tool_call_content = concat(delta*)
-```
+`token_observations` 是与该事件输出内容对应的 token 观测数组：
 
-如果参数格式是 SDK 默认的 `minicpm4_xml`，拼接结果可以交给 SDK tool serializer 反解析：
+- text / think / tool-call delta 事件 MAY 携带一个或多个文本 token 的观测。
+- `response.output.sp_tokens` 每条事件只表示一个 special token，因此 `token_observations`
+  若存在，长度 SHOULD 为 1。
+- audio delta 如果要暴露 TTS token、codec token 或 LLM text token 观测，也使用同一个字段；
+  这些观测不能替代音频 payload 本身。
 
-```python
-from minicpm_o5_sdk.tool_serializer import (
-    DEFAULT_TOOL_SERIALIZER_NAME,
-    get_o5_tool_serializer,
-    parse_and_validate_tools,
-)
-
-tools = parse_and_validate_tools(raw_openai_tools)
-definition = tools[0]
-
-serializer = get_o5_tool_serializer(DEFAULT_TOOL_SERIALIZER_NAME)
-call = serializer.deserialize_tool_call(tool_call_content, definition)
-
-name = call.function.name
-arguments = call.function.arguments
-```
-
-解析结果是 OpenAI 风格 tool call 对象，而不是裸字符串：
+普通文本输出时，OpenAI-style 做法是文本照常返回，token 概率作为每个输出 token 的附加观测：
 
 ```json
 {
-  "id": "",
-  "function": {
-    "name": "write_file",
-    "arguments": {
-      "path": "a.txt",
-      "content": "hello"
+  "type": "response.output.delta",
+  "kind": "text",
+  "text": "好的，我来查一下",
+  "token_observations": [
+    {
+      "id": 10101,
+      "text": "好的",
+      "logprob": -0.12,
+      "top_logprobs": [
+        { "id": 10101, "text": "好的", "logprob": -0.12 },
+        { "id": 10102, "text": "可以", "logprob": -1.43 }
+      ]
+    },
+    {
+      "id": 10012,
+      "text": "，",
+      "logprob": -0.03,
+      "top_logprobs": [
+        { "id": 10012, "text": "，", "logprob": -0.03 },
+        { "id": 10013, "text": "。", "logprob": -3.20 }
+      ]
     }
-  }
+  ]
+}
+```
+
+special-token 输出同理，只是 `response.output.sp_tokens` 单事件只对应一个 special token：
+
+```json
+{
+  "type": "response.output.sp_tokens",
+  "token": "spoken_slot_eos",
+  "token_observations": [
+    {
+      "id": 248146,
+      "text": "<|spoken_slot_eos|>",
+      "logprob": -0.03,
+      "top_logprobs": [
+        { "id": 248146, "text": "<|spoken_slot_eos|>", "logprob": -0.03 },
+        { "id": 248147, "text": "<|spoken_turn_eos|>", "logprob": -3.92 }
+      ]
+    }
+  ]
 }
 ```
 
 约束：
 
-- `deserialize_tool_call(content, definition)` MUST 使用对应 tool definition。
-- 默认 XML 格式依赖 `definition.function.parameters` 做 schema-guided cast，例如把 `"3"`
-  还原为 integer。
-- serializer 返回的 `id` 是占位空串；工具执行与结果回填 MUST 使用 wire 层
-  `tool_call_id`。
-- runtime 可以只消费 `call.function.name` 与 `call.function.arguments`。
-
-## 6. 与现有事件的关系
-
-现有下行事件继续保留：
-
-```text
-response.output.delta kind=listen
-response.output.delta kind=text
-response.output.delta kind=audio
-response.done
-session.closed
-```
-
-本扩展只新增 think 与 tool-call 相关事件，以及上行的 `input.standalone` /
-`input.tool_result`。字段结构保持
-不变。
+- `token_observations[].id` / `token_observations[].text` 只用于调试、审计、模型分析或 exact trace 辅助，不作为 semantic
+  resume 的主接口。
+- 返回 token id 时 SHOULD 同时返回 tokenizer bundle 或 fingerprint，避免跨 bundle 误解。
+- `top_logprobs` MAY 截断到调用方请求的 `k`；缺省不返回。
+- 不返回完整 logits 向量；如需候选，使用截断后的 `top_logprobs`。
+- runtime 执行工具 MUST 继续使用 `response.tool_call.args.raw`，不得依赖 token 观测字段反解析工具参数。

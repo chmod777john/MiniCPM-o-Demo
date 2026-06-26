@@ -5,6 +5,9 @@
 | [network.md](./network.md) | **过程 / 原语 / 完成语义。** 四原语（init/push/pull/unary）、session 生命周期、输入与下行事件语义、背压、断线、fail-fast。规范层。 | 先读这份，理解协议形状与状态机。 |
 | [schema.md](./schema.md) | **消息 schema / 字段 / 编码。** 消息封套、契约字段 vs 透传字段、音频/图像编码、各消息的字段表、metrics 字段。用 RFC 2119 MUST/SHOULD/MAY。 | 实现具体收发与编解码时对照。 |
 | [sequences.md](./sequences.md) | **时序图 + 示例数据包。** full_duplex、turn_based 流式、turn_based 一次性三条交互的 mermaid 时序图与真实抓包示例。 | 想看一次完整交互长什么样时。 |
+| [duplex-tool-calling.md](./duplex-tool-calling.md) | **双工 tool calling 扩展草案。** `input.standalone` / `input.tool_result`，以及 think 与 tool-call 参数流下行事件。 | 讨论双工工具调用和独立文本输入时。 |
+| [o5-special-token-structure.md](./o5-special-token-structure.md) | **O5 special token 嵌套结构。** 当前 o5-sdk 47 个 active duplex special token 的层级、slot/frame 结构与出现条件。 | 对齐 backend wire 事件与 o5-sdk token 模板时。 |
+| [resume-trace-special-tokens.md](./resume-trace-special-tokens.md) | **resume trace 与 special token 暴露策略。** 普通 API 不直接返回 special token；exact resume 使用可选、版本化的模型可见 trace。 | 讨论 agent resume、KV-cache 重建、是否暴露模型内部 token 时。 |
 
 ## 参考实现
 
@@ -68,4 +71,3 @@ PYTHONPATH=. .venv/base/bin/python tests/e2e_realtime.py video        # full_dup
 ```
 
 实现了别的 backend 后，把 worker 的 `--backend-server-url` 指向它、重跑同一个测试即可验证。
-
