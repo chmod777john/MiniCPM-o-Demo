@@ -271,6 +271,20 @@ raw tool call。
 }
 ```
 
+如果模型采样没有产生合法的 tool-call 序列，backend 仍然下发同一个
+`response.tool_call.args.raw` 事件，但 `raw` 只包含 `error` 字段，值为解析失败的 reason
+字符串：
+
+```json
+{
+  "type": "response.tool_call.args.raw",
+  "tool_call_id": "tc_xxx",
+  "raw": {
+    "error": "failed to parse tool call: missing required argument `path`"
+  }
+}
+```
+
 约束：
 
 - `tool_call_id` MUST 由 backend 分配。
@@ -278,6 +292,8 @@ raw tool call。
 - `response.tool_call.args.end` 表示参数流闭合。
 - `response.tool_call.args.raw` 表示 backend 已完成收束和解析后的 tool call 结果，runtime
   MUST 以它作为执行工具的依据。
+- 当 `raw.error` 存在时，该 tool call 解析失败，runtime MUST NOT 执行该工具，也不需要回填
+  `input.tool_result`。
 - runtime MAY 拼接 `delta` 用于展示、日志或诊断，但执行工具时不需要、也不应该再调用 SDK
   serializer 解析参数流。
 - `raw` 内 MUST NOT 重复携带 `id`、`call_id` 或 `tool_call_id`；事件外层的
