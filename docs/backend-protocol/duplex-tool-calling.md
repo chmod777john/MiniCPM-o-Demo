@@ -438,7 +438,5 @@ special-token 输出同理，只是 `response.output.sp_tokens` 单事件只对�
 
 - `token_observations[].id` / `token_observations[].text` 只用于调试、审计、模型分析或 exact trace 辅助，不作为 semantic
   resume 的主接口。
-- 返回 token id 时 SHOULD 同时返回 tokenizer bundle 或 fingerprint，避免跨 bundle 误解。
-- `top_logprobs` MAY 截断到调用方请求的 `k`；缺省不返回。
 - 不返回完整 logits 向量；如需候选，使用截断后的 `top_logprobs`。
 - runtime 执行工具 MUST 继续使用 `response.tool_call.args.raw`，不得依赖 token 观测字段反解析工具参数。
