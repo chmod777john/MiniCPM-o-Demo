@@ -2660,6 +2660,7 @@ class MiniCPMODuplex:
 
         # Force listen state
         self._streaming_generate_count = 0
+        self._last_chunk_had_tts_pad = False
 
         # Schema tracking: record the complete prefill + generate token sequence
         # prefill_schema_tokens: each element is a list of prefill tokens for a unit
@@ -3138,6 +3139,8 @@ class MiniCPMODuplex:
         listen_top_k=None,
         text_repetition_penalty=1.05,
         text_repetition_window_size=512,
+        length_penalty=1.1,
+        force_listen_override: bool = False,
     ):
         start_time = time.time()
 
@@ -3178,8 +3181,6 @@ class MiniCPMODuplex:
         logits = self.pending_logits
         self.pending_logits = None
 
-        force_listen_override = kwargs.pop("force_listen_override", False)
-
         # Force listen: initial N calls OR per-chunk force_listen_override from frontend
         force_listen = self._streaming_generate_count < self.force_listen_count or force_listen_override
         self._streaming_generate_count += 1
@@ -3199,6 +3200,12 @@ class MiniCPMODuplex:
         current_time = self.audio_chunk_idx
         is_listen = False
         end_of_turn = False
+        chunk_has_tts_pad = False
+        tts_pad_suppressed = False
+
+        if self._last_chunk_had_tts_pad and self.tts_pad_id not in self.decoder.forbidden_token_ids:
+            self.decoder.forbidden_token_ids.append(self.tts_pad_id)
+            tts_pad_suppressed = True
 
         llm_start_time = time.time()
 
@@ -3222,6 +3229,7 @@ class MiniCPMODuplex:
                     listen_prob_scale=listen_prob_scale,
                     text_repetition_penalty=text_repetition_penalty,
                     text_repetition_window_size=text_repetition_window_size,
+                    length_penalty=length_penalty,
                 )
 
                 # if current turn not ended, not allowed to listen (only check when not force_listen)
@@ -3229,6 +3237,8 @@ class MiniCPMODuplex:
                     last_id = torch.tensor([self.tts_bos_token_id], dtype=torch.long, device=self.device)
 
             self.total_ids.append(last_id.item())
+            if last_id.item() == self.tts_pad_id:
+                chunk_has_tts_pad = True
 
             is_listen = last_id.item() == self.listen_token_id
 
@@ -3261,6 +3271,10 @@ class MiniCPMODuplex:
                 if j != 0:
                     total_hidden_in_unit.append([last_id.item(), hidden, end_of_turn])
                     total_ids_in_unit.append(last_id.item())
+
+        if tts_pad_suppressed:
+            self.decoder.forbidden_token_ids.remove(self.tts_pad_id)
+        self._last_chunk_had_tts_pad = chunk_has_tts_pad
 
         # Prefill </unit> token
         unit_end_id = self.tokenizer.convert_tokens_to_ids("</unit>")

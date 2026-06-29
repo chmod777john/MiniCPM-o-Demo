@@ -500,6 +500,7 @@ class MiniCPMO(BaseMiniCPMO):
                 if text_repetition_window_size is None
                 else text_repetition_window_size
             ),
+            length_penalty=length_penalty,
             force_listen_override=force_listen_override,
         )
 

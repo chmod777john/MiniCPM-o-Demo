@@ -2114,6 +2114,7 @@ class StreamDecoder:
         listen_prob_scale=1.0,
         text_repetition_penalty=1.05,
         text_repetition_window_size=512,
+        length_penalty=1.1,
     ):
         """
         Args:
@@ -2126,6 +2127,7 @@ class StreamDecoder:
             listen_prob_scale: multiply listen_id probability by a weight (<1 means decrease, >1 means increase)
             text_repetition_penalty: repetition penalty coefficient, >1.0 means decrease repetition, <1.0 means increase repetition
             text_repetition_window_size: repetition penalty window size
+            length_penalty: >1.0 suppresses turn_eos and makes speaking turns less likely to end early
 
         Sampling strategy:
             1. first sample all tokens with original logits (apply temperature)
@@ -2174,6 +2176,13 @@ class StreamDecoder:
                     else:
                         # encourage repetition: increase logits
                         logits[0, token_id] *= 1.0 / text_repetition_penalty
+
+        if length_penalty != 1.0:
+            turn_eos_id = self.turn_eos_id
+            if logits[0, turn_eos_id] > 0:
+                logits[0, turn_eos_id] = logits[0, turn_eos_id] / length_penalty
+            else:
+                logits[0, turn_eos_id] = logits[0, turn_eos_id] * length_penalty
 
         if listen_prob_scale != 1.0:  # modify listen token logit separately
             logits[0, self.listen_id] *= listen_prob_scale
