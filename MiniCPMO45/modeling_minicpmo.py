@@ -3178,9 +3178,21 @@ class MiniCPMODuplex:
         logits = self.pending_logits
         self.pending_logits = None
 
-        # Force listen: check if we should force listen for first N calls
-        force_listen = self._streaming_generate_count < self.force_listen_count
+        force_listen_override = kwargs.pop("force_listen_override", False)
+
+        # Force listen: initial N calls OR per-chunk force_listen_override from frontend
+        force_listen = self._streaming_generate_count < self.force_listen_count or force_listen_override
         self._streaming_generate_count += 1
+
+        if force_listen_override and not self.current_turn_ended:
+            self.total_ids.append(self.turn_eos_token_id)
+            logits, _ = self.decoder.feed(
+                self.decoder.embed_token(self.turn_eos_token_id),
+                return_logits=True,
+            )
+            self.current_turn_ended = True
+            self._reset_token2wav_for_new_turn()
+            logger.info("[Duplex] force_listen: closed current speaking turn and reset TTS caches")
 
         total_hidden_in_unit = []
         total_ids_in_unit = []
@@ -3322,7 +3334,7 @@ class MiniCPMODuplex:
 
         if end_of_turn:
             min_token_per_chunk = 0
-        force_flush = False
+        force_flush = True
         if self.tts_text_start_pos == 0:  # this is the start of the turn
             min_token_per_chunk = 0  # allow decoding <1s audio
             force_flush = True

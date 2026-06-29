@@ -483,33 +483,25 @@ class MiniCPMO(BaseMiniCPMO):
         if self.duplex is None:
             raise RuntimeError("Duplex is not initialized; call init_unified() first")
 
-        old_force_listen_count = getattr(self.duplex, "force_listen_count", 0)
-        if force_listen_override:
-            current_count = getattr(self.duplex, "_streaming_generate_count", 0)
-            self.duplex.force_listen_count = max(old_force_listen_count, current_count + 1)
-
-        try:
-            return self.duplex.streaming_generate(
-                decode_mode=decode_mode,
-                temperature=self.duplex.temperature if temperature is None else temperature,
-                top_k=self.duplex.top_k if top_k is None else top_k,
-                top_p=self.duplex.top_p if top_p is None else top_p,
-                listen_prob_scale=self.duplex.listen_prob_scale if listen_prob_scale is None else listen_prob_scale,
-                listen_top_k=listen_top_k,
-                text_repetition_penalty=(
-                    self.duplex.text_repetition_penalty
-                    if text_repetition_penalty is None
-                    else text_repetition_penalty
-                ),
-                text_repetition_window_size=(
-                    self.duplex.text_repetition_window_size
-                    if text_repetition_window_size is None
-                    else text_repetition_window_size
-                ),
-            )
-        finally:
-            if force_listen_override:
-                self.duplex.force_listen_count = old_force_listen_count
+        return self.duplex.streaming_generate(
+            decode_mode=decode_mode,
+            temperature=self.duplex.temperature if temperature is None else temperature,
+            top_k=self.duplex.top_k if top_k is None else top_k,
+            top_p=self.duplex.top_p if top_p is None else top_p,
+            listen_prob_scale=self.duplex.listen_prob_scale if listen_prob_scale is None else listen_prob_scale,
+            listen_top_k=listen_top_k,
+            text_repetition_penalty=(
+                self.duplex.text_repetition_penalty
+                if text_repetition_penalty is None
+                else text_repetition_penalty
+            ),
+            text_repetition_window_size=(
+                self.duplex.text_repetition_window_size
+                if text_repetition_window_size is None
+                else text_repetition_window_size
+            ),
+            force_listen_override=force_listen_override,
+        )
 
     def duplex_finalize(self):
         if self.duplex is None:
