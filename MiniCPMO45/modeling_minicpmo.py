@@ -2671,18 +2671,22 @@ class MiniCPMODuplex:
     def prepare(
         self,
         prefix_system_prompt: Optional[str] = None,
+        suffix_system_prompt: Optional[str] = None,
         ref_audio: Optional[np.ndarray] = None,
         prompt_wav_path: Optional[str] = None,
         context_previous_marker: str = "\n\nprevious: ",
         **kwargs,
     ):
-        prefix_system_prompt = prefix_system_prompt or "Streaming Omni Conversation."
-
-        prefix_system_prompt = "<|im_start|>system\n" + prefix_system_prompt
-        suffix_system_prompt = "<|im_end|>"
-        if isinstance(ref_audio, np.ndarray):
-            prefix_system_prompt += "\n<|audio_start|>"
-            suffix_system_prompt = "<|audio_end|>" + suffix_system_prompt
+        if prefix_system_prompt is None:
+            prefix_system_prompt = "<|im_start|>system\nStreaming Omni Conversation."
+            suffix_system_prompt = "<|im_end|>"
+            if isinstance(ref_audio, np.ndarray):
+                prefix_system_prompt += "\n<|audio_start|>"
+                suffix_system_prompt = "<|audio_end|>" + suffix_system_prompt
+        elif suffix_system_prompt is None:
+            suffix_system_prompt = "<|im_end|>"
+            if isinstance(ref_audio, np.ndarray):
+                suffix_system_prompt = "<|audio_end|>" + suffix_system_prompt
 
         self.clear_break_event()
         self.clear_session_stop()
