@@ -444,8 +444,8 @@ class MiniCPMO(BaseMiniCPMO):
             raise RuntimeError("Duplex is not initialized; call init_unified() first")
 
         return self.duplex.prepare(
-            prefix_system_prompt=_strip_duplex_system_prompt(prefix_system_prompt),
-            suffix_system_prompt=_strip_duplex_suffix_prompt(suffix_system_prompt, isinstance(ref_audio, np.ndarray)),
+            prefix_system_prompt=prefix_system_prompt,
+            suffix_system_prompt=suffix_system_prompt,
             ref_audio=ref_audio,
             prompt_wav_path=prompt_wav_path,
             context_previous_marker=context_previous_marker,
