@@ -32,24 +32,6 @@ from transformers.cache_utils import DynamicCache
 logger = logging.getLogger(__name__)
 
 
-class InvalidSamplingProbabilitiesError(RuntimeError):
-    """Raised before multinomial sampling when probabilities are unsafe."""
-
-
-def _validate_sampling_probs(
-    probs: torch.Tensor,
-    *,
-    context: str,
-) -> None:
-    """Fail before torch.multinomial can trigger a CUDA device-side assert."""
-    invalid = (~torch.isfinite(probs)).any() | (probs < 0).any()
-    if invalid.item():
-        raise InvalidSamplingProbabilitiesError(
-            f"{context}: invalid probabilities before multinomial "
-            f"(shape={tuple(probs.shape)}, dtype={probs.dtype}, device={probs.device})"
-        )
-
-
 # text
 @dataclass
 class GenerateChunkOutput:
@@ -147,7 +129,6 @@ class ChunkPrefillChunkGenerate:
         repetition_penalty: float = 1.05,
         length_penalty: float = 1.0,
         all_input_ids: Optional[torch.Tensor] = None,
-        suppress_forbidden_tokens: bool = True,
     ) -> GenerateChunkOutput:
         """
         Args:
@@ -195,7 +176,7 @@ class ChunkPrefillChunkGenerate:
             logits = outputs.logits[:, -1, :].to(copy=True, dtype=torch.float32, device=inputs_embeds.device)
 
             # forbid specific tokens decoding = model.generate@suppress_tokens
-            if suppress_forbidden_tokens and self.forbidden_token_ids:
+            if self.forbidden_token_ids:
                 logits[:, self.forbidden_token_ids] = float("-inf")
 
             past_key_values = outputs.past_key_values
@@ -268,7 +249,6 @@ class ChunkPrefillChunkGenerate:
 
                 # sampling
                 probs = F.softmax(logits, dim=-1)
-                _validate_sampling_probs(probs, context="ChunkPrefillChunkGenerate.generate.sample")
                 next_token = torch.multinomial(probs, num_samples=1)
             else:
                 next_token = torch.argmax(logits, dim=-1, keepdim=True)
@@ -654,21 +634,25 @@ class TTSStreamingGenerator:
 
         keep_len = sink_len + last_chunk_len
 
-        if current_kv_len <= keep_len:
-            # No need to truncate, but may need to reindex
-            return
-
-        # Step 1: Truncate KV cache - keep sink and last chunk
+        # Get device and dtype
         device = self.past_key_values.key_cache[0].device
         dtype = self.past_key_values.key_cache[0].dtype
 
+        if current_kv_len <= keep_len:
+            last_chunk_kv_len = current_kv_len - sink_len
+            if last_chunk_kv_len <= 0:
+                return
+            self.text_start_pos = current_kv_len
+            return
+
+        # Step 1: Truncate KV cache - keep sink and last chunk
         new_cache = DynamicCache()
         num_layers = len(self.past_key_values.key_cache)
 
-        # Calculate position delta for reindexing
         original_start_pos = current_kv_len - last_chunk_len
         new_start_pos = sink_len
-        delta_positions = torch.arange(last_chunk_len, device=device) + (new_start_pos - original_start_pos)
+        delta = new_start_pos - original_start_pos  # This is a scalar constant
+        delta_positions = torch.full((last_chunk_len,), delta, dtype=torch.float32, device=device)
 
         # Compute rotation cos/sin
         cos, sin = self._compute_rope_cos_sin(delta_positions, device, dtype)
@@ -742,7 +726,13 @@ class TTSStreamingGenerator:
             # reindex: truncate KV cache keeping sink + last chunk, reindex positions via RoPE
             self._reindex_kv_cache()
             current_condition = condition
-            # text_start_pos is updated in _reindex_kv_cache
+            # Always update text_start_pos based on actual KV cache length (like reference code)
+            if self.past_key_values is not None:
+                if hasattr(self.past_key_values, "get_seq_length"):
+                    kv_len = self.past_key_values.get_seq_length()
+                else:
+                    kv_len = self.past_key_values[0][0].shape[2]
+                self.text_start_pos = kv_len
         else:
             current_condition = condition
 
@@ -822,7 +812,6 @@ class TTSStreamingGenerator:
 
             # sample next token (only use first codebook, same as generate)
             scores = F.softmax(logits, dim=-1)
-            _validate_sampling_probs(scores, context="AudioTokenGenerator.streaming_generate.sample")
             idx_next = torch.multinomial(scores, num_samples=1)  # [(B*num_vq), 1]
             next_id = idx_next.view(-1, self.num_vq)[:, 0:1]  # only take first codebook → [B, 1]
             del scores
@@ -880,13 +869,23 @@ class TTSStreamingGenerator:
                     else:  # generation of this audio chunk is not finished, continue generating
                         continue
 
-        # Save current chunk info for sliding_recompute
+        # Save current chunk info for sliding_recompute and reindex
         self._chunk_info.append(current_chunk_info)
         self._total_seq_len += condition.shape[1] + len(chunk_generated_tokens)
 
         # Update text_start_pos based on attention type
         if self.attention_type == "sliding_recompute":
+            # sliding_recompute: will be reset at next chunk start, update normally here
             self.text_start_pos += prefill_len + len(chunk_generated_tokens)
+        elif self.attention_type == "reindex":
+            # reindex: position based on actual KV cache length (positions have been reindexed to be continuous)
+            if self.past_key_values is not None:
+                if hasattr(self.past_key_values, "get_seq_length"):
+                    self.text_start_pos = self.past_key_values.get_seq_length()
+                else:
+                    self.text_start_pos = self.past_key_values[0][0].shape[2]
+            else:
+                self.text_start_pos += condition.shape[1] + len(chunk_generated_tokens)
         else:
             self.text_start_pos += condition.shape[1] + len(chunk_generated_tokens)
         # note: remaining tokens in buffer will be kept, and accumulated next time
@@ -2115,7 +2114,6 @@ class StreamDecoder:
         listen_prob_scale=1.0,
         text_repetition_penalty=1.05,
         text_repetition_window_size=512,
-        length_penalty=1.1,
     ):
         """
         Args:
@@ -2146,7 +2144,6 @@ class StreamDecoder:
                 sampled_token = torch.argmax(logits[0]).item()
             else:
                 original_probs = F.softmax(logits[0], dim=-1)
-                _validate_sampling_probs(original_probs, context="StreamDecoder.decode.initial_chunk_eos_sample")
                 sampled_token = torch.multinomial(original_probs, num_samples=1).item()
 
             # if sampled chunk_eos, return directly
@@ -2178,15 +2175,6 @@ class StreamDecoder:
                         # encourage repetition: increase logits
                         logits[0, token_id] *= 1.0 / text_repetition_penalty
 
-        # 2. apply length penalty to turn_eos token
-        # higher length_penalty → suppress turn_eos → model 更不容易结束当前 turn，倾向更长输出
-        if length_penalty != 1.0:
-            turn_eos_id = self.turn_eos_id
-            if logits[0, turn_eos_id] > 0:
-                logits[0, turn_eos_id] = logits[0, turn_eos_id] / length_penalty
-            else:
-                logits[0, turn_eos_id] = logits[0, turn_eos_id] * length_penalty
-
         if listen_prob_scale != 1.0:  # modify listen token logit separately
             logits[0, self.listen_id] *= listen_prob_scale
 
@@ -2209,7 +2197,6 @@ class StreamDecoder:
             logits = logits / temperature
             logits = top_k_top_p_filtering(logits, top_k=top_k, top_p=top_p)
             probs = F.softmax(logits, dim=-1)
-            _validate_sampling_probs(probs, context="StreamDecoder.decode.post_filter_sample")
             next_token_id = torch.multinomial(probs, num_samples=1).squeeze(1)
         else:
             raise ValueError(f"Unsupported decode mode: {mode}")
@@ -2220,3 +2207,211 @@ class StreamDecoder:
             self.generated_special_tokens.append(next_token_id.item())
 
         return next_token_id
+
+
+def _download_url_to_tempfile(url: str, suffix: str = "", timeout: int = 60) -> str:
+    """
+    Download a URL to a temporary file and return the path.
+
+    Args:
+        url: HTTP/HTTPS URL to download
+        suffix: File suffix (e.g., ".jpg", ".wav", ".mp4")
+        timeout: Download timeout in seconds
+
+    Returns:
+        Path to the downloaded temporary file
+    """
+    import tempfile
+
+    import requests
+
+    response = requests.get(url, timeout=timeout)
+    response.raise_for_status()
+
+    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as f:
+        f.write(response.content)
+        return f.name
+
+
+def _is_url(path: str) -> bool:
+    return path.startswith(("http://", "https://"))
+
+
+def normalize_content_item(item) -> Union[str, Any, List[Any]]:
+    """Normalize structured content item to native format.
+
+    Supports:
+    - Native format: str, PIL.Image, np.ndarray (pass through)
+    - OpenAI structured format:
+        - {"type": "text", "text": "..."} -> str
+        - {"type": "image_url", "image_url": {"url": "..."}} -> PIL.Image
+        - {"type": "audio_url", "audio_url": {"url": "..."}} -> np.ndarray
+        - {"type": "video_url", "video_url": {"url": "...", ...}} -> List[Image, ndarray, ...]
+
+    URL formats supported:
+        - Local file path: "/path/to/file.jpg"
+        - HTTP/HTTPS URL: "https://example.com/image.jpg"
+
+    Args:
+        item: Content item to normalize
+
+    Returns:
+        Normalized item. For video_url, returns a tuple ("__video_contents__", list)
+        that will be flattened by normalize_content().
+
+    Raises:
+        ValueError: If content type is unknown or unsupported
+    """
+    import os
+
+    import numpy as np
+    from PIL import Image
+
+    if isinstance(item, str):
+        return item
+    if isinstance(item, Image.Image):
+        return item
+    if isinstance(item, np.ndarray):
+        return item
+
+    if isinstance(item, dict):
+        item_type = item.get("type")
+
+        if item_type == "text":
+            return item.get("text", "")
+
+        elif item_type == "image_url":
+            image_url_obj = item.get("image_url", {})
+            url = image_url_obj.get("url", "") if isinstance(image_url_obj, dict) else image_url_obj
+
+            if _is_url(url):
+                # Download to temp file
+                temp_path = _download_url_to_tempfile(url, suffix=".jpg", timeout=30)
+                img = Image.open(temp_path)
+                os.unlink(temp_path)
+                return img
+            else:
+                return Image.open(url)
+        elif item_type == "audio_url":
+            import librosa
+
+            audio_url_obj = item.get("audio_url", {})
+            url = audio_url_obj.get("url", "") if isinstance(audio_url_obj, dict) else audio_url_obj
+
+            if _is_url(url):
+                # Download to temp file
+                temp_path = _download_url_to_tempfile(url, suffix=".wav", timeout=60)
+                audio_np, _ = librosa.load(temp_path, sr=16000, mono=True)
+                os.unlink(temp_path)
+                return audio_np
+            else:
+                audio_np, _ = librosa.load(url, sr=16000, mono=True)
+                return audio_np
+        elif item_type == "video_url":
+            # Video processing - returns a LIST of items (frames + audio segments)
+            # Note: Unlike image_url/audio_url which return single items,
+            # video_url returns a list that will be flattened into the content
+            from minicpmo.utils import get_video_frame_audio_segments
+
+            video_url_obj = item.get("video_url", {})
+            if isinstance(video_url_obj, dict):
+                video_url = video_url_obj.get("url", "")
+                # Get optional parameters from video_url object (OpenAI style)
+                stack_frames = video_url_obj.get("stack_frames", 1)
+                use_ffmpeg = video_url_obj.get("use_ffmpeg", False)
+                use_audio = video_url_obj.get("use_audio", True)
+            else:
+                video_url = video_url_obj
+                stack_frames = 1
+                use_ffmpeg = False
+                use_audio = True
+
+            # Handle HTTP/HTTPS URL - download to temp file
+            temp_video_path = None
+            if _is_url(video_url):
+                temp_video_path = _download_url_to_tempfile(video_url, suffix=".mp4", timeout=120)
+                video_path = temp_video_path
+            else:
+                video_path = video_url
+
+            # Extract frames and audio segments
+            video_frames, audio_segments, stacked_frames = get_video_frame_audio_segments(
+                video_path,
+                stack_frames=stack_frames,
+                use_ffmpeg=use_ffmpeg,
+                use_audio=use_audio
+            )
+
+            # Clean up temp file if downloaded
+            if temp_video_path is not None:
+                os.unlink(temp_video_path)
+
+            # Build omni_contents (interleaved frames and audio, or frames only)
+            omni_contents = []
+            for i in range(len(video_frames)):
+                omni_contents.append(video_frames[i])
+                if use_audio and audio_segments is not None:
+                    omni_contents.append(audio_segments[i])
+                if stacked_frames is not None and i < len(stacked_frames) and stacked_frames[i] is not None:
+                    omni_contents.append(stacked_frames[i])
+
+            # Return as a special marker to be flattened later
+            return "__video_contents__", omni_contents
+        else:
+            raise ValueError(f"Unknown content type: {item_type}")
+
+    raise ValueError(f"Cannot normalize content item of type: {type(item)}")
+
+
+def normalize_content(content) -> list:
+    """Normalize message content to list of native items.
+
+    Input formats:
+    - str: "hello" -> ["hello"]
+    - list of native items: [str, Image, np.ndarray] -> pass through with normalization
+    - list of structured items: [{"type": "text", ...}] -> normalize each
+    - video type: automatically expanded to omni_contents
+    - mixed: works too
+
+    Args:
+        content: Message content in any supported format
+
+    Returns:
+        List of native items (str, PIL.Image, np.ndarray)
+
+    Examples:
+        >>> normalize_content("hello")
+        ["hello"]
+
+        >>> normalize_content([{"type": "text", "text": "hi"}])
+        ["hi"]
+
+        >>> normalize_content([{"type": "video", "video": "/path/to/video.mp4"}])
+        [<PIL.Image>, <np.ndarray>, <PIL.Image>, <np.ndarray>, ...]
+    """
+    import numpy as np
+    from PIL import Image
+
+    if isinstance(content, str):
+        return [content]
+
+    if isinstance(content, list):
+        result = []
+        for item in content:
+            normalized = normalize_content_item(item)
+            # Handle video content (returns tuple with marker)
+            if isinstance(normalized, tuple) and len(normalized) == 2 and normalized[0] == "__video_contents__":
+                # Flatten video contents into result
+                result.extend(normalized[1])
+            else:
+                result.append(normalized)
+        return result
+
+    # Single non-list item (Image or np.ndarray)
+    if isinstance(content, (Image.Image, np.ndarray)):
+        return [content]
+
+    normalized = normalize_content_item(content)
+    if isinstance(normalized, tuple) and len(normalized) == 2 and normalized[0] == "__video_contents__":
+        return normalized[1]
+    return [normalized]
