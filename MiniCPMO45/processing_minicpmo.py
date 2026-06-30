@@ -144,6 +144,12 @@ class MiniCPMVImageProcessor(BaseImageProcessor):
         self.mean = np.array(kwargs.pop("norm_mean", [0.5, 0.5, 0.5]))
         self.std = np.array(kwargs.pop("norm_std", [0.5, 0.5, 0.5]))
         self.version = kwargs.pop("version", 2.0)
+        self.downsample_mode = kwargs.pop("downsample_mode", "16x")
+        self.size_divisor = kwargs.pop("size_divisor", patch_size)
+        if float(self.version) >= 4.6:
+            # The 4.6 vision stack applies two 2x2 downsampling stages, so the
+            # resized image must produce a patch grid divisible by 4.
+            self.size_divisor = max(self.size_divisor, patch_size * 4)
 
     @staticmethod
     def ensure_divide(length, patch_size):
@@ -155,8 +161,9 @@ class MiniCPMVImageProcessor(BaseImageProcessor):
             r = width / height
             height = int(scale_resolution / math.sqrt(r))
             width = int(height * r)
-        best_width = self.ensure_divide(width, patch_size)
-        best_height = self.ensure_divide(height, patch_size)
+        size_divisor = getattr(self, "size_divisor", patch_size)
+        best_width = self.ensure_divide(width, size_divisor)
+        best_height = self.ensure_divide(height, size_divisor)
         return best_width, best_height
 
     def get_refine_size(self, original_size, grid, scale_resolution, patch_size, allow_upscale=False):
@@ -212,11 +219,13 @@ class MiniCPMVImageProcessor(BaseImageProcessor):
 
         return source_image, patches, best_grid
 
-    def get_grid_placeholder(self, grid):
+    def get_grid_placeholder(self, grid, patch_visual_tokens=None):
         if grid is None:
             return ""
         slice_image_placeholder = (
-            self.slice_start_token + self.unk_token * self.image_feature_size + self.slice_end_token
+            self.slice_start_token
+            + self.unk_token * (self.image_feature_size if patch_visual_tokens is None else int(patch_visual_tokens))
+            + self.slice_end_token
         )
 
         cols = grid[0]
@@ -234,11 +243,14 @@ class MiniCPMVImageProcessor(BaseImageProcessor):
     def get_image_id_placeholder(self, idx=0):
         return f"{self.im_id_start}{idx}{self.im_id_end}"
 
-    def get_sliced_images(self, image, max_slice_nums=None):
+    def get_sliced_images(self, image, max_slice_nums=None, downsample_mode=None):
         slice_images = []
 
         if not self.slice_mode:
-            return [image]
+            width, height = image.size
+            token_divisor = 4 if downsample_mode == "4x" else 16
+            visual_tokens = width * height // (self.patch_size * self.patch_size * token_divisor)
+            return [image], [0, 0], visual_tokens, 0
 
         max_slice_nums = self.max_slice_nums if max_slice_nums is None else int(max_slice_nums)
         assert max_slice_nums > 0
@@ -246,12 +258,26 @@ class MiniCPMVImageProcessor(BaseImageProcessor):
             image, max_slice_nums, self.scale_resolution, self.patch_size  # default: 9  # default: 448  # default: 14
         )
 
+        width, height = source_image.size
+        patch_size = self.patch_size
+        if downsample_mode is None:
+            downsample_mode = self.downsample_mode
+        token_divisor = 4 if downsample_mode == "4x" else 16
+        if width % (patch_size * 4) != 0 or height % (patch_size * 4) != 0:
+            raise ValueError(f"source image size {(width, height)} must be divisible by {patch_size * 4}")
+        source_image_visual_tokens = width * height // (patch_size * patch_size * token_divisor)
+
         slice_images.append(source_image)
+        patch_visual_tokens = 0
         if len(patches) > 0:
+            width, height = patches[0][0].size
+            if width % (patch_size * 4) != 0 or height % (patch_size * 4) != 0:
+                raise ValueError(f"slice image size {(width, height)} must be divisible by {patch_size * 4}")
+            patch_visual_tokens = width * height // (patch_size * patch_size * token_divisor)
             for i in range(len(patches)):
                 for j in range(len(patches[0])):
                     slice_images.append(patches[i][j])
-        return slice_images
+        return slice_images, sliced_grid, source_image_visual_tokens, patch_visual_tokens
 
     def get_sliced_grid(self, image_size, max_slice_nums, nerver_split=False):
         original_width, original_height = image_size
@@ -284,12 +310,27 @@ class MiniCPMVImageProcessor(BaseImageProcessor):
 
         return best_grid
 
-    def get_slice_image_placeholder(self, image_size, image_idx=0, max_slice_nums=None, use_image_id=None):
+    def get_slice_image_placeholder(
+        self,
+        image_size_or_grid,
+        image_idx=0,
+        max_slice_nums=None,
+        use_image_id=None,
+        source_image_visual_tokens=None,
+        patch_visual_tokens=None,
+    ):
         max_slice_nums = self.max_slice_nums if max_slice_nums is None else int(max_slice_nums)
         assert max_slice_nums > 0
-        grid = self.get_sliced_grid(image_size=image_size, max_slice_nums=max_slice_nums)
+        grid = (
+            [x.item() if hasattr(x, "item") else int(x) for x in image_size_or_grid]
+            if source_image_visual_tokens is not None
+            else self.get_sliced_grid(image_size=image_size_or_grid, max_slice_nums=max_slice_nums)
+        )
 
-        image_placeholder = self.im_start_token + self.unk_token * self.image_feature_size + self.im_end_token
+        image_token_num = (
+            self.image_feature_size if source_image_visual_tokens is None else int(source_image_visual_tokens)
+        )
+        image_placeholder = self.im_start_token + self.unk_token * image_token_num + self.im_end_token
         use_image_id = self.use_image_id if use_image_id is None else bool(use_image_id)
         if use_image_id:
             final_placeholder = self.get_image_id_placeholder(image_idx) + image_placeholder
@@ -297,7 +338,10 @@ class MiniCPMVImageProcessor(BaseImageProcessor):
             final_placeholder = image_placeholder
 
         if self.slice_mode:
-            final_placeholder = final_placeholder + self.get_grid_placeholder(grid=grid)
+            final_placeholder = final_placeholder + self.get_grid_placeholder(
+                grid=grid,
+                patch_visual_tokens=patch_visual_tokens,
+            )
         return final_placeholder
 
     @staticmethod
@@ -357,12 +401,18 @@ class MiniCPMVImageProcessor(BaseImageProcessor):
         new_images_list = []
         image_sizes_list = []
         tgt_sizes_list = []
+        grids_list = []
+        source_image_visual_tokens_list = []
+        patch_visual_tokens_list = []
 
         for _images in images_list:
             if _images is None or len(_images) == 0:
                 new_images_list.append([])
                 image_sizes_list.append([])
                 tgt_sizes_list.append([])
+                grids_list.append([])
+                source_image_visual_tokens_list.append([])
+                patch_visual_tokens_list.append([])
                 continue
             if not valid_images(_images):
                 raise ValueError(
@@ -376,8 +426,18 @@ class MiniCPMVImageProcessor(BaseImageProcessor):
             new_images = []
             image_sizes = [image.size for image in _images]
             tgt_sizes = []
+            grids = []
+            source_image_visual_tokens_l = []
+            patch_visual_tokens_l = []
             for image in _images:
-                image_patches = self.get_sliced_images(image, max_slice_nums)
+                image_patches, sliced_grid, source_image_visual_tokens, patch_visual_tokens = self.get_sliced_images(
+                    image, max_slice_nums
+                )
+                if sliced_grid is None:
+                    sliced_grid = [0, 0]
+                grids.append(sliced_grid)
+                source_image_visual_tokens_l.append(source_image_visual_tokens)
+                patch_visual_tokens_l.append(patch_visual_tokens)
                 image_patches = [to_numpy_array(image).astype(np.float32) / 255 for image in image_patches]
                 image_patches = [
                     self.normalize(image=image, mean=self.mean, std=self.std, input_data_format=input_data_format)
@@ -399,8 +459,18 @@ class MiniCPMVImageProcessor(BaseImageProcessor):
             new_images_list.append(new_images)
             image_sizes_list.append(image_sizes)
             tgt_sizes_list.append(tgt_sizes)
+            grids_list.append(grids)
+            source_image_visual_tokens_list.append(source_image_visual_tokens_l)
+            patch_visual_tokens_list.append(patch_visual_tokens_l)
         return MiniCPMOBatchFeature(
-            data={"pixel_values": new_images_list, "image_sizes": image_sizes_list, "tgt_sizes": tgt_sizes_list},
+            data={
+                "pixel_values": new_images_list,
+                "image_sizes": image_sizes_list,
+                "tgt_sizes": tgt_sizes_list,
+                "grids": grids_list,
+                "source_image_visual_tokens": source_image_visual_tokens_list,
+                "patch_visual_tokens": patch_visual_tokens_list,
+            },
             tensor_type=return_tensors,
         )
 
@@ -1140,6 +1210,7 @@ class MiniCPMOProcessor(ProcessorMixin):
         do_pad: bool = True,
         max_slice_nums: int = 1,
         return_tensors: str = "pt",
+        downsample_mode: Optional[str] = None,
     ) -> MiniCPMOBatchFeature:
         """Process image data
 
@@ -1152,16 +1223,32 @@ class MiniCPMOProcessor(ProcessorMixin):
             MiniCPMOBatchFeature object
         """
         if images is None:
-            return MiniCPMOBatchFeature(data={"pixel_values": [[]], "image_sizes": [[]], "tgt_sizes": [[]]})
+            return MiniCPMOBatchFeature(
+                data={
+                    "pixel_values": [[]],
+                    "image_sizes": [[]],
+                    "tgt_sizes": [[]],
+                    "grids": [[]],
+                    "source_image_visual_tokens": [[]],
+                    "patch_visual_tokens": [[]],
+                }
+            )
 
         result = self.image_processor(
-            images, do_pad=do_pad, max_slice_nums=max_slice_nums, return_tensors=return_tensors
+            images,
+            do_pad=do_pad,
+            max_slice_nums=max_slice_nums,
+            return_tensors=return_tensors,
+            downsample_mode=downsample_mode,
         )
 
         model_inputs = {
             "pixel_values": result.get("pixel_values", [[]]),
             "image_sizes": result.get("image_sizes", [[]]),
             "tgt_sizes": result.get("tgt_sizes", [[]]),
+            "grids": result.get("grids", [[]]),
+            "source_image_visual_tokens": result.get("source_image_visual_tokens", [[]]),
+            "patch_visual_tokens": result.get("patch_visual_tokens", [[]]),
         }
 
         return MiniCPMOBatchFeature(data=model_inputs)
@@ -1325,11 +1412,16 @@ class MiniCPMOProcessor(ProcessorMixin):
         online_streaming: bool = False,
         audio_chunk_idx: int = 0,
         is_last_chunk: bool = False,
+        downsample_mode: Optional[str] = None,
         **kwargs,
     ) -> MiniCPMOBatchFeature:
         if images is not None:
             image_inputs = self.process_image(
-                images=images, do_pad=do_pad, max_slice_nums=max_slice_nums, return_tensors=return_tensors
+                images=images,
+                do_pad=do_pad,
+                max_slice_nums=max_slice_nums,
+                return_tensors=return_tensors,
+                downsample_mode=downsample_mode,
             )
         else:
             image_inputs = None
@@ -1553,9 +1645,19 @@ class MiniCPMOProcessor(ProcessorMixin):
 
         bs = len(texts)
         if images is not None:
-            images, image_sizes, tgt_sizes = images["pixel_values"], images["image_sizes"], images["tgt_sizes"]
+            image_sizes = images["image_sizes"]
+            tgt_sizes = images["tgt_sizes"]
+            grids = images.get("grids", [[None] * len(sizes) for sizes in image_sizes])
+            source_image_visual_tokens = images.get(
+                "source_image_visual_tokens", [[None] * len(sizes) for sizes in image_sizes]
+            )
+            patch_visual_tokens = images.get("patch_visual_tokens", [[None] * len(sizes) for sizes in image_sizes])
+            images = images["pixel_values"]
         else:
             images, image_sizes, tgt_sizes = [[]] * bs, [[]] * bs, [[]] * bs
+            grids = [[]] * bs
+            source_image_visual_tokens = [[]] * bs
+            patch_visual_tokens = [[]] * bs
 
         input_ids_list = []
         image_bounds_list = []
@@ -1563,6 +1665,10 @@ class MiniCPMOProcessor(ProcessorMixin):
         spk_bounds_list = []
 
         for index, text in enumerate(texts):
+            # MiniCPM-V/O chat templates wrap image sentinels as
+            # "(<image>./</image>)"; the parentheses are prompt sugar and
+            # should not remain as text tokens around visual embeddings.
+            text = text.replace(f"({image_pattern})", image_pattern)
             text_chunks = re.split(split_pattern, text)
 
             image_tags = re.findall(image_pattern, text)
@@ -1580,7 +1686,12 @@ class MiniCPMOProcessor(ProcessorMixin):
             for i, chunk in enumerate(text_chunks):
                 if chunk == image_pattern:
                     image_placeholder = self.image_processor.get_slice_image_placeholder(
-                        image_sizes[index][image_id], image_id, max_slice_nums, use_image_id
+                        grids[index][image_id],
+                        image_id,
+                        max_slice_nums,
+                        use_image_id,
+                        source_image_visual_tokens[index][image_id],
+                        patch_visual_tokens[index][image_id],
                     )
                     image_id += 1
                     text_chunks[i] = image_placeholder

@@ -43,6 +43,8 @@ from .modeling_minicpmo import MiniCPMO as BaseMiniCPMO
 from .modeling_minicpmo import MiniCPMOPreTrainedModel
 from .modeling_minicpmo import MiniCPMTTS
 from .modeling_minicpmo import Resampler
+from .mrope_canvas import expand_1d_position_ids_to_3d
+from .mrope_canvas import uses_mrope_canvas
 from .processing_minicpmo import MiniCPMOProcessor
 from .utils import as_dynamic_cache
 from .utils import ChunkPrefillChunkGenerate
@@ -105,7 +107,7 @@ class MiniCPMO(BaseMiniCPMO):
             "tts_repetition_penalty": 1.05,
         }
 
-    def init_token2wav(self, streaming=False, model_dir=None, enable_float16=False, n_timesteps=5):
+    def init_token2wav(self, streaming=False, model_dir=None, enable_float16=False, n_timesteps=10):
         if streaming:
             if self.config.tts_config.audio_tokenizer_type != "s3tokenizer_step_audio":
                 logger.warning("audio tokenizer type is set to s3tokenizer_step_audio")
@@ -184,7 +186,10 @@ class MiniCPMO(BaseMiniCPMO):
             self._duplex_config.update(duplex_config)
 
         # Preload TTS vocoder
-        self.init_token2wav(streaming=True)
+        self.init_token2wav(
+            streaming=True,
+            n_timesteps=getattr(self.config.tts_config, "s3_stream_n_timesteps", 10),
+        )
 
         # Create DuplexCapability instance (composition pattern)
         self.duplex = DuplexCapability(
@@ -1014,6 +1019,39 @@ class MiniCPMO(BaseMiniCPMO):
         """当前模式"""
         return self._current_mode
 
+    def _compute_unified_prefill_position_ids(self, model_inputs, attention_mask, cache_length):
+        """Mirror vendored o5 canvas M-RoPE positions for unified custom prefill paths."""
+        mrope_mode = getattr(self.config, "mrope_mode", None)
+        if not uses_mrope_canvas(mrope_mode):
+            return None
+
+        input_ids = model_inputs["input_ids"]
+        image_bound = model_inputs.get("image_bound")
+        tgt_sizes = model_inputs.get("tgt_sizes")
+        has_images = (
+            image_bound is not None
+            and (
+                isinstance(image_bound, torch.Tensor)
+                and image_bound.numel() > 0
+                or isinstance(image_bound, list)
+                and len(image_bound) > 0
+            )
+        )
+        if has_images:
+            position_ids, _ = self._compute_canvas_position_ids(
+                input_ids,
+                None,
+                image_bound,
+                tgt_sizes,
+            )
+        else:
+            mrope_3d = expand_1d_position_ids_to_3d(input_ids, attention_mask=None)
+            text_pos = self._text_position_ids(input_ids, None)
+            position_ids = torch.cat([text_pos.unsqueeze(0), mrope_3d], dim=0)
+        if cache_length > 0:
+            position_ids = position_ids + cache_length
+        return position_ids
+
     @staticmethod
     def get_sys_prompt(ref_audio=None, mode="default", language="en", ref_audio_max_ms=None):
         if ref_audio is not None:
@@ -1184,6 +1222,7 @@ class MiniCPMO(BaseMiniCPMO):
             tts_bound,
             tts_proj_layer,
             audio_prompt,
+            spk_bound=None,
             output_tts_inputs_embeds_path=None,
             tts_sampling_params=TTSSamplingParams(),
         ):
@@ -1193,6 +1232,7 @@ class MiniCPMO(BaseMiniCPMO):
                 tts_bound=tts_bound,
                 tts_proj_layer=tts_proj_layer,
                 audio_prompt=tts_ref_audio,
+                spk_bound=spk_bound,
                 output_tts_inputs_embeds_path=output_tts_inputs_embeds_path,
                 tts_sampling_params=tts_sampling_params,
             )
@@ -1442,12 +1482,13 @@ class MiniCPMO(BaseMiniCPMO):
         attention_mask = torch.ones(
             (1, cache_length + inputs_embeds.shape[1]), dtype=torch.bool, device=self.device
         )
+        position_ids = self._compute_unified_prefill_position_ids(model_inputs, attention_mask, cache_length)
 
         outputs = self.llm(
             past_key_values=self.llm_past_key_values,
             inputs_embeds=inputs_embeds,
             attention_mask=attention_mask,
-            position_ids=None,
+            position_ids=position_ids,
             use_cache=True,
             return_dict=True,
         )
@@ -1520,12 +1561,13 @@ class MiniCPMO(BaseMiniCPMO):
             (1, cache_length + bos_embeds.shape[1]),
             dtype=torch.bool, device=self.device,
         )
+        position_ids = self._compute_unified_prefill_position_ids({"input_ids": bos_input_ids}, attention_mask, cache_length)
 
         bos_outputs = self.llm(
             past_key_values=self.llm_past_key_values,
             inputs_embeds=bos_embeds,
             attention_mask=attention_mask,
-            position_ids=None,
+            position_ids=position_ids,
             use_cache=True,
             return_dict=True,
         )
@@ -1817,13 +1859,14 @@ class MiniCPMO(BaseMiniCPMO):
         cache_length = self._get_kv_cache_length()
 
         attention_mask = torch.ones((1, cache_length + inputs_embeds.shape[1]), dtype=torch.bool, device=self.device)
+        position_ids = self._compute_unified_prefill_position_ids(model_inputs, attention_mask, cache_length)
 
         # 2. do prefill
         outputs = self.llm(
             past_key_values=self.llm_past_key_values,
             inputs_embeds=inputs_embeds,
             attention_mask=attention_mask,
-            position_ids=None,
+            position_ids=position_ids,
             use_cache=True,
             return_dict=True,
         )

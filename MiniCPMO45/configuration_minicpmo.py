@@ -18,11 +18,11 @@ import os
 from typing import Union
 
 from transformers import PretrainedConfig
-from transformers import Qwen3Config
+from transformers import Qwen3_5TextConfig
 from transformers import WhisperConfig
 from transformers.utils import logging
 
-from .modeling_navit_siglip import SiglipVisionConfig
+from .modeling_navit_siglip_fast import SiglipVisionConfig
 
 logger = logging.get_logger(__name__)
 
@@ -110,13 +110,26 @@ class MiniCPMTTSConfig(PretrainedConfig):
         streaming_sliding_window_audio_init_text_length: int = 10,
         streaming_sliding_window_audio_window_size: int = 300,
         normalize_projected_hidden: bool = False,
+        normalize_projected_hidden_type: str = "l2_norm",
+        normalize_projected_hidden_spk: bool = True,
+        num_spk_embs: int = 0,
+        disable_spk_emb: bool = True,
+        use_llm_tokens: bool = True,
         interleaved: bool = False,
         attention_type: str = "sliding_recompute",
         recomputed_chunks: int = 1,
         window_size: int = 2,
+        top_p: float = 0.7,
+        top_k: int = 20,
+        repetition_penalty: float = 1.0,
         **kwargs,
     ):
         super().__init__(**kwargs)
+
+        # TTS sampling defaults (transformers >=5 no longer provides these on PretrainedConfig)
+        self.top_p = top_p
+        self.top_k = top_k
+        self.repetition_penalty = repetition_penalty
 
         self.llm_dim = llm_dim
         self.llm_hidden_size = llm_dim
@@ -167,6 +180,11 @@ class MiniCPMTTSConfig(PretrainedConfig):
         self.streaming_sliding_window_audio_window_size = streaming_sliding_window_audio_window_size
 
         self.normalize_projected_hidden = normalize_projected_hidden
+        self.normalize_projected_hidden_type = normalize_projected_hidden_type
+        self.normalize_projected_hidden_spk = normalize_projected_hidden_spk
+        self.num_spk_embs = num_spk_embs
+        self.disable_spk_emb = disable_spk_emb
+        self.use_llm_tokens = use_llm_tokens
 
         self.interleaved = interleaved
         self.attention_type = attention_type
@@ -174,7 +192,7 @@ class MiniCPMTTSConfig(PretrainedConfig):
         self.window_size = window_size
 
 
-class MiniCPMOConfig(Qwen3Config):
+class MiniCPMOConfig(Qwen3_5TextConfig):
     model_type = "minicpmo"
     keys_to_ignore_at_inference = ["past_key_values"]
 
@@ -207,7 +225,13 @@ class MiniCPMOConfig(Qwen3Config):
         listen_speak_type="asr",
         init_vision=True,
         init_audio=True,
-        init_tts=True,
+        init_tts=False,
+        vision_model_type="uhd_mlp_insert_window_attention_ViTmlp_4_4",
+        insert_layer_id=6,
+        downsample_mode="16x",
+        mrope_mode="disabled",
+        merge_kernel_size=(2, 2),
+        merger_times=1,
         **kwargs,
     ):
         self.use_cache = use_cache
@@ -221,6 +245,12 @@ class MiniCPMOConfig(Qwen3Config):
         self.audio_chunk_length = audio_chunk_length
         self.stream_input = stream_input
         self.listen_speak_type = listen_speak_type
+        self.vision_model_type = vision_model_type
+        self.insert_layer_id = insert_layer_id
+        self.downsample_mode = downsample_mode
+        self.mrope_mode = mrope_mode
+        self.merge_kernel_size = merge_kernel_size
+        self.merger_times = merger_times
 
         self.init_vision = init_vision
         self.init_audio = init_audio
@@ -258,3 +288,21 @@ class MiniCPMOConfig(Qwen3Config):
         self.patch_size = self.vision_config.patch_size
 
         super().__init__(**kwargs)
+
+        # Propagate EP plan from text config so that the outer model knows
+        # how to shard MoE experts across devices (mirrors minicpmv4_6).
+        if getattr(self, "num_experts", None):
+            self.base_model_ep_plan = {
+                f"llm.model.{k}": v for k, v in {
+                    "layers.*.mlp.gate": "ep_router",
+                    "layers.*.mlp.experts.gate_up_proj": "grouped_gemm",
+                    "layers.*.mlp.experts.down_proj": "grouped_gemm",
+                    "layers.*.mlp.experts": "moe_tp_experts",
+                }.items()
+            }
+
+    @property
+    def uses_mrope_canvas(self) -> bool:
+        from .mrope_canvas import uses_mrope_canvas
+
+        return uses_mrope_canvas(self.mrope_mode)

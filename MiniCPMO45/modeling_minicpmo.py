@@ -69,14 +69,84 @@ if os.getenv("USE_FLAGOS") == "1":
 from transformers import LlamaConfig
 from transformers import LlamaModel
 from transformers import PreTrainedModel
-from transformers import Qwen3ForCausalLM
-from transformers import Qwen3PreTrainedModel
+from transformers import Qwen3_5ForCausalLM
+from transformers import Qwen3_5PreTrainedModel
 from transformers import TextIteratorStreamer
+
+from transformers import AutoConfig
+from transformers import AutoModelForCausalLM
 from transformers.activations import ACT2FN
 from transformers.cache_utils import Cache
 from transformers.cache_utils import DynamicCache
 from transformers.cache_utils import EncoderDecoderCache
 from transformers.cache_utils import StaticCache
+
+
+# === transformers>=4.54 DynamicCache compatibility helpers (hybrid-aware) ===
+# New transformers stores KV per-layer in cache.layers[i].keys/.values instead of
+# the legacy cache.key_cache/value_cache lists. This model is a hybrid attention
+# model: cache.layers contains full-attention layers (expose .keys/.values) AND
+# linear-attention layers (recurrent/conv state, NO .keys/.values). All KV-position
+# operations only apply to the full-attention layers.
+def _dc_is(cache):
+    return hasattr(cache, "layers")
+
+
+def _dc_num_layers(cache):
+    return len(cache.layers)
+
+
+def _dc_full_indices(cache):
+    """Indices of full-attention layers that currently hold key tensors."""
+    return [i for i, layer in enumerate(cache.layers) if getattr(layer, "keys", None) is not None]
+
+
+def _dc_first_key(cache):
+    for layer in cache.layers:
+        k = getattr(layer, "keys", None)
+        if k is not None:
+            return k
+    return None
+
+
+def _dc_has_kv(cache):
+    k = _dc_first_key(cache) if _dc_is(cache) else None
+    return k is not None and k.numel() > 0
+
+
+def _dc_seq_len(cache):
+    if not _dc_is(cache):
+        return 0
+    for layer in cache.layers:
+        k = getattr(layer, "keys", None)
+        if k is not None and k.numel() > 0:
+            return k.shape[2]
+    return 0
+
+
+def _dc_key(cache, i):
+    return cache.layers[i].keys
+
+
+def _dc_value(cache, i):
+    return cache.layers[i].values
+
+
+def _dc_keys(cache):
+    return [layer.keys for layer in cache.layers if getattr(layer, "keys", None) is not None]
+
+
+def _dc_values(cache):
+    return [layer.values for layer in cache.layers if getattr(layer, "values", None) is not None]
+
+
+def _dc_set_key(cache, i, tensor):
+    cache.layers[i].keys = tensor
+
+
+def _dc_set_value(cache, i, tensor):
+    cache.layers[i].values = tensor
+# === end compatibility helpers ===
 from transformers.generation.logits_process import TopKLogitsWarper
 from transformers.generation.logits_process import TopPLogitsWarper
 from transformers.integrations import is_deepspeed_zero3_enabled
@@ -87,8 +157,15 @@ from transformers.models.whisper.modeling_whisper import WhisperEncoder
 
 from .configuration_minicpmo import MiniCPMOConfig
 from .configuration_minicpmo import MiniCPMTTSConfig
-from .modeling_navit_siglip import SiglipVisionTransformer
+from .mlp_merger import Merger
+from .modeling_navit_siglip_fast import SiglipVisionTransformer
 from .processing_minicpmo import MiniCPMOProcessor
+from .vit_insert_merger import get_vit_insert_merger
+from .mrope_canvas import (
+    expand_1d_position_ids_to_3d,
+    get_rope_index,
+    uses_mrope_canvas,
+)
 from .utils import as_dynamic_cache
 from .utils import ChunkPrefillChunkGenerate
 from .utils import drop_tokens_from_cache
@@ -106,7 +183,7 @@ from .utils import TTSStreamingGenerator
 logger = logging.getLogger(__name__)
 
 
-class MiniCPMOPreTrainedModel(Qwen3PreTrainedModel):
+class MiniCPMOPreTrainedModel(Qwen3_5PreTrainedModel):
     config_class = MiniCPMOConfig
 
 
@@ -114,15 +191,36 @@ class MiniCPMO(MiniCPMOPreTrainedModel):
     def __init__(self, config):
         super().__init__(config)
 
-        self.llm = Qwen3ForCausalLM(config)
+        text_model_type = getattr(config, "text_model_type", "qwen3_5_text")
+        text_config = AutoConfig.for_model(text_model_type)
+        if torch.cuda.is_available() and torch.cuda.get_device_capability()[0] < 9:
+            # torch._grouped_mm used by the default MoE grouped implementation is H100-only in torch 2.8.
+            text_config._experts_implementation = "eager"
+        for key, value in config.to_dict().items():
+            if hasattr(text_config, key) and key != "model_type":
+                setattr(text_config, key, value)
+        if isinstance(getattr(text_config, "torch_dtype", None), str):
+            text_config.torch_dtype = getattr(torch, text_config.torch_dtype, None)
+        self.llm = AutoModelForCausalLM.from_config(text_config)
+        self._patch_llm_expand_for_mrope()
         self.embed_dim = self.llm.config.hidden_size
-        self.llm.prepare_inputs_for_generation = types.MethodType(prepare_inputs_for_generation, self.llm)  # patch llm
 
         # init vision module
         if self.config.init_vision:
             self.vpm = self.init_vision_module()
             self.vision_dim = self.vpm.embed_dim
             self.resampler = self.init_resampler(self.embed_dim, self.vision_dim)
+            self.vision_model_type = getattr(
+                self.config, "vision_model_type", "uhd_mlp_insert_window_attention_ViTmlp_4_4"
+            )
+            self.insert_layer_id = int(getattr(self.config, "insert_layer_id", 6))
+            self.vit_merger = get_vit_insert_merger(
+                model_type=self.vision_model_type,
+                hidden_size=self.vision_dim,
+                intermediate_size=self.vpm.config.intermediate_size,
+                vpm=self.vpm,
+                insert_layer_id=self.insert_layer_id,
+            )
 
         # init audio module
         if self.config.init_audio:
@@ -136,10 +234,10 @@ class MiniCPMO(MiniCPMOPreTrainedModel):
         if self.config.init_tts:
             self.tts = self.init_tts_module()
 
-        self.terminators = ["<|im_end|>", "<|endoftext|>"]
+        self.terminators = ["<|im_end|>", "<|endoftext|>", "<|tts_eos|>"]
 
         self.think_str = ""
-        if self.llm.__class__.__name__ == "Qwen3ForCausalLM":
+        if self.llm.__class__.__name__ in {"Qwen3_5ForCausalLM", "Qwen3_5MoeForCausalLM"}:
             self.think_str = "<think>\\n\\n</think>\\n\\n"
 
         # for streaming
@@ -156,6 +254,32 @@ class MiniCPMO(MiniCPMOPreTrainedModel):
         self.streaming_require_system_prompt = True
         self.streaming_window_enabled = True
         self.force_rope_reindex = False  # RoPE reindex testing switch
+        self._cached_special_token_ids: Optional[Dict[str, int]] = None
+
+        # transformers >=5 requires post_init() to populate top-level properties such as
+        # all_tied_weights_keys (used by the weight loader). The original 4.51-era code
+        # omitted this call.
+        self.post_init()
+
+    def _patch_llm_expand_for_mrope(self):
+        """Patch the LLM's beam-search expansion so 3D M-RoPE position_ids
+        are replicated along dim=1 (batch) instead of dim=0 (sections).
+        Mirrors minicpmv4_6's _expand_inputs_for_generation override."""
+        llm = self.llm
+        _orig_expand = llm._expand_inputs_for_generation
+
+        def _expand_inputs_for_generation(expand_size=1, is_encoder_decoder=False, input_ids=None, **model_kwargs):
+            expanded_pos = None
+            if (pos := model_kwargs.get("position_ids")) is not None and pos.ndim == 3:
+                expanded_pos = model_kwargs.pop("position_ids").repeat_interleave(expand_size, dim=1)
+            input_ids, model_kwargs = _orig_expand(
+                expand_size=expand_size, is_encoder_decoder=is_encoder_decoder, input_ids=input_ids, **model_kwargs,
+            )
+            if expanded_pos is not None:
+                model_kwargs["position_ids"] = expanded_pos
+            return input_ids, model_kwargs
+
+        llm._expand_inputs_for_generation = _expand_inputs_for_generation
 
     def init_streaming_processor(self):
         self.prepare_processor(processor=None, tokenizer=None)
@@ -199,9 +323,23 @@ class MiniCPMO(MiniCPMOPreTrainedModel):
         self._round_history: List[Dict[str, Union[int, str, torch.Tensor, Optional[int]]]] = []
 
     def init_vision_module(self):
-        if self.config._attn_implementation == "flash_attention_2":
+        # The Qwen3.5 + NaViT tunnel used for 4.6 evaluation runs the vision tower on
+        # FlashAttention2 when available. The local SigLIP fast implementation only has a
+        # FlashAttention2 path and an eager path (no sdpa branch), and recent transformers
+        # reject FlashAttention2 at init when the flash-attn library is missing. Fall back
+        # to eager (the reference math) when flash-attn is not installed so the model still
+        # loads and runs.
+        try:
+            import flash_attn  # noqa: F401
+
+            has_flash_attn = True
+        except Exception:
+            has_flash_attn = False
+
+        if has_flash_attn:
             self.config.vision_config._attn_implementation = "flash_attention_2"
         else:
+            logger.warning("flash-attn is not available; vision tower falls back to eager attention.")
             self.config.vision_config._attn_implementation = "eager"
         model = SiglipVisionTransformer(self.config.vision_config)
         if self.config.drop_vision_last_layer:
@@ -213,12 +351,9 @@ class MiniCPMO(MiniCPMOPreTrainedModel):
         return model
 
     def init_resampler(self, embed_dim, vision_dim):
-        return Resampler(
-            num_queries=self.config.query_num,
-            embed_dim=embed_dim,
-            num_heads=embed_dim // 128,
-            kv_dim=vision_dim,
-            adaptive=True,
+        return Merger(
+            hidden_size=vision_dim,
+            llm_embed_dim=embed_dim,
         )
 
     def init_audio_module(self):
@@ -422,45 +557,33 @@ class MiniCPMO(MiniCPMOPreTrainedModel):
             img_cnt = []
             for pixel_values in pixel_values_list:
                 img_cnt.append(len(pixel_values))
-                all_pixel_values.extend([i.flatten(end_dim=1).permute(1, 0) for i in pixel_values])
+                all_pixel_values.extend(pixel_values)
 
             # exist image
             if all_pixel_values:
                 tgt_sizes = [tgt_size for tgt_size in tgt_sizes if isinstance(tgt_size, torch.Tensor)]
                 tgt_sizes = torch.vstack(tgt_sizes).type(torch.int32)
 
-                max_patches = torch.max(tgt_sizes[:, 0] * tgt_sizes[:, 1])
-
-                all_pixel_values = torch.nn.utils.rnn.pad_sequence(
-                    all_pixel_values, batch_first=True, padding_value=0.0
+                all_pixel_values = torch.concat(all_pixel_values, dim=-1).unsqueeze(0).type(dtype)
+                cu_seqlens = F.pad(
+                    torch.cumsum(tgt_sizes[:, 0] * tgt_sizes[:, 1], dim=0, dtype=torch.int32).to(device),
+                    (1, 0),
                 )
-                B, L, _ = all_pixel_values.shape
-                all_pixel_values = all_pixel_values.permute(0, 2, 1).reshape(B, 3, -1, L)
+                max_seqlen = int(torch.max(cu_seqlens[1:] - cu_seqlens[:-1]).item())
 
-                patch_attn_mask = torch.zeros((B, 1, max_patches), dtype=torch.bool, device=device)
-                for i in range(B):
-                    patch_attn_mask[i, 0, : tgt_sizes[i][0] * tgt_sizes[i][1]] = True
+                downsample_mode = getattr(self.config, "downsample_mode", "16x")
+                use_vit_merger = downsample_mode != "4x"
 
-                vision_batch_size = self.config.vision_batch_size
-                all_pixel_values = all_pixel_values.type(dtype)
-                if B > vision_batch_size:
-                    hs = []
-                    for i in range(0, B, vision_batch_size):
-                        start_idx = i
-                        end_idx = i + vision_batch_size
-                        tmp_hs = self.vpm(
-                            all_pixel_values[start_idx:end_idx],
-                            patch_attention_mask=patch_attn_mask[start_idx:end_idx],
-                            tgt_sizes=tgt_sizes[start_idx:end_idx],
-                        ).last_hidden_state
-                        hs.append(tmp_hs)
-                    vision_embedding = torch.cat(hs, dim=0)
-                else:
-                    vision_embedding = self.vpm(
-                        all_pixel_values,
-                        patch_attention_mask=patch_attn_mask,
-                        tgt_sizes=tgt_sizes,
-                    ).last_hidden_state
+                vision_outputs, tgt_sizes = self.vpm(
+                    all_pixel_values,
+                    tgt_sizes=tgt_sizes,
+                    cu_seqlens=cu_seqlens,
+                    max_seqlens=max_seqlen,
+                    vit_merger=self.vit_merger if use_vit_merger else None,
+                    insert_layer_id=self.insert_layer_id if use_vit_merger else None,
+                    model_type=self.vision_model_type,
+                )
+                vision_embedding = vision_outputs.last_hidden_state
                 vision_embedding = self.resampler(vision_embedding, tgt_sizes)
 
                 start = 0
@@ -473,16 +596,23 @@ class MiniCPMO(MiniCPMOPreTrainedModel):
                         vision_hidden_states.append([])
             else:  # no image
                 if self.training:
-                    dummy_image = torch.zeros((1, 3, 224, 224), device=device, dtype=dtype)
-                    tgt_sizes = torch.Tensor(
-                        [
-                            [
-                                (224 // self.config.patch_size),
-                                math.ceil(224 / self.config.patch_size),
-                            ]
-                        ]
-                    ).type(torch.int32)
-                    dummy_feature = self.resampler(self.vpm(dummy_image).last_hidden_state, tgt_sizes)
+                    dummy_image = torch.zeros(
+                        (1, 3, self.config.patch_size * 8, self.config.patch_size * 8),
+                        device=device,
+                        dtype=dtype,
+                    )
+                    tgt_sizes = torch.tensor([[8, 8]], dtype=torch.int32)
+                    cu_seqlens = torch.tensor([0, 64], dtype=torch.int32, device=device)
+                    vision_outputs, tgt_sizes = self.vpm(
+                        dummy_image,
+                        tgt_sizes=tgt_sizes,
+                        cu_seqlens=cu_seqlens,
+                        max_seqlens=64,
+                        vit_merger=self.vit_merger,
+                        insert_layer_id=self.insert_layer_id,
+                        model_type=self.vision_model_type,
+                    )
+                    dummy_feature = self.resampler(vision_outputs.last_hidden_state, tgt_sizes)
                 else:
                     dummy_feature = []
                 for _ in range(len(pixel_values_list)):
@@ -511,15 +641,14 @@ class MiniCPMO(MiniCPMOPreTrainedModel):
                 cur_vllm_emb = vllm_embedding[i]
                 cur_image_bound = data["image_bound"][i]
                 if len(cur_image_bound) > 0:
-                    image_indices = torch.stack(
-                        [torch.arange(r[0], r[1], dtype=torch.long) for r in cur_image_bound]
-                    ).to(vllm_embedding.device)
-
-                    cur_vllm_emb.scatter_(
-                        0,
-                        image_indices.view(-1, 1).repeat(1, cur_vllm_emb.shape[-1]),
-                        cur_vs_hs.view(-1, cur_vs_hs.shape[-1]),
-                    )
+                    for image_idx, (bound_start, bound_end) in enumerate(cur_image_bound):
+                        image_indices = torch.arange(
+                            bound_start,
+                            bound_end,
+                            dtype=torch.long,
+                            device=vllm_embedding.device,
+                        )
+                        cur_vllm_emb[image_indices] = cur_vs_hs[image_idx].to(cur_vllm_emb.dtype)
                 elif self.training:
                     cur_vllm_emb += cur_vs_hs[0].mean() * 0
 
@@ -780,6 +909,93 @@ class MiniCPMO(MiniCPMOPreTrainedModel):
 
         return input_embeddings
 
+    def _get_special_token_ids(self, tokenizer=None) -> Dict[str, int]:
+        """Return the special-token-id dict needed by canvas M-RoPE."""
+        if self._cached_special_token_ids is not None:
+            return self._cached_special_token_ids
+        if tokenizer is None and hasattr(self, "processor") and self.processor is not None:
+            tokenizer = self.processor.tokenizer
+        if tokenizer is None:
+            return {}
+        ids: Dict[str, int] = {}
+        _map = {
+            "im_start_id": "<image>",
+            "im_end_id": "</image>",
+            "slice_start_id": "<slice>",
+            "slice_end_id": "</slice>",
+        }
+        for key, token in _map.items():
+            tid = tokenizer.convert_tokens_to_ids(token)
+            if isinstance(tid, int) and tid >= 0:
+                ids[key] = tid
+        newline_ids = tokenizer.encode("\n", add_special_tokens=False)
+        if newline_ids:
+            ids["newline_id"] = newline_ids[0]
+        self._cached_special_token_ids = ids
+        return ids
+
+    def _text_position_ids(self, input_ids, attention_mask, past_key_values_length=0):
+        """Compute standard 1-D text position ids ``(batch, seq)``."""
+        if attention_mask is not None:
+            text_positions = attention_mask.long().cumsum(-1) - 1
+            return text_positions.masked_fill(attention_mask == 0, 0)
+        if input_ids.ndim == 1:
+            input_ids = input_ids.unsqueeze(0)
+        batch_size, seq_length = input_ids.shape
+        return torch.arange(
+            past_key_values_length, past_key_values_length + seq_length, device=input_ids.device
+        ).unsqueeze(0).expand(batch_size, -1)
+
+    def _compute_canvas_position_ids(self, input_ids, attention_mask, image_bound, tgt_sizes):
+        """Compute (4, B, S) canvas M-RoPE position IDs: [text, T, H, W]."""
+        special_token_ids = self._get_special_token_ids()
+
+        def _to_tensor_or_empty(lst, device):
+            tensors = []
+            for x in (lst if isinstance(lst, list) else [lst]):
+                if isinstance(x, torch.Tensor) and x.numel() > 0:
+                    tensors.append(x)
+                elif hasattr(x, '__len__') and len(x) > 0:
+                    tensors.append(torch.tensor(x, dtype=torch.long, device=device))
+            return torch.cat(tensors, dim=0) if tensors else torch.zeros(0, 2, dtype=torch.long, device=device)
+
+        if isinstance(image_bound, list):
+            image_bound = _to_tensor_or_empty(image_bound, input_ids.device)
+        if isinstance(tgt_sizes, list):
+            tgt_sizes = _to_tensor_or_empty(tgt_sizes, input_ids.device)
+
+        mrope_position_ids, rope_deltas = get_rope_index(
+            input_ids, attention_mask, image_bound, tgt_sizes,
+            special_token_ids, mrope_mode="canvas",
+        )
+        text_position_ids = self._text_position_ids(input_ids, attention_mask)
+        position_ids = torch.cat([text_position_ids.unsqueeze(0), mrope_position_ids], dim=0)
+        return position_ids, rope_deltas
+
+    def _compute_position_ids(self, data):
+        """Compute position IDs: canvas (4,B,S) M-RoPE [text,T,H,W] when enabled, else passthrough."""
+        mrope_mode = getattr(self.config, "mrope_mode", None)
+        if uses_mrope_canvas(mrope_mode) and "image_bound" in data:
+            input_ids = data["input_ids"]
+            attention_mask = data.get("attention_mask")
+            image_bound = data["image_bound"]
+            tgt_sizes = data.get("tgt_sizes")
+            position_ids, _ = self._compute_canvas_position_ids(
+                input_ids, attention_mask, image_bound, tgt_sizes,
+            )
+            return position_ids
+        elif uses_mrope_canvas(mrope_mode):
+            input_ids = data["input_ids"]
+            attention_mask = data.get("attention_mask")
+            mrope_3d = expand_1d_position_ids_to_3d(input_ids, attention_mask)
+            text_pos = self._text_position_ids(input_ids, attention_mask)
+            return torch.cat([text_pos.unsqueeze(0), mrope_3d], dim=0)
+        else:
+            position_ids = data["position_ids"]
+            if position_ids.dtype != torch.int64:
+                position_ids = position_ids.long()
+            return position_ids
+
     def forward(self, data, **kwargs):
         vllm_embedding, vision_hidden_states = self.get_vllm_embedding(data)
         vllm_embedding = self.get_omni_embedding(
@@ -788,9 +1004,7 @@ class MiniCPMO(MiniCPMOPreTrainedModel):
             chunk_length=self.config.audio_chunk_length,
         )
 
-        position_ids = data["position_ids"]
-        if position_ids.dtype != torch.int64:
-            position_ids = position_ids.long()
+        position_ids = self._compute_position_ids(data)
 
         return self.llm(
             input_ids=None,
@@ -881,11 +1095,23 @@ class MiniCPMO(MiniCPMOPreTrainedModel):
                 chunk_length=self.config.audio_chunk_length,
             )
 
+            # Canvas M-RoPE: compute (4, B, S) position IDs [text, T, H, W].
+            # The LLM's forward (Qwen3.5/MoE) splits dim-0==4 into text_position_ids
+            # and (3, B, S) M-RoPE internally.
+            extra_gen_kwargs = {}
+            mrope_mode = getattr(self.config, "mrope_mode", None)
+            if uses_mrope_canvas(mrope_mode):
+                kwargs.pop("special_token_ids", None)
+                position_ids, _ = self._compute_canvas_position_ids(
+                    input_ids, attention_mask, image_bound, tgt_sizes,
+                )
+                extra_gen_kwargs["position_ids"] = position_ids
+
             if stream:
-                result = self._decode_stream(model_inputs["inputs_embeds"], tokenizer, **kwargs)
+                result = self._decode_stream(model_inputs["inputs_embeds"], tokenizer, **extra_gen_kwargs, **kwargs)
                 outputs = {}  # if stream return TextIteratorStreamer and output is empty
             else:
-                outputs = self._decode(model_inputs["inputs_embeds"], tokenizer, attention_mask, **kwargs)
+                outputs = self._decode(model_inputs["inputs_embeds"], tokenizer, attention_mask, **extra_gen_kwargs, **kwargs)
                 result = self._decode_text(outputs.sequences, tokenizer)
 
         return result, outputs
@@ -1107,6 +1333,7 @@ class MiniCPMO(MiniCPMOPreTrainedModel):
         input_images_list = []
         input_audios_list = []
         audio_parts_list = []
+        audio_roles_list = []
 
         for image, msgs in zip(images_list, msgs_list):
             if isinstance(msgs, str):
@@ -1122,6 +1349,7 @@ class MiniCPMO(MiniCPMOPreTrainedModel):
             images = []
             audios = []
             audio_parts = []
+            audio_roles = []
             for i, msg in enumerate(copy_msgs):
                 role = msg["role"]
                 content = msg["content"]
@@ -1134,10 +1362,11 @@ class MiniCPMO(MiniCPMOPreTrainedModel):
                 for c in content:
                     if isinstance(c, Image.Image):
                         images.append(c)
-                        cur_msgs.append("<image>./</image>")
+                        cur_msgs.append("(<image>./</image>)")
                     elif isinstance(c, np.ndarray):  # audio
                         audios.append(c)
                         audio_parts.append(i)
+                        audio_roles.append(role)
                         cur_msgs.append("<audio>./</audio>")
                         use_tts_template = True
                     elif isinstance(c, str):
@@ -1160,6 +1389,7 @@ class MiniCPMO(MiniCPMOPreTrainedModel):
             input_images_list.append(images)
             input_audios_list.append(audios)
             audio_parts_list.append(audio_parts)
+            audio_roles_list.append(audio_roles)
 
         if not merge_audio_from_same_content:
             audio_parts_list = None
@@ -1213,23 +1443,44 @@ class MiniCPMO(MiniCPMOPreTrainedModel):
 
         outputs["full_sequences"] = full_sequences
 
-        tts_bos_indices = []
-        tts_eos_indices = []
-        for i, x in enumerate(full_sequences[0]):
-            if x == tts_bos_token:
-                # tts_bos + 1 is the position of the first tts, so that it is convenient to slice hidden states for tts
-                tts_bos_indices.append(i + 1)
-            elif x == tts_eos_token:
-                if teacher_forcing and i == len(full_sequences[0]) - 1:
-                    continue
-                tts_eos_indices.append(i)
+        # The spoken-text region ends at the first terminator after <|tts_bos|>.
+        region_end_tokens = {tts_eos_token}
+        for term in self.terminators:
+            tid = self.processor.tokenizer.convert_tokens_to_ids(term)
+            if isinstance(tid, int) and tid >= 0:
+                region_end_tokens.add(tid)
 
+        seq = full_sequences[0]
+        tts_bos_indices = [i + 1 for i, x in enumerate(seq) if x == tts_bos_token]
         tts_bos_idx = tts_bos_indices[-1] if tts_bos_indices else -1
-        # Use None instead of -1 when no EOS token found, so that slice [start:None]
-        # means "to the end" rather than [start:-1] which excludes the last element
-        tts_eos_idx = tts_eos_indices[-1] if tts_eos_indices else None
+
+        tts_eos_idx = None
+        if tts_bos_idx != -1:
+            for i in range(tts_bos_idx, len(seq)):
+                if int(seq[i]) in region_end_tokens:
+                    if teacher_forcing and i == len(seq) - 1:
+                        continue
+                    tts_eos_idx = i
+                    break
 
         tts_bound = (tts_bos_idx, tts_eos_idx)
+
+        # Speaker region (the voice-clone reference) between <|spk_bos|> and <|spk_eos|>.
+        # Mirrors the processor's spk_bounds: start is the token after <|spk_bos|>, end is
+        # the <|spk_eos|> position. Used to feed a speaker embedding into the TTS decoder.
+        spk_bos_token = self.processor.tokenizer.convert_tokens_to_ids("<|spk_bos|>")
+        spk_eos_token = self.processor.tokenizer.convert_tokens_to_ids("<|spk_eos|>")
+        spk_bos_indices = []
+        spk_eos_indices = []
+        for i, x in enumerate(full_sequences[0]):
+            if x == spk_bos_token:
+                spk_bos_indices.append(i + 1)
+            elif x == spk_eos_token:
+                spk_eos_indices.append(i)
+        if spk_bos_indices and spk_eos_indices and spk_eos_indices[-1] > spk_bos_indices[-1]:
+            spk_bound = (spk_bos_indices[-1], spk_eos_indices[-1])
+        else:
+            spk_bound = None
 
         answer = res[0]
         if answer is not None:
@@ -1238,16 +1489,28 @@ class MiniCPMO(MiniCPMOPreTrainedModel):
         if use_tts_template and generate_audio and output_audio_path:
             import soundfile as sf
 
+            # Pick the voice-clone reference audio: prefer audio in a system-role message
+            # (the conventional location of the reference) so that an ASR-style user
+            # question audio is not mistaken for the clone reference. Fall back to the
+            # first audio when no system audio is present.
+            ref_audio = None
+            if len(input_audios_list) > 0 and len(input_audios_list[0]) > 0:
+                sample_audios = input_audios_list[0]
+                sample_roles = audio_roles_list[0] if audio_roles_list else []
+                for a, r in zip(sample_audios, sample_roles):
+                    if r == "system":
+                        ref_audio = a
+                        break
+                if ref_audio is None:
+                    ref_audio = sample_audios[0]
+
             try:
                 generated_waveform = self._generate_speech_non_streaming(
                     outputs=outputs,
                     tts_bound=tts_bound,
+                    spk_bound=spk_bound,
                     tts_proj_layer=tts_proj_layer,
-                    audio_prompt=(
-                        input_audios_list[0][0]
-                        if len(input_audios_list) > 0 and len(input_audios_list[0]) > 0
-                        else None
-                    ),
+                    audio_prompt=ref_audio,
                     output_tts_inputs_embeds_path=output_tts_inputs_embeds_path,
                     tts_sampling_params=tts_sampling_params,
                 )
@@ -1256,15 +1519,25 @@ class MiniCPMO(MiniCPMOPreTrainedModel):
                 elif isinstance(generated_waveform, np.ndarray):
                     sf.write(output_audio_path, generated_waveform, samplerate=24000)
                 logger.debug(f"audio saved to {output_audio_path}")
-            except:
-                import traceback
-
-                traceback.print_exc()
+            except Exception:
+                # Surface TTS failures instead of silently swallowing them: log full
+                # traceback and re-raise so shape/dependency problems are not hidden.
+                logger.exception("Non-streaming TTS generation failed")
+                raise
 
         if return_prompt:
             return answer, prompts_lists[0]
         else:
             return answer
+
+    def _normalize_projected(self, x, layer_norm_module):
+        # Mirror training: normalize_projected_hidden_type selects L2 vs learned LayerNorm.
+        norm_type = getattr(self.tts.config, "normalize_projected_hidden_type", "l2_norm")
+        if norm_type == "l2_norm":
+            return F.normalize(x, p=2, dim=-1)
+        elif norm_type == "layer_norm":
+            return layer_norm_module(x)
+        raise ValueError(f"Unsupported normalize_projected_hidden_type: {norm_type}")
 
     @torch.inference_mode()
     def _generate_speech_non_streaming(
@@ -1273,45 +1546,93 @@ class MiniCPMO(MiniCPMOPreTrainedModel):
         tts_bound,
         tts_proj_layer,
         audio_prompt,
+        spk_bound=None,
         output_tts_inputs_embeds_path=None,
         tts_sampling_params: TTSSamplingParams = TTSSamplingParams(),
     ):
         last_hidden_states = [hs[tts_proj_layer] for hs in outputs.hidden_states]
         last_hidden_states = torch.vstack([i[0] for i in last_hidden_states])
 
-        spk_embeds = (
-            torch.ones([0, self.tts.config.hidden_size]).to(last_hidden_states.device).to(last_hidden_states.dtype)
-        )
+        # Speaker-embedding channel. The trained MiniCPM-o 4.6 checkpoint sets num_spk_embs=0
+        # / disable_spk_emb, i.e. NO dedicated speaker embedding is fed to the TTS decoder
+        # (voice identity flows via the LLM hidden states and the Token2wav prompt). The
+        # channel is therefore only active when num_spk_embs > 0 (for future checkpoints).
+        num_spk_embs = getattr(self.tts.config, "num_spk_embs", 0)
+        spk_enabled = num_spk_embs and num_spk_embs > 0 and not getattr(self.tts.config, "disable_spk_emb", False)
+        if (
+            spk_enabled
+            and spk_bound is not None
+            and spk_bound[0] is not None
+            and spk_bound[1] is not None
+            and spk_bound[1] > spk_bound[0]
+        ):
+            spk_hidden = last_hidden_states[spk_bound[0] : spk_bound[1]]
+            spk_embeds = self.tts.projector_spk(spk_hidden)
+            if getattr(self.tts.config, "normalize_projected_hidden_spk", False):
+                spk_embeds = self._normalize_projected(spk_embeds, self.tts.projector_spk_norm)
+        else:
+            spk_embeds = (
+                torch.ones([0, self.tts.config.hidden_size]).to(last_hidden_states.device).to(last_hidden_states.dtype)
+            )
 
-        if self.tts.condition_type == "hidden_text_merge":
-            llm_tokens = outputs["full_sequences"][0][tts_bound[0] : tts_bound[1]]
-            llm_tokens = torch.tensor(llm_tokens, device=self.tts.emb_text.weight.device, dtype=torch.long)
+        if self.tts.condition_type in ("tokens_and_hidden_merge", "hidden_text_merge"):
+            # Guard: a missing <|tts_bos|> yields tts_bound[0] == -1 (e.g. the prompt was
+            # built without use_tts_template, or teacher-forcing without the marker). A
+            # negative start would silently slice the wrong region, so fail loudly.
+            if tts_bound[0] is None or tts_bound[0] < 0:
+                raise ValueError(
+                    "TTS region start is invalid (no <|tts_bos|> found in the sequence). "
+                    "Ensure use_tts_template=True so the prompt/target includes <|tts_bos|>."
+                )
+            if tts_bound[1] is None:
+                raise ValueError(
+                    "TTS region end is invalid (no <|tts_eos|>/<|im_end|>/<|endoftext|> found after "
+                    "<|tts_bos|>). This usually means text generation did not terminate cleanly."
+                )
+
+            # last_hidden_states covers positions [0 .. len(full_sequences)-2]: the final
+            # generated token has no recorded hidden state. Clamp the text region to the
+            # available hidden length so the token ids and hidden states stay aligned
+            # (otherwise an off-by-one mismatch can occur when the terminator is final).
+            hidden_len = last_hidden_states.shape[0]
+            start = tts_bound[0]
+            end = tts_bound[1]
+            end = min(end, hidden_len)
+            start = min(start, end)
+
+            llm_tokens = outputs["full_sequences"][0][start:end]
+            llm_tokens = llm_tokens.to(device=self.tts.emb_text.weight.device, dtype=torch.long)
             llm_embeds = self.tts.emb_text(llm_tokens)  # make sure emb_text is compatible with llm vocab size
 
-            hidden_embeds = last_hidden_states[tts_bound[0] : tts_bound[1]]
+            hidden_embeds = last_hidden_states[start:end]
             hidden_embeds = self.tts.projector_semantic(hidden_embeds)
 
+            # Match training: normalize the projected hidden by l2_norm or layer_norm.
             if self.tts.config.normalize_projected_hidden:
-                hidden_embeds = F.normalize(hidden_embeds, p=2, dim=-1)
+                hidden_embeds = self._normalize_projected(hidden_embeds, self.tts.projector_semantic_norm)
 
-            tts_embeds = llm_embeds + hidden_embeds
+            tts_embeds = llm_embeds + hidden_embeds  # token + hidden merge (elementwise add)
         else:
-            raise NotImplementedError
+            raise NotImplementedError(f"Unsupported tts condition_type: {self.tts.condition_type}")
 
-        audio_bos = [self.tts.audio_bos_token_id]
-        audio_bos = torch.tensor(audio_bos, device=self.tts.emb_text.weight.device, dtype=torch.long)
-
-        audio_bos_embeds = self.tts.emb_text(audio_bos)
-
-        text_eos_embed = self.tts.emb_text(
-            torch.tensor(
-                [self.tts.config.text_eos_token_id],
-                device=self.tts.emb_text.weight.device,
-                dtype=torch.long,
-            )
+        text_eos = torch.tensor(
+            [self.tts.config.text_eos_token_id],
+            device=self.tts.emb_text.weight.device,
+            dtype=torch.long,
+        )
+        audio_bos = torch.tensor(
+            [self.tts.audio_bos_token_id],
+            device=self.tts.emb_text.weight.device,
+            dtype=torch.long,
         )
 
-        inputs_embeds = torch.cat([spk_embeds, tts_embeds, text_eos_embed, audio_bos_embeds], dim=0).unsqueeze(0)
+        text_eos_embeds = self.tts.emb_text(text_eos)
+        audio_bos_embeds = self.tts.emb_text(audio_bos)
+
+        # Match the non-streaming training condition layout:
+        # [spk_embeds | merged_text | text_eos | audio_bos].
+        # inputs_embeds = torch.cat([spk_embeds, tts_embeds, text_eos_embeds, audio_bos_embeds], dim=0).unsqueeze(0)
+        inputs_embeds = torch.cat([spk_embeds, tts_embeds, audio_bos_embeds], dim=0).unsqueeze(0)
 
         # save inputs_embeds to file
         if output_tts_inputs_embeds_path:
@@ -1339,6 +1660,13 @@ class MiniCPMO(MiniCPMOPreTrainedModel):
             with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp_wav:
                 prompt_wav_path = tmp_wav.name
                 sf.write(prompt_wav_path, reference_audio, 16000)
+        # Token2wav.__call__ only builds its voice-clone prompt when `cache is None`
+        # and otherwise REUSES the previously cached prompt, ignoring prompt_wav. For
+        # non-streaming synthesis every call is independent, so force a rebuild here;
+        # otherwise the 2nd+ synthesis in a process silently keeps the FIRST reference
+        # voice (i.e. the new reference audio "does not pass through").
+        if hasattr(self.tts.audio_tokenizer, "cache"):
+            self.tts.audio_tokenizer.cache = None
         wav_bytes = self.tts.audio_tokenizer(
             generated_tokens.squeeze(0).tolist(),
             prompt_wav_path,
@@ -1596,9 +1924,8 @@ class MiniCPMO(MiniCPMOPreTrainedModel):
         # get LLM cache information
         llm_cache_length = self._get_kv_cache_length()
         llm_cache_checksum = None
-        if self.llm_past_key_values is not None and hasattr(self.llm_past_key_values, "key_cache"):
-            if len(self.llm_past_key_values.key_cache) > 0:
-                llm_cache_checksum = self.llm_past_key_values.key_cache[0].sum().item()
+        if self.llm_past_key_values is not None and _dc_has_kv(self.llm_past_key_values):
+            llm_cache_checksum = _dc_first_key(self.llm_past_key_values).sum().item()
 
         # get audio cache length and clone audio_past_key_values
         audio_cache_length = 0
@@ -1607,31 +1934,31 @@ class MiniCPMO(MiniCPMOPreTrainedModel):
         if self.audio_past_key_values is not None:
             # handle DynamicCache format (Whisper encoder may return this format)
             if isinstance(self.audio_past_key_values, DynamicCache):
-                if hasattr(self.audio_past_key_values, "key_cache") and len(self.audio_past_key_values.key_cache) > 0:
-                    audio_cache_length = self.audio_past_key_values.key_cache[0].shape[2]
-                    audio_cache_checksum = self.audio_past_key_values.key_cache[0].sum().item()
+                if _dc_has_kv(self.audio_past_key_values):
+                    audio_cache_length = _dc_first_key(self.audio_past_key_values).shape[2]
+                    audio_cache_checksum = _dc_first_key(self.audio_past_key_values).sum().item()
                 # deep clone DynamicCache
                 cloned_cache = DynamicCache()
-                for k, v in zip(self.audio_past_key_values.key_cache, self.audio_past_key_values.value_cache):
-                    cloned_cache.update(k.clone(), v.clone(), layer_idx=len(cloned_cache.key_cache))
+                for k, v in zip(_dc_keys(self.audio_past_key_values), _dc_values(self.audio_past_key_values)):
+                    cloned_cache.update(k.clone(), v.clone(), layer_idx=_dc_num_layers(cloned_cache))
                 audio_past_key_values_clone = cloned_cache
 
             # handle EncoderDecoderCache format
             elif isinstance(self.audio_past_key_values, EncoderDecoderCache):
                 self_attn_cache = self.audio_past_key_values.self_attention_cache
-                if hasattr(self_attn_cache, "key_cache") and len(self_attn_cache.key_cache) > 0:
-                    audio_cache_length = self_attn_cache.key_cache[0].shape[2]
-                    audio_cache_checksum = self_attn_cache.key_cache[0].sum().item()
+                if _dc_has_kv(self_attn_cache):
+                    audio_cache_length = _dc_first_key(self_attn_cache).shape[2]
+                    audio_cache_checksum = _dc_first_key(self_attn_cache).sum().item()
                 # deep clone EncoderDecoderCache
                 cloned_self_attn = DynamicCache()
-                if hasattr(self_attn_cache, "key_cache"):
-                    for k, v in zip(self_attn_cache.key_cache, self_attn_cache.value_cache):
-                        cloned_self_attn.update(k.clone(), v.clone(), layer_idx=len(cloned_self_attn.key_cache))
+                if _dc_is(self_attn_cache):
+                    for k, v in zip(_dc_keys(self_attn_cache), _dc_values(self_attn_cache)):
+                        cloned_self_attn.update(k.clone(), v.clone(), layer_idx=_dc_num_layers(cloned_self_attn))
                 cross_attn_cache = self.audio_past_key_values.cross_attention_cache
                 cloned_cross_attn = DynamicCache()
-                if hasattr(cross_attn_cache, "key_cache"):
-                    for k, v in zip(cross_attn_cache.key_cache, cross_attn_cache.value_cache):
-                        cloned_cross_attn.update(k.clone(), v.clone(), layer_idx=len(cloned_cross_attn.key_cache))
+                if _dc_is(cross_attn_cache):
+                    for k, v in zip(_dc_keys(cross_attn_cache), _dc_values(cross_attn_cache)):
+                        cloned_cross_attn.update(k.clone(), v.clone(), layer_idx=_dc_num_layers(cloned_cross_attn))
                 audio_past_key_values_clone = EncoderDecoderCache(cloned_self_attn, cloned_cross_attn)
 
             # handle tuple format (compatible with old format)
@@ -1785,10 +2112,10 @@ class MiniCPMO(MiniCPMOPreTrainedModel):
             return
 
         # truncate each layer of cache
-        for layer_idx in range(len(cache.key_cache)):
-            if cache.key_cache[layer_idx].numel() > 0:
-                cache.key_cache[layer_idx] = cache.key_cache[layer_idx][:, :, :target_length, :].contiguous()
-                cache.value_cache[layer_idx] = cache.value_cache[layer_idx][:, :, :target_length, :].contiguous()
+        for layer_idx in _dc_full_indices(cache):
+            if _dc_key(cache, layer_idx).numel() > 0:
+                _dc_set_key(cache, layer_idx, _dc_key(cache, layer_idx)[:, :, :target_length, :].contiguous())
+                _dc_set_value(cache, layer_idx, _dc_value(cache, layer_idx)[:, :, :target_length, :].contiguous())
 
         # update cache metadata
         cache.crop(target_length)
@@ -1830,7 +2157,7 @@ class MiniCPMO(MiniCPMOPreTrainedModel):
         for j, c in enumerate(content):
             if isinstance(c, Image.Image):
                 images.append(c)
-                cur_msgs.append("<image>./</image>")
+                cur_msgs.append("(<image>./</image>)")
             elif isinstance(c, np.ndarray):
                 audios.append(c)
                 cur_msgs.append("<audio>./</audio>")
@@ -1930,12 +2257,35 @@ class MiniCPMO(MiniCPMOPreTrainedModel):
 
         attention_mask = torch.ones((1, cache_length + inputs_embeds.shape[1]), dtype=torch.bool, device=self.device)
 
-        # 2. do prefill
+        # 2. compute position IDs: canvas (4,B,S) = [text, T, H, W] or None
+        position_ids = None
+        mrope_mode = getattr(self.config, "mrope_mode", None)
+        if uses_mrope_canvas(mrope_mode):
+            input_ids = model_inputs["input_ids"]
+            image_bound = model_inputs.get("image_bound")
+            tgt_sizes = model_inputs.get("tgt_sizes")
+            has_images = (
+                image_bound is not None
+                and (isinstance(image_bound, torch.Tensor) and image_bound.numel() > 0
+                     or isinstance(image_bound, list) and len(image_bound) > 0)
+            )
+            if has_images:
+                position_ids, _ = self._compute_canvas_position_ids(
+                    input_ids, None, image_bound, tgt_sizes,
+                )
+            else:
+                mrope_3d = expand_1d_position_ids_to_3d(input_ids, attention_mask=None)
+                text_pos = self._text_position_ids(input_ids, None)
+                position_ids = torch.cat([text_pos.unsqueeze(0), mrope_3d], dim=0)
+            if cache_length > 0:
+                position_ids = position_ids + cache_length
+
+        # 3. do prefill
         outputs = self.llm(
             past_key_values=self.llm_past_key_values,
             inputs_embeds=inputs_embeds,
             attention_mask=attention_mask,
-            position_ids=None,
+            position_ids=position_ids,
             use_cache=True,
             return_dict=True,
         )
@@ -2698,8 +3048,10 @@ class MiniCPMODuplex:
         # Prefill system prompt prefix
         if prefix_system_prompt:
             tokens = self.tokenizer.encode(prefix_system_prompt, add_special_tokens=False)
-            for token_id in tokens:
-                self.decoder.feed(self.decoder.embed_token(token_id))
+            if tokens:
+                # one-shot feed of the initial system context (chunked-prefill cache
+                # patch guarantees this matches token-by-token feeding); much faster.
+                self.decoder.feed(self.decoder.embed_tokens(tokens))
 
         # Prefill reference audio
         if ref_audio is not None:
@@ -2731,14 +3083,14 @@ class MiniCPMODuplex:
                 )
 
                 # now feed suffix
-                for token_id in suffix_token_ids:
-                    self.decoder.feed(self.decoder.embed_token(token_id))
+                if suffix_token_ids:
+                    self.decoder.feed(self.decoder.embed_tokens(suffix_token_ids))
             else:
                 # non-context preserve mode: first feed suffix, then register total length
                 if suffix_system_prompt:
                     tokens = self.tokenizer.encode(suffix_system_prompt, add_special_tokens=False)
-                    for token_id in tokens:
-                        self.decoder.feed(self.decoder.embed_token(token_id))
+                    if tokens:
+                        self.decoder.feed(self.decoder.embed_tokens(tokens))
                 self.decoder.register_system_prompt()
 
         if prefix_system_prompt or suffix_system_prompt:
@@ -3823,13 +4175,16 @@ class MiniCPMWhisperEncoderLayer(nn.Module):
     ) -> torch.Tensor:
         residual = hidden_states
         hidden_states = self.self_attn_layer_norm(hidden_states)
-        hidden_states, attn_weights, past_key_values = self.self_attn(
+        attn_outputs = self.self_attn(
             hidden_states=hidden_states,
             attention_mask=attention_mask,
             layer_head_mask=layer_head_mask,
             output_attentions=output_attentions,
             past_key_value=past_key_values,
         )
+        hidden_states = attn_outputs[0]
+        attn_weights = attn_outputs[1] if output_attentions and len(attn_outputs) > 1 else None
+        past_key_values = attn_outputs[-1] if use_cache and len(attn_outputs) > (2 if output_attentions else 1) else None
         hidden_states = nn.functional.dropout(hidden_states, p=self.dropout, training=self.training)
         hidden_states = residual + hidden_states
 
@@ -3945,7 +4300,11 @@ class MiniCPMWhisperEncoder(WhisperEncoder):
                 past_key_values = EncoderDecoderCache(past_key_values, DynamicCache())
             else:
                 pass
-            past_key_values_length = past_key_values.self_attention_cache.get_usable_length(inputs_embeds.shape[1])
+            self_attention_cache = past_key_values.self_attention_cache
+            if hasattr(self_attention_cache, "get_usable_length"):
+                past_key_values_length = self_attention_cache.get_usable_length(inputs_embeds.shape[1])
+            else:
+                past_key_values_length = self_attention_cache.get_seq_length()
             if inputs_embeds.shape[1] + past_key_values_length > embed_pos.shape[0]:
                 logger.warning("seems the audio is longer than 30s. repeating the last part of the audio")
                 embed_pos_front = embed_pos[past_key_values_length:, :]
@@ -4246,6 +4605,12 @@ class MiniCPMTTS(PreTrainedModel):
 
         self.projector_spk = self.create_projector(config)
         self.projector_semantic = self.create_projector(config)
+        # Optional learned LayerNorms over the projector outputs. They are only applied when
+        # normalize_projected_hidden_type == "layer_norm"; with "l2_norm" (the 4.6 training
+        # default) they stay unused. eps=1e-4 matches the training definition.
+        self.projector_spk_norm = nn.LayerNorm(config.hidden_size, eps=1e-4, elementwise_affine=True)
+        self.projector_semantic_norm = nn.LayerNorm(config.hidden_size, eps=1e-4, elementwise_affine=True)
+        self.num_spk_embs = getattr(config, "num_spk_embs", 0)
 
         self.audio_tokenizer = audio_tokenizer
 
@@ -4468,7 +4833,13 @@ class MiniCPMTTS(PreTrainedModel):
         if not finish.all():
             logger.warning(f"incomplete result. hit max_new_token: {max_new_token}")
 
-        genrated_input_ids = new_tokens[:, 0:t, :]
+        # `t` is the index of the last written slot. When generation stopped on EOS,
+        # new_tokens[:, t] holds the EOS token and must be excluded -> [0:t]. When the
+        # loop instead hit max_new_token without EOS, new_tokens[:, t] is a real audio
+        # token and must be kept -> [0:t+1] (otherwise the last token is dropped, and
+        # with max_new_token=1 the result would be empty).
+        end_idx = t if finish.all() else t + 1
+        genrated_input_ids = new_tokens[:, 0:end_idx, :]
 
         return MiniCPMTTSGenerationOutput(
             new_ids=genrated_input_ids,
@@ -4983,90 +5354,3 @@ def gen_logits(num_code: int, top_p=0.7, top_k=20, repetition_penalty=1.0):
         logits_processors.append(CustomRepetitionPenaltyLogitsProcessorRepeat(repetition_penalty, num_code, 16))
 
     return logits_warpers, logits_processors
-
-
-# Copy and modified from transformers.models.llama.modeling_llama.LlamaForCausalLM.prepare_inputs_for_generation
-def prepare_inputs_for_generation(
-    self,
-    input_ids,
-    past_key_values=None,
-    attention_mask=None,
-    inputs_embeds=None,
-    cache_position=None,
-    position_ids=None,
-    use_cache=True,
-    **kwargs,
-):
-    if past_key_values is not None:
-        if isinstance(past_key_values, Cache):
-            cache_length = past_key_values.get_seq_length()
-            past_length = past_key_values.seen_tokens
-        else:
-            cache_length = past_length = past_key_values[0][0].shape[2]
-
-        # Keep only the unprocessed tokens:
-        # 1 - If the length of the attention_mask exceeds the length of input_ids, then we are in a setting where
-        # some of the inputs are exclusivelly passed as part of the cache (e.g. when passing input_embeds as
-        # input)
-        if attention_mask is not None and attention_mask.shape[1] > input_ids.shape[1]:
-            input_ids = input_ids[:, -(attention_mask.shape[1] - past_length) :]
-        # 2 - If the past_length is smaller than input_ids', then input_ids holds all input tokens. We can discard
-        # input_ids based on the past_length.
-        elif past_length < input_ids.shape[1]:
-            input_ids = input_ids[:, past_length:]
-        # 3 - Otherwise (past_length >= input_ids.shape[1]), let's assume input_ids only has unprocessed tokens.
-
-    if attention_mask is not None and position_ids is None:
-        # create position_ids on the fly for batch generation
-        position_ids = attention_mask.long().cumsum(-1) - 1
-        position_ids.masked_fill_(attention_mask == 0, 1)
-        if past_key_values:
-            position_ids = position_ids[:, -input_ids.shape[1] :]
-
-            # This clo≠clo≠clone call is needed to avoid recapturing cuda graphs with →rch.comπ≤→rch.comπ≤torch.compile's  mode=reduce−overheadmode=reduce-overheadmode="reduce-overhead, as otherwise the input positionidspositionidsposition_ids would have various stride during the decoding. Here, simply using .contiguous().contiguous().contiguous() is not sufficient as in the batch size = 1 case, positionidspositionidsposition_ids is already contiguous but with varying stride which retriggers a capture.
-            position_ids = position_ids.clone(memory_format=torch.contiguous_format)
-
-    # if ∈putsembeds∈putsembedsinputs_embeds are passed, we only want to use them in the 1st generation step
-    if inputs_embeds is not None and cache_position[0] == 0:
-        model_inputs = {"inputs_embeds": inputs_embeds, "input_ids": None}
-    else:
-        # The clone here is for the same reason as for positionidspositionidsposition_ids.
-        model_inputs = {"input_ids": input_ids.clone(memory_format=torch.contiguous_format), "inputs_embeds": None}
-
-    if isinstance(past_key_values, StaticCache) and attention_mask.ndim == 2:
-        if model_inputs["inputs_embeds"] is not None:
-            batch_size, sequence_length, _ = model_inputs["inputs_embeds"].shape
-            device = model_inputs["inputs_embeds"].device
-        else:
-            batch_size, sequence_length = model_inputs["input_ids"].shape
-            device = model_inputs["input_ids"].device
-
-        dtype = self.lm_head.weight.dtype
-        min_dtype = torch.finfo(dtype).min
-
-        from transformers.models.paligemma.modeling_paligemma import (
-            _prepare_4d_causal_attention_mask_with_cache_position,
-        )
-
-        attention_mask = _prepare_4d_causal_attention_mask_with_cache_position(
-            attention_mask,
-            sequence_length=sequence_length,
-            target_length=past_key_values.get_max_length(),
-            dtype=dtype,
-            device=device,
-            min_dtype=min_dtype,
-            cache_position=cache_position,
-            batch_size=batch_size,
-        )
-
-    model_inputs.update(
-        {
-            "position_ids": position_ids,
-            # "cache_position": cache_position,
-            "past_key_values": past_key_values,
-            "use_cache": use_cache,
-            "attention_mask": attention_mask,
-        }
-    )
-
-    return model_inputs

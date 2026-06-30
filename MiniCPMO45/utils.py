@@ -31,23 +31,164 @@ from transformers.cache_utils import DynamicCache
 
 logger = logging.getLogger(__name__)
 
+# === [PATCH] Qwen3.5MoE linear-attention chunked-prefill cache fix ===========
+# Upstream transformers Qwen3_5MoeGatedDeltaNet.forward only continues the
+# conv/recurrent state when seq_len==1 (decode). Multi-token continuation
+# prefill (seq_len>1 with an existing cache) goes through the chunk path with
+# initial_state=None and a conv that ignores the previous chunk tail, so
+# streaming/chunked prefill DIVERGES from a single offline prefill. This makes
+# the duplex feed() produce ungrounded logits. The patch below handles the
+# seq_len>1 continuation case: conv prepends the cached tail and the chunked
+# gated-delta rule is seeded with the cached recurrent_state, so chunked prefill
+# matches offline prefill to fp noise.
+def _install_qwen35moe_linattn_patch():
+    try:
+        import transformers.models.qwen3_5_moe.modeling_qwen3_5_moe as _M
+    except Exception as _e:  # pragma: no cover
+        logger.warning("qwen3.5moe linattn patch skipped (import failed): %s", _e)
+        return
+    if getattr(_M, "_LINATTN_CHUNK_PREFILL_PATCHED", False):
+        return
+    import torch as _torch
+    import torch.nn.functional as _F
 
-class InvalidSamplingProbabilitiesError(RuntimeError):
-    """Raised before multinomial sampling when probabilities are unsafe."""
+    def _patched_forward(self, hidden_states, cache_params=None, attention_mask=None):
+        hidden_states = _M.apply_mask_to_padding_states(hidden_states, attention_mask)
+        batch_size, seq_len, _ = hidden_states.shape
+        has_prev = cache_params is not None and cache_params.has_previous_state(self.layer_idx)
+        use_recurrent = has_prev and seq_len == 1
+        cont_prefill = has_prev and seq_len > 1
+        if has_prev:
+            conv_state = cache_params.layers[self.layer_idx].conv_states
+            recurrent_state = cache_params.layers[self.layer_idx].recurrent_states
+        mixed_qkv = self.in_proj_qkv(hidden_states).transpose(1, 2)
+        z = self.in_proj_z(hidden_states).reshape(batch_size, seq_len, -1, self.head_v_dim)
+        b = self.in_proj_b(hidden_states)
+        a = self.in_proj_a(hidden_states)
+        if use_recurrent:
+            mixed_qkv = self.causal_conv1d_update(
+                mixed_qkv, conv_state, self.conv1d.weight.squeeze(1), self.conv1d.bias, self.activation)
+        elif cont_prefill:
+            # general continuation conv: prepend cached tail, keep last seq_len,
+            # and update cached conv_state in-place (copy_ inside the helper).
+            mixed_qkv = _M.torch_causal_conv1d_update(
+                mixed_qkv, conv_state, self.conv1d.weight.squeeze(1), self.conv1d.bias, self.activation)
+        else:
+            if cache_params is not None:
+                cs = _F.pad(mixed_qkv, (self.conv_kernel_size - mixed_qkv.shape[-1], 0))
+                cs = cache_params.update_conv_state(cs, self.layer_idx)
+            if self.causal_conv1d_fn is not None:
+                mixed_qkv = self.causal_conv1d_fn(
+                    x=mixed_qkv, weight=self.conv1d.weight.squeeze(1), bias=self.conv1d.bias,
+                    activation=self.activation, seq_idx=None)
+            else:
+                mixed_qkv = _F.silu(self.conv1d(mixed_qkv)[:, :, :seq_len])
+        mixed_qkv = mixed_qkv.transpose(1, 2)
+        query, key, value = _torch.split(
+            mixed_qkv, [self.key_dim, self.key_dim, self.value_dim], dim=-1)
+        query = query.reshape(batch_size, seq_len, -1, self.head_k_dim)
+        key = key.reshape(batch_size, seq_len, -1, self.head_k_dim)
+        value = value.reshape(batch_size, seq_len, -1, self.head_v_dim)
+        beta = b.sigmoid()
+        g = -self.A_log.float().exp() * _F.softplus(a.float() + self.dt_bias)
+        if self.num_v_heads // self.num_k_heads > 1:
+            query = query.repeat_interleave(self.num_v_heads // self.num_k_heads, dim=2)
+            key = key.repeat_interleave(self.num_v_heads // self.num_k_heads, dim=2)
+        if use_recurrent:
+            core_attn_out, last = self.recurrent_gated_delta_rule(
+                query, key, value, g=g, beta=beta, initial_state=recurrent_state,
+                output_final_state=cache_params is not None, use_qk_l2norm_in_kernel=True)
+        else:
+            init = recurrent_state if cont_prefill else None
+            core_attn_out, last = self.chunk_gated_delta_rule(
+                query, key, value, g=g, beta=beta, initial_state=init,
+                output_final_state=cache_params is not None, use_qk_l2norm_in_kernel=True)
+        if cache_params is not None:
+            cache_params.update_recurrent_state(last, self.layer_idx)
+        core_attn_out = core_attn_out.reshape(-1, self.head_v_dim)
+        z = z.reshape(-1, self.head_v_dim)
+        core_attn_out = self.norm(core_attn_out, z).reshape(batch_size, seq_len, -1)
+        return self.out_proj(core_attn_out)
+
+    _M.Qwen3_5MoeGatedDeltaNet.forward = _patched_forward
+    _M._LINATTN_CHUNK_PREFILL_PATCHED = True
+    logger.info("Installed Qwen3.5MoE linear-attn chunked-prefill cache patch")
 
 
-def _validate_sampling_probs(
-    probs: torch.Tensor,
-    *,
-    context: str,
-) -> None:
-    """Fail before torch.multinomial can trigger a CUDA device-side assert."""
-    invalid = (~torch.isfinite(probs)).any() | (probs < 0).any()
-    if invalid.item():
-        raise InvalidSamplingProbabilitiesError(
-            f"{context}: invalid probabilities before multinomial "
-            f"(shape={tuple(probs.shape)}, dtype={probs.dtype}, device={probs.device})"
-        )
+_install_qwen35moe_linattn_patch()
+# === [/PATCH] ================================================================
+
+
+import copy as _copy
+
+# === transformers>=4.54 DynamicCache compatibility helpers (hybrid-aware) ===
+# New transformers stores KV per-layer in cache.layers[i].keys/.values instead of
+# the legacy cache.key_cache/value_cache lists. This model is a hybrid attention
+# model: cache.layers contains full-attention layers (DynamicLayer, expose
+# .keys/.values) AND linear-attention layers (LinearAttentionLayer, hold a
+# recurrent/conv state and have NO .keys/.values). All KV-position operations
+# (length, slice, truncate, reindex) only apply to the full-attention layers; the
+# linear-attention layers are left untouched / deep-copied as-is.
+def _dc_is(cache):
+    return hasattr(cache, "layers")
+
+
+def _dc_full_indices(cache):
+    """Indices of full-attention layers that currently hold key tensors."""
+    return [i for i, layer in enumerate(cache.layers) if getattr(layer, "keys", None) is not None]
+
+
+def _dc_first_key(cache):
+    for layer in cache.layers:
+        k = getattr(layer, "keys", None)
+        if k is not None:
+            return k
+    return None
+
+
+def _dc_has_kv(cache):
+    k = _dc_first_key(cache) if _dc_is(cache) else None
+    return k is not None and k.numel() > 0
+
+
+def _dc_seq_len(cache):
+    """Number of cached tokens (full-attention seq length); hybrid-safe."""
+    if not _dc_is(cache):
+        return 0
+    for layer in cache.layers:
+        k = getattr(layer, "keys", None)
+        if k is not None and k.numel() > 0:
+            return k.shape[2]
+    return 0
+
+
+def _dc_keys(cache):
+    return [layer.keys for layer in cache.layers if getattr(layer, "keys", None) is not None]
+
+
+def _dc_values(cache):
+    return [layer.values for layer in cache.layers if getattr(layer, "values", None) is not None]
+
+
+def _dc_key(cache, i):
+    return cache.layers[i].keys
+
+
+def _dc_value(cache, i):
+    return cache.layers[i].values
+
+
+def _dc_set_key(cache, i, tensor):
+    cache.layers[i].keys = tensor
+
+
+def _dc_set_value(cache, i, tensor):
+    cache.layers[i].values = tensor
+
+
+def _dc_num_layers(cache):
+    return len(cache.layers)
+# === end compatibility helpers ===
 
 
 # text
@@ -147,7 +288,6 @@ class ChunkPrefillChunkGenerate:
         repetition_penalty: float = 1.05,
         length_penalty: float = 1.0,
         all_input_ids: Optional[torch.Tensor] = None,
-        suppress_forbidden_tokens: bool = True,
     ) -> GenerateChunkOutput:
         """
         Args:
@@ -195,7 +335,7 @@ class ChunkPrefillChunkGenerate:
             logits = outputs.logits[:, -1, :].to(copy=True, dtype=torch.float32, device=inputs_embeds.device)
 
             # forbid specific tokens decoding = model.generate@suppress_tokens
-            if suppress_forbidden_tokens and self.forbidden_token_ids:
+            if self.forbidden_token_ids:
                 logits[:, self.forbidden_token_ids] = float("-inf")
 
             past_key_values = outputs.past_key_values
@@ -268,7 +408,6 @@ class ChunkPrefillChunkGenerate:
 
                 # sampling
                 probs = F.softmax(logits, dim=-1)
-                _validate_sampling_probs(probs, context="ChunkPrefillChunkGenerate.generate.sample")
                 next_token = torch.multinomial(probs, num_samples=1)
             else:
                 next_token = torch.argmax(logits, dim=-1, keepdim=True)
@@ -591,23 +730,22 @@ class TTSStreamingGenerator:
         if current_kv_len <= self.token_window_size:
             return
 
-        new_cache = DynamicCache()
-        num_layers = (
-            len(self.past_key_values.key_cache)
-            if hasattr(self.past_key_values, "key_cache")
-            else len(self.past_key_values)
-        )
-
-        for layer_idx in range(num_layers):
-            if hasattr(self.past_key_values, "key_cache"):
-                key = self.past_key_values.key_cache[layer_idx][:, :, -self.token_window_size :, :]
-                value = self.past_key_values.value_cache[layer_idx][:, :, -self.token_window_size :, :]
-            else:
+        if _dc_is(self.past_key_values):
+            # Keep only the last token_window_size tokens on full-attention layers
+            # (modify in place). Linear-attention layers carry a fixed recurrent
+            # state and are left untouched.
+            for layer_idx in _dc_full_indices(self.past_key_values):
+                key = _dc_key(self.past_key_values, layer_idx)[:, :, -self.token_window_size :, :].contiguous()
+                value = _dc_value(self.past_key_values, layer_idx)[:, :, -self.token_window_size :, :].contiguous()
+                _dc_set_key(self.past_key_values, layer_idx, key)
+                _dc_set_value(self.past_key_values, layer_idx, value)
+        else:
+            new_cache = DynamicCache()
+            for layer_idx in range(len(self.past_key_values)):
                 key = self.past_key_values[layer_idx][0][:, :, -self.token_window_size :, :]
                 value = self.past_key_values[layer_idx][1][:, :, -self.token_window_size :, :]
-            new_cache.update(key, value, layer_idx)
-
-        self.past_key_values = new_cache
+                new_cache.update(key, value, layer_idx)
+            self.past_key_values = new_cache
 
     @staticmethod
     def _apply_rope_rotation(x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor) -> torch.Tensor:
@@ -654,30 +792,32 @@ class TTSStreamingGenerator:
 
         keep_len = sink_len + last_chunk_len
 
+        # Get device and dtype
+        device = _dc_first_key(self.past_key_values).device
+        dtype = _dc_first_key(self.past_key_values).dtype
+
         if current_kv_len <= keep_len:
-            # No need to truncate, but may need to reindex
+            last_chunk_kv_len = current_kv_len - sink_len
+            if last_chunk_kv_len <= 0:
+                return
+            self.text_start_pos = current_kv_len
             return
 
-        # Step 1: Truncate KV cache - keep sink and last chunk
-        device = self.past_key_values.key_cache[0].device
-        dtype = self.past_key_values.key_cache[0].dtype
-
-        new_cache = DynamicCache()
-        num_layers = len(self.past_key_values.key_cache)
-
-        # Calculate position delta for reindexing
+        # Step 1: Truncate KV cache - keep sink and last chunk (modify in place on
+        # full-attention layers; linear-attention layers are left untouched).
         original_start_pos = current_kv_len - last_chunk_len
         new_start_pos = sink_len
-        delta_positions = torch.arange(last_chunk_len, device=device) + (new_start_pos - original_start_pos)
+        delta = new_start_pos - original_start_pos  # This is a scalar constant
+        delta_positions = torch.full((last_chunk_len,), delta, dtype=torch.float32, device=device)
 
         # Compute rotation cos/sin
         cos, sin = self._compute_rope_cos_sin(delta_positions, device, dtype)
         cos = cos.unsqueeze(0).unsqueeze(0)  # [1, 1, seq_len, head_dim]
         sin = sin.unsqueeze(0).unsqueeze(0)
 
-        for layer_idx in range(num_layers):
-            key_full = self.past_key_values.key_cache[layer_idx]
-            value_full = self.past_key_values.value_cache[layer_idx]
+        for layer_idx in _dc_full_indices(self.past_key_values):
+            key_full = _dc_key(self.past_key_values, layer_idx)
+            value_full = _dc_value(self.past_key_values, layer_idx)
 
             # Extract sink and last chunk
             key_sink = key_full[:, :, :sink_len, :]
@@ -692,9 +832,8 @@ class TTSStreamingGenerator:
             key = torch.cat([key_sink, key_last_reindexed], dim=2)
             value = torch.cat([value_sink, value_last], dim=2)
 
-            new_cache.update(key, value, layer_idx)
-
-        self.past_key_values = new_cache
+            _dc_set_key(self.past_key_values, layer_idx, key)
+            _dc_set_value(self.past_key_values, layer_idx, value)
 
         # Update text_start_pos to reflect new positions
         self.text_start_pos = sink_len + last_chunk_len
@@ -742,7 +881,13 @@ class TTSStreamingGenerator:
             # reindex: truncate KV cache keeping sink + last chunk, reindex positions via RoPE
             self._reindex_kv_cache()
             current_condition = condition
-            # text_start_pos is updated in _reindex_kv_cache
+            # Always update text_start_pos based on actual KV cache length (like reference code)
+            if self.past_key_values is not None:
+                if hasattr(self.past_key_values, "get_seq_length"):
+                    kv_len = self.past_key_values.get_seq_length()
+                else:
+                    kv_len = self.past_key_values[0][0].shape[2]
+                self.text_start_pos = kv_len
         else:
             current_condition = condition
 
@@ -822,7 +967,6 @@ class TTSStreamingGenerator:
 
             # sample next token (only use first codebook, same as generate)
             scores = F.softmax(logits, dim=-1)
-            _validate_sampling_probs(scores, context="AudioTokenGenerator.streaming_generate.sample")
             idx_next = torch.multinomial(scores, num_samples=1)  # [(B*num_vq), 1]
             next_id = idx_next.view(-1, self.num_vq)[:, 0:1]  # only take first codebook → [B, 1]
             del scores
@@ -880,13 +1024,23 @@ class TTSStreamingGenerator:
                     else:  # generation of this audio chunk is not finished, continue generating
                         continue
 
-        # Save current chunk info for sliding_recompute
+        # Save current chunk info for sliding_recompute and reindex
         self._chunk_info.append(current_chunk_info)
         self._total_seq_len += condition.shape[1] + len(chunk_generated_tokens)
 
         # Update text_start_pos based on attention type
         if self.attention_type == "sliding_recompute":
+            # sliding_recompute: will be reset at next chunk start, update normally here
             self.text_start_pos += prefill_len + len(chunk_generated_tokens)
+        elif self.attention_type == "reindex":
+            # reindex: position based on actual KV cache length (positions have been reindexed to be continuous)
+            if self.past_key_values is not None:
+                if hasattr(self.past_key_values, "get_seq_length"):
+                    self.text_start_pos = self.past_key_values.get_seq_length()
+                else:
+                    self.text_start_pos = self.past_key_values[0][0].shape[2]
+            else:
+                self.text_start_pos += condition.shape[1] + len(chunk_generated_tokens)
         else:
             self.text_start_pos += condition.shape[1] + len(chunk_generated_tokens)
         # note: remaining tokens in buffer will be kept, and accumulated next time
@@ -948,9 +1102,7 @@ def get_kv_cache_length(cache) -> int:
         return 0
 
     if isinstance(cache, DynamicCache):
-        if not cache.key_cache or not cache.key_cache[0].numel():
-            return 0
-        return cache.key_cache[0].shape[-2]
+        return _dc_seq_len(cache)
 
     if isinstance(cache, tuple):
         return cache[0][0].shape[2]
@@ -1101,7 +1253,7 @@ def drop_tokens_from_cache(
     old_positions = None
     new_positions = None
     if suffix_len > 0:
-        device = cache.key_cache[0].device
+        device = _dc_first_key(cache).device
         old_positions = torch.arange(
             suffix_offset,
             suffix_offset + suffix_len,
@@ -1118,9 +1270,9 @@ def drop_tokens_from_cache(
     keep_len = total_len - length
 
     # Process each layer (in-place modification)
-    for layer_idx in range(len(cache.key_cache)):
-        key_tensor = cache.key_cache[layer_idx]
-        value_tensor = cache.value_cache[layer_idx]
+    for layer_idx in _dc_full_indices(cache):
+        key_tensor = _dc_key(cache, layer_idx)
+        value_tensor = _dc_value(cache, layer_idx)
 
         if not key_tensor.numel():
             continue
@@ -1143,11 +1295,11 @@ def drop_tokens_from_cache(
                     inv_freq_cache,
                 )
 
-            cache.key_cache[layer_idx] = torch.cat([prefix_keys, suffix_keys], dim=-2).contiguous()
-            cache.value_cache[layer_idx] = torch.cat([prefix_values, suffix_values], dim=-2).contiguous()
+            _dc_set_key(cache, layer_idx, torch.cat([prefix_keys, suffix_keys], dim=-2).contiguous())
+            _dc_set_value(cache, layer_idx, torch.cat([prefix_values, suffix_values], dim=-2).contiguous())
         else:
-            cache.key_cache[layer_idx] = prefix_keys.contiguous()
-            cache.value_cache[layer_idx] = prefix_values.contiguous()
+            _dc_set_key(cache, layer_idx, prefix_keys.contiguous())
+            _dc_set_value(cache, layer_idx, prefix_values.contiguous())
 
     cache.crop(keep_len)
     cache._seen_tokens = max(keep_len, 0)
@@ -1327,9 +1479,7 @@ class StreamDecoder:
         if self.cache is None:
             return 0
         if isinstance(self.cache, DynamicCache):
-            if len(self.cache.key_cache) > 0 and self.cache.key_cache[0].numel() > 0:
-                return self.cache.key_cache[0].shape[2]
-            return 0
+            return _dc_seq_len(self.cache)
         # Tuple cache format
         return self.cache[0][0].shape[2]
 
@@ -1705,16 +1855,14 @@ class StreamDecoder:
         if self.cache is None:
             return None
         if isinstance(self.cache, DynamicCache):
-            # DynamicCache
-            new_key_cache = [
-                k[:, :, start:end, :].clone() if clone else k[:, :, start:end, :] for k in self.cache.key_cache
-            ]
-            new_value_cache = [
-                v[:, :, start:end, :].clone() if clone else v[:, :, start:end, :] for v in self.cache.value_cache
-            ]
-            new_cache = DynamicCache()
-            new_cache.key_cache = new_key_cache
-            new_cache.value_cache = new_value_cache
+            # Deep-copy to preserve linear-attention layers' recurrent state, then
+            # slice only full-attention layers along the sequence dim.
+            new_cache = _copy.deepcopy(self.cache)
+            for i in _dc_full_indices(self.cache):
+                k = _dc_key(self.cache, i)
+                v = _dc_value(self.cache, i)
+                _dc_set_key(new_cache, i, k[:, :, start:end, :].clone() if clone else k[:, :, start:end, :])
+                _dc_set_value(new_cache, i, v[:, :, start:end, :].clone() if clone else v[:, :, start:end, :])
             return new_cache
         else:
             # Tuple cache
@@ -1730,9 +1878,7 @@ class StreamDecoder:
         if cache is None:
             return 0
         if isinstance(cache, DynamicCache):
-            if len(cache.key_cache) > 0 and cache.key_cache[0].numel() > 0:
-                return cache.key_cache[0].shape[2]
-            return 0
+            return _dc_seq_len(cache)
 
         if cache and cache[0] and cache[0][0] is not None:
             return cache[0][0].shape[2]
@@ -1746,11 +1892,12 @@ class StreamDecoder:
             return cache1
 
         if isinstance(cache1, DynamicCache):
-            new_cache = DynamicCache()
-            new_cache.key_cache = [torch.cat([k1, k2], dim=2) for k1, k2 in zip(cache1.key_cache, cache2.key_cache)]
-            new_cache.value_cache = [
-                torch.cat([v1, v2], dim=2) for v1, v2 in zip(cache1.value_cache, cache2.value_cache)
-            ]
+            # Deep-copy cache1 to preserve linear-attention layers, then concat the
+            # full-attention layers' K/V along the sequence dim.
+            new_cache = _copy.deepcopy(cache1)
+            for i in _dc_full_indices(cache1):
+                _dc_set_key(new_cache, i, torch.cat([_dc_key(cache1, i), _dc_key(cache2, i)], dim=2))
+                _dc_set_value(new_cache, i, torch.cat([_dc_value(cache1, i), _dc_value(cache2, i)], dim=2))
             return new_cache
         else:
             return tuple(
@@ -1767,7 +1914,7 @@ class StreamDecoder:
             return cache
 
         if isinstance(cache, DynamicCache):
-            device = cache.key_cache[0].device if cache.key_cache else None
+            device = _dc_first_key(cache).device if _dc_has_kv(cache) else None
         else:
             device = cache[0][0].device if cache and cache[0] else None
 
@@ -1780,11 +1927,11 @@ class StreamDecoder:
         rope_theta = self._get_rope_theta()
 
         if isinstance(cache, DynamicCache):
-            new_key_cache = []
-            for k in cache.key_cache:
-                new_k = realign_rotary_suffix(k, old_positions, new_positions, rope_theta, self._rope_inv_freq_cache)
-                new_key_cache.append(new_k)
-            cache.key_cache = new_key_cache
+            for i in _dc_full_indices(cache):
+                new_k = realign_rotary_suffix(
+                    _dc_key(cache, i), old_positions, new_positions, rope_theta, self._rope_inv_freq_cache
+                )
+                _dc_set_key(cache, i, new_k)
             return cache
         else:
             new_cache = []
@@ -2115,7 +2262,6 @@ class StreamDecoder:
         listen_prob_scale=1.0,
         text_repetition_penalty=1.05,
         text_repetition_window_size=512,
-        length_penalty=1.1,
     ):
         """
         Args:
@@ -2146,7 +2292,6 @@ class StreamDecoder:
                 sampled_token = torch.argmax(logits[0]).item()
             else:
                 original_probs = F.softmax(logits[0], dim=-1)
-                _validate_sampling_probs(original_probs, context="StreamDecoder.decode.initial_chunk_eos_sample")
                 sampled_token = torch.multinomial(original_probs, num_samples=1).item()
 
             # if sampled chunk_eos, return directly
@@ -2178,15 +2323,6 @@ class StreamDecoder:
                         # encourage repetition: increase logits
                         logits[0, token_id] *= 1.0 / text_repetition_penalty
 
-        # 2. apply length penalty to turn_eos token
-        # higher length_penalty → suppress turn_eos → model 更不容易结束当前 turn，倾向更长输出
-        if length_penalty != 1.0:
-            turn_eos_id = self.turn_eos_id
-            if logits[0, turn_eos_id] > 0:
-                logits[0, turn_eos_id] = logits[0, turn_eos_id] / length_penalty
-            else:
-                logits[0, turn_eos_id] = logits[0, turn_eos_id] * length_penalty
-
         if listen_prob_scale != 1.0:  # modify listen token logit separately
             logits[0, self.listen_id] *= listen_prob_scale
 
@@ -2209,7 +2345,6 @@ class StreamDecoder:
             logits = logits / temperature
             logits = top_k_top_p_filtering(logits, top_k=top_k, top_p=top_p)
             probs = F.softmax(logits, dim=-1)
-            _validate_sampling_probs(probs, context="StreamDecoder.decode.post_filter_sample")
             next_token_id = torch.multinomial(probs, num_samples=1).squeeze(1)
         else:
             raise ValueError(f"Unsupported decode mode: {mode}")
@@ -2223,7 +2358,17 @@ class StreamDecoder:
 
 
 def _download_url_to_tempfile(url: str, suffix: str = "", timeout: int = 60) -> str:
-    """Download a URL to a temporary file and return the path."""
+    """
+    Download a URL to a temporary file and return the path.
+
+    Args:
+        url: HTTP/HTTPS URL to download
+        suffix: File suffix (e.g., ".jpg", ".wav", ".mp4")
+        timeout: Download timeout in seconds
+
+    Returns:
+        Path to the downloaded temporary file
+    """
     import tempfile
 
     import requests
@@ -2241,7 +2386,30 @@ def _is_url(path: str) -> bool:
 
 
 def normalize_content_item(item) -> Union[str, Any, List[Any]]:
-    """Normalize structured content item to native format."""
+    """Normalize structured content item to native format.
+
+    Supports:
+    - Native format: str, PIL.Image, np.ndarray (pass through)
+    - OpenAI structured format:
+        - {"type": "text", "text": "..."} -> str
+        - {"type": "image_url", "image_url": {"url": "..."}} -> PIL.Image
+        - {"type": "audio_url", "audio_url": {"url": "..."}} -> np.ndarray
+        - {"type": "video_url", "video_url": {"url": "...", ...}} -> List[Image, ndarray, ...]
+
+    URL formats supported:
+        - Local file path: "/path/to/file.jpg"
+        - HTTP/HTTPS URL: "https://example.com/image.jpg"
+
+    Args:
+        item: Content item to normalize
+
+    Returns:
+        Normalized item. For video_url, returns a tuple ("__video_contents__", list)
+        that will be flattened by normalize_content().
+
+    Raises:
+        ValueError: If content type is unknown or unsupported
+    """
     import os
 
     import numpy as np
@@ -2265,6 +2433,7 @@ def normalize_content_item(item) -> Union[str, Any, List[Any]]:
             url = image_url_obj.get("url", "") if isinstance(image_url_obj, dict) else image_url_obj
 
             if _is_url(url):
+                # Download to temp file
                 temp_path = _download_url_to_tempfile(url, suffix=".jpg", timeout=30)
                 img = Image.open(temp_path)
                 os.unlink(temp_path)
@@ -2278,6 +2447,7 @@ def normalize_content_item(item) -> Union[str, Any, List[Any]]:
             url = audio_url_obj.get("url", "") if isinstance(audio_url_obj, dict) else audio_url_obj
 
             if _is_url(url):
+                # Download to temp file
                 temp_path = _download_url_to_tempfile(url, suffix=".wav", timeout=60)
                 audio_np, _ = librosa.load(temp_path, sr=16000, mono=True)
                 os.unlink(temp_path)
@@ -2286,11 +2456,15 @@ def normalize_content_item(item) -> Union[str, Any, List[Any]]:
                 audio_np, _ = librosa.load(url, sr=16000, mono=True)
                 return audio_np
         elif item_type == "video_url":
+            # Video processing - returns a LIST of items (frames + audio segments)
+            # Note: Unlike image_url/audio_url which return single items,
+            # video_url returns a list that will be flattened into the content
             from minicpmo.utils import get_video_frame_audio_segments
 
             video_url_obj = item.get("video_url", {})
             if isinstance(video_url_obj, dict):
                 video_url = video_url_obj.get("url", "")
+                # Get optional parameters from video_url object (OpenAI style)
                 stack_frames = video_url_obj.get("stack_frames", 1)
                 use_ffmpeg = video_url_obj.get("use_ffmpeg", False)
                 use_audio = video_url_obj.get("use_audio", True)
@@ -2300,6 +2474,7 @@ def normalize_content_item(item) -> Union[str, Any, List[Any]]:
                 use_ffmpeg = False
                 use_audio = True
 
+            # Handle HTTP/HTTPS URL - download to temp file
             temp_video_path = None
             if _is_url(video_url):
                 temp_video_path = _download_url_to_tempfile(video_url, suffix=".mp4", timeout=120)
@@ -2307,16 +2482,19 @@ def normalize_content_item(item) -> Union[str, Any, List[Any]]:
             else:
                 video_path = video_url
 
+            # Extract frames and audio segments
             video_frames, audio_segments, stacked_frames = get_video_frame_audio_segments(
                 video_path,
                 stack_frames=stack_frames,
                 use_ffmpeg=use_ffmpeg,
-                use_audio=use_audio,
+                use_audio=use_audio
             )
 
+            # Clean up temp file if downloaded
             if temp_video_path is not None:
                 os.unlink(temp_video_path)
 
+            # Build omni_contents (interleaved frames and audio, or frames only)
             omni_contents = []
             for i in range(len(video_frames)):
                 omni_contents.append(video_frames[i])
@@ -2325,6 +2503,7 @@ def normalize_content_item(item) -> Union[str, Any, List[Any]]:
                 if stacked_frames is not None and i < len(stacked_frames) and stacked_frames[i] is not None:
                     omni_contents.append(stacked_frames[i])
 
+            # Return as a special marker to be flattened later
             return "__video_contents__", omni_contents
         else:
             raise ValueError(f"Unknown content type: {item_type}")
@@ -2333,7 +2512,31 @@ def normalize_content_item(item) -> Union[str, Any, List[Any]]:
 
 
 def normalize_content(content) -> list:
-    """Normalize message content to list of native items."""
+    """Normalize message content to list of native items.
+
+    Input formats:
+    - str: "hello" -> ["hello"]
+    - list of native items: [str, Image, np.ndarray] -> pass through with normalization
+    - list of structured items: [{"type": "text", ...}] -> normalize each
+    - video type: automatically expanded to omni_contents
+    - mixed: works too
+
+    Args:
+        content: Message content in any supported format
+
+    Returns:
+        List of native items (str, PIL.Image, np.ndarray)
+
+    Examples:
+        >>> normalize_content("hello")
+        ["hello"]
+
+        >>> normalize_content([{"type": "text", "text": "hi"}])
+        ["hi"]
+
+        >>> normalize_content([{"type": "video", "video": "/path/to/video.mp4"}])
+        [<PIL.Image>, <np.ndarray>, <PIL.Image>, <np.ndarray>, ...]
+    """
     import numpy as np
     from PIL import Image
 
@@ -2344,12 +2547,15 @@ def normalize_content(content) -> list:
         result = []
         for item in content:
             normalized = normalize_content_item(item)
+            # Handle video content (returns tuple with marker)
             if isinstance(normalized, tuple) and len(normalized) == 2 and normalized[0] == "__video_contents__":
+                # Flatten video contents into result
                 result.extend(normalized[1])
             else:
                 result.append(normalized)
         return result
 
+    # Single non-list item (Image or np.ndarray)
     if isinstance(content, (Image.Image, np.ndarray)):
         return [content]
 
