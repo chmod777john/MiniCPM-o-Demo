@@ -39,6 +39,7 @@ from enum import Enum
 
 # 相对导入（同目录）
 from .modeling_minicpmo import gen_logits
+from .modeling_minicpmo import _apply_vendored_chat_template
 from .modeling_minicpmo import _dc_first_key
 from .modeling_minicpmo import MiniCPMO as BaseMiniCPMO
 from .modeling_minicpmo import MiniCPMOPreTrainedModel
@@ -1376,6 +1377,7 @@ class MiniCPMO(BaseMiniCPMO):
 
         if not hasattr(self, "processor") or self.processor is None:
             self.processor = MiniCPMOProcessor.from_pretrained(self.config._name_or_path, trust_remote_code=True)
+            _apply_vendored_chat_template(self.processor)
 
         # ── 1. 消息解析（复用 chat() 的逻辑） ──
 
@@ -1540,6 +1542,7 @@ class MiniCPMO(BaseMiniCPMO):
             self.processor = MiniCPMOProcessor.from_pretrained(
                 self.config._name_or_path, trust_remote_code=True
             )
+            _apply_vendored_chat_template(self.processor)
         tokenizer = self.processor.tokenizer
 
         # 1. 构建 bos string（与 streaming_generate 对齐）
@@ -1718,6 +1721,7 @@ class MiniCPMO(BaseMiniCPMO):
 
         if not hasattr(self, "processor") or self.processor is None:
             self.processor = MiniCPMOProcessor.from_pretrained(self.config._name_or_path, trust_remote_code=True)
+            _apply_vendored_chat_template(self.processor)
 
         images = []
         audios = []
@@ -1917,6 +1921,7 @@ class MiniCPMO(BaseMiniCPMO):
 
         if not hasattr(self, "processor") or self.processor is None:
             self.processor = MiniCPMOProcessor.from_pretrained(self.config._name_or_path, trust_remote_code=True)
+            _apply_vendored_chat_template(self.processor)
 
         # reset current turn generated token IDs
         if hasattr(self, "_streaming_generated_token_ids"):
@@ -2561,6 +2566,7 @@ class DuplexCapability:
             self.model.processor = MiniCPMOProcessor.from_pretrained(
                 self.model.config._name_or_path, trust_remote_code=True
             )
+            _apply_vendored_chat_template(self.model.processor)
         self.processor = self.model.processor
         self.tokenizer = self.processor.tokenizer
         

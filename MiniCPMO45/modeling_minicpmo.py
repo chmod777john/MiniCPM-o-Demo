@@ -183,6 +183,15 @@ from .utils import TTSStreamingGenerator
 logger = logging.getLogger(__name__)
 
 
+def _apply_vendored_chat_template(processor_or_tokenizer):
+    tokenizer = getattr(processor_or_tokenizer, "tokenizer", processor_or_tokenizer)
+    template_path = os.path.join(os.path.dirname(__file__), "chat_template.jinja")
+    if tokenizer is not None and os.path.isfile(template_path):
+        with open(template_path, "r", encoding="utf-8") as f:
+            tokenizer.chat_template = f.read()
+    return processor_or_tokenizer
+
+
 class MiniCPMOPreTrainedModel(Qwen3_5PreTrainedModel):
     config_class = MiniCPMOConfig
 
@@ -1284,6 +1293,7 @@ class MiniCPMO(MiniCPMOPreTrainedModel):
             self.processor = MiniCPMOProcessor.from_pretrained(self.config._name_or_path, trust_remote_code=True)
         if tokenizer is not None:
             self.processor.tokenizer = tokenizer
+        _apply_vendored_chat_template(self.processor)
 
     @torch.inference_mode()
     def chat(
@@ -2837,12 +2847,14 @@ class MiniCPMODuplex:
             from transformers import AutoTokenizer
 
             instance.tokenizer = AutoTokenizer.from_pretrained(instance.name_or_path, trust_remote_code=True)
+            _apply_vendored_chat_template(instance.tokenizer)
 
         if instance.processor is None:
             from .processing_minicpmo import MiniCPMOProcessor
 
             instance.processor = MiniCPMOProcessor.from_pretrained(instance.name_or_path, trust_remote_code=True)
             instance.processor.tokenizer = instance.tokenizer
+        _apply_vendored_chat_template(instance.processor)
 
         # Ensure model has processor reference (same as __init__)
         instance.model.processor = instance.processor
