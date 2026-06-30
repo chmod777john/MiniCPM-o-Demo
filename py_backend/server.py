@@ -282,25 +282,28 @@ class BackendProtocolSession:
             input_id = payload.get("input_id")
 
             messages = parse_raw_messages(request.messages)
-            model_msgs = convert_to_model_msgs(messages)
-
-            await asyncio.to_thread(
-                self.backend.chat_prefill,
-                session_id=self.session_id,
-                msgs=model_msgs,
-                omni_mode=request.omni_mode,
-                max_slice_nums=request.max_slice_nums,
-                use_tts_template=request.use_tts_template,
-                enable_thinking=request.enable_thinking,
-            )
-
-            if request.generate_audio and request.streaming:
-                await asyncio.to_thread(self.backend.chat_init_tts, request.tts_ref_audio)
 
             if request.streaming:
+                model_msgs = convert_to_model_msgs(messages)
+                await asyncio.to_thread(
+                    self.backend.chat_prefill,
+                    session_id=self.session_id,
+                    msgs=model_msgs,
+                    omni_mode=request.omni_mode,
+                    max_slice_nums=request.max_slice_nums,
+                    use_tts_template=request.use_tts_template,
+                    enable_thinking=request.enable_thinking,
+                )
+                if request.generate_audio:
+                    await asyncio.to_thread(self.backend.chat_init_tts, request.tts_ref_audio)
                 await self._stream_turn_based(request, response_id=response_id, input_id=input_id)
             else:
-                await self._non_stream_turn_based(request, response_id=response_id, input_id=input_id)
+                await self._non_stream_turn_based(
+                    request,
+                    messages=messages,
+                    response_id=response_id,
+                    input_id=input_id,
+                )
 
     async def _stream_turn_based(self, request: Any, *, response_id: str, input_id: Optional[str]) -> None:
         queue: asyncio.Queue = asyncio.Queue()
@@ -360,13 +363,22 @@ class BackendProtocolSession:
             with suppress(asyncio.TimeoutError):
                 await asyncio.wait_for(task, timeout=5.0)
 
-    async def _non_stream_turn_based(self, request: Any, *, response_id: str, input_id: Optional[str]) -> None:
+    async def _non_stream_turn_based(
+        self,
+        request: Any,
+        *,
+        messages: list,
+        response_id: str,
+        input_id: Optional[str],
+    ) -> None:
         result = await asyncio.to_thread(
-            self.backend.chat_non_streaming_generate,
-            session_id=self.session_id,
+            self.backend.chat_complete,
+            messages=messages,
             max_new_tokens=request.max_new_tokens,
             generate_audio=request.generate_audio,
             use_tts_template=request.use_tts_template,
+            omni_mode=request.omni_mode,
+            max_slice_nums=request.max_slice_nums,
             enable_thinking=request.enable_thinking,
             tts_ref_audio=request.tts_ref_audio,
             length_penalty=request.length_penalty,

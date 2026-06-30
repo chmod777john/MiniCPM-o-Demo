@@ -3,14 +3,19 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import gc
+import io
 import logging
 import time
 from typing import Any, Dict, Iterator, List, Optional
 
 import numpy as np
+import soundfile as sf
 import torch
 
+from core.schemas.chat import ChatRequest
+from core.schemas.common import GenerationConfig, ImageConfig, TTSConfig, TTSMode
 from core.schemas.metrics import BackendMetrics
 from core.schemas.common import Message
 from core.schemas.duplex import DuplexConfig, DuplexGenerateResult
@@ -236,6 +241,53 @@ class PyTorchBackend:
             length_penalty=length_penalty,
         )
 
+    def chat_complete(
+        self,
+        messages: List[Message],
+        max_new_tokens: int = 256,
+        generate_audio: bool = False,
+        use_tts_template: bool = True,
+        omni_mode: bool = False,
+        max_slice_nums: Optional[int] = None,
+        enable_thinking: bool = False,
+        tts_ref_audio: Optional[np.ndarray] = None,
+        length_penalty: float = 1.1,
+    ) -> Any:
+        chat_view = self.processor.set_chat_mode()
+        tts_config = TTSConfig(enabled=generate_audio, mode=TTSMode.AUDIO_ASSISTANT)
+        if generate_audio:
+            if tts_ref_audio is not None:
+                ref_audio_f32 = np.asarray(tts_ref_audio, dtype=np.float32)
+                tts_config = tts_config.model_copy(
+                    update={"ref_audio_data": base64.b64encode(ref_audio_f32.tobytes()).decode("utf-8")}
+                )
+            elif self.ref_audio_path:
+                tts_config = tts_config.model_copy(update={"ref_audio_path": self.ref_audio_path})
+
+        response = chat_view.chat(
+            ChatRequest(
+                messages=messages,
+                generation=GenerationConfig(
+                    max_new_tokens=max_new_tokens,
+                    length_penalty=length_penalty,
+                ),
+                tts=tts_config,
+                image=ImageConfig(max_slice_nums=max_slice_nums),
+                use_tts_template=use_tts_template,
+                omni_mode=omni_mode,
+                enable_thinking=enable_thinking,
+            ),
+            max_new_tokens=max_new_tokens,
+            do_sample=True,
+            generate_audio=generate_audio,
+        )
+
+        waveform = None
+        if response.audio_data:
+            wav_bytes = base64.b64decode(response.audio_data)
+            waveform, _ = sf.read(io.BytesIO(wav_bytes), dtype="float32")
+        return response.text, waveform
+
     def set_duplex_config(self, config: Optional[Dict[str, Any]]) -> None:
         if self.processor is None or not config:
             return
@@ -359,4 +411,3 @@ class PyTorchBackend:
         half_duplex_view = self.processor.set_half_duplex_mode()
         half_duplex_view._model.reset_session(reset_token2wav_cache=False)
         logger.info(f"[GPU {self.gpu_id}] Half-Duplex model session reset (KV cache cleared)")
-
