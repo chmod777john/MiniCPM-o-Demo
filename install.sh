@@ -6,7 +6,7 @@
 #   bash install.sh
 #
 # Features:
-#   1. Create a Python 3.10 virtual environment
+#   1. Create a Python 3.10+ virtual environment
 #   2. Install PyTorch + core dependencies
 #   3. Attempt to install Flash Attention 2 (auto-skip on failure, fallback to SDPA)
 #   4. Verify installation results
@@ -20,7 +20,7 @@ set -e  # Exit on error (flash-attn section handled separately)
 
 # ============ Configuration ============
 
-VENV_DIR=".venv/base"
+VENV_DIR=".venv/o5"
 PIP="${VENV_DIR}/bin/pip"
 PYTHON_BIN="${VENV_DIR}/bin/python"
 PYTHON="${PYTHON:-python3.10}"
@@ -79,6 +79,7 @@ fi
 
 info "Step 3/4: Installing core dependencies (requirements.txt)"
 ${PIP} install -r requirements.txt
+${PIP} install --no-deps "minicpmo-utils==1.0.6"
 info "Core dependencies installed successfully"
 
 # ============ Step 4: Install Flash Attention 2 (Not Recommended) ============

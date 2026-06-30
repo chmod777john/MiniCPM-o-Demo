@@ -7,7 +7,15 @@ accelerate==1.12.0
 safetensors>=0.7.0
 
 # MiniCPM-o 4.6 / o5
-minicpmo-utils[all]>=1.0.5
+# minicpmo-utils 1.0.6 metadata pins librosa==0.9.0, but o5 runtime is validated
+# with librosa>=0.10.2. install.sh installs minicpmo-utils separately with --no-deps.
+pillow==10.4.0
+decord==0.6.0
+moviepy==2.1.2
+onnxruntime>=1.18.0
+onnx
+HyperPyYAML
+einops>=0.8.1
 
 # Web Service
 fastapi>=0.128.0
