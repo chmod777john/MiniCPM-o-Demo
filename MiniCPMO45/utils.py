@@ -31,6 +31,25 @@ from transformers.cache_utils import DynamicCache
 
 logger = logging.getLogger(__name__)
 
+
+def _install_grouped_mm_device_guard():
+    if not torch.cuda.is_available():
+        return
+    capability = torch.cuda.get_device_capability()
+    if capability == (9, 0):
+        return
+    try:
+        import transformers.integrations.moe as _moe
+    except Exception as exc:  # pragma: no cover
+        logger.warning("grouped-mm device guard skipped (import failed): %s", exc)
+        return
+
+    _moe._can_use_grouped_mm = lambda input, weight, offs: False
+    logger.info("Disabled transformers MoE grouped_mm on CUDA capability %s", capability)
+
+
+_install_grouped_mm_device_guard()
+
 # === [PATCH] Qwen3.5MoE linear-attention chunked-prefill cache fix ===========
 # Upstream transformers Qwen3_5MoeGatedDeltaNet.forward only continues the
 # conv/recurrent state when seq_len==1 (decode). Multi-token continuation

@@ -193,12 +193,12 @@ class MiniCPMO(MiniCPMOPreTrainedModel):
 
         text_model_type = getattr(config, "text_model_type", "qwen3_5_text")
         text_config = AutoConfig.for_model(text_model_type)
-        if torch.cuda.is_available() and torch.cuda.get_device_capability()[0] < 9:
-            # torch._grouped_mm used by the default MoE grouped implementation is H100-only in torch 2.8.
-            text_config._experts_implementation = "eager"
         for key, value in config.to_dict().items():
             if hasattr(text_config, key) and key != "model_type":
                 setattr(text_config, key, value)
+        if torch.cuda.is_available() and torch.cuda.get_device_capability() != (9, 0):
+            # torch._grouped_mm used by the default MoE grouped implementation is H100-only in torch 2.8.
+            text_config._experts_implementation = "eager"
         if isinstance(getattr(text_config, "torch_dtype", None), str):
             text_config.torch_dtype = getattr(torch, text_config.torch_dtype, None)
         self.llm = AutoModelForCausalLM.from_config(text_config)
