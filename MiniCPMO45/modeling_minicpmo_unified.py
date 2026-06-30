@@ -39,6 +39,7 @@ from enum import Enum
 
 # 相对导入（同目录）
 from .modeling_minicpmo import gen_logits
+from .modeling_minicpmo import _dc_first_key
 from .modeling_minicpmo import MiniCPMO as BaseMiniCPMO
 from .modeling_minicpmo import MiniCPMOPreTrainedModel
 from .modeling_minicpmo import MiniCPMTTS
@@ -1958,11 +1959,12 @@ class MiniCPMO(BaseMiniCPMO):
 
             # DEBUG: 打印生成开始时的状态
             _cache_len = self._get_kv_cache_length()
-            _cache_sum = self.llm_past_key_values.key_cache[0].sum().item() if self.llm_past_key_values else 0
+            _first_key = _dc_first_key(self.llm_past_key_values) if self.llm_past_key_values else None
+            _cache_sum = _first_key.sum().item() if _first_key is not None else 0
             # 检查 KV Cache 最后几个位置的值
             _k_last = (
-                self.llm_past_key_values.key_cache[0][0, 0, -5:, :3].flatten().tolist()
-                if self.llm_past_key_values
+                _first_key[0, 0, -5:, :3].flatten().tolist()
+                if _first_key is not None
                 else []
             )
             print(f"[DEBUG streaming_generate] cache_len={_cache_len}, cache_sum={_cache_sum:.6f}, k_last={_k_last}")
