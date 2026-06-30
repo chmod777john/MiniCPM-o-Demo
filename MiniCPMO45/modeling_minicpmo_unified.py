@@ -2024,7 +2024,6 @@ class MiniCPMO(BaseMiniCPMO):
                     repetition_penalty=kwargs.get("repetition_penalty", 1.02),
                     length_penalty=kwargs.get("length_penalty", 1.0),
                     all_input_ids=generated_ids,
-                    suppress_forbidden_tokens=generate_audio,
                 )
 
                 if output.chunk_token_ids is None:
