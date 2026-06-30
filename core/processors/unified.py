@@ -109,6 +109,7 @@ import os
 import time
 import logging
 import base64
+import glob
 
 import numpy as np
 import torch
@@ -1332,6 +1333,26 @@ class UnifiedProcessor(BaseProcessor):
         except Exception:
             return False
 
+    def _has_hf_checkpoint_files(self, model_path: str) -> bool:
+        """Return whether *model_path* contains loadable HF checkpoint files."""
+        patterns = (
+            "model.safetensors",
+            "model-*.safetensors",
+            "pytorch_model.bin",
+            "pytorch_model-*.bin",
+        )
+        return any(glob.glob(os.path.join(model_path, pattern)) for pattern in patterns)
+
+    def _load_state_dict_from_pt(self, pt_path: str) -> dict:
+        try:
+            state_dict = torch.load(pt_path, map_location="cpu", weights_only=True)
+        except TypeError:
+            state_dict = torch.load(pt_path, map_location="cpu")
+        for key in ("state_dict", "model", "module"):
+            if isinstance(state_dict, dict) and isinstance(state_dict.get(key), dict):
+                return state_dict[key]
+        return state_dict
+
     def _load_model(self) -> None:
         """Load the unified model.
 
@@ -1346,6 +1367,7 @@ class UnifiedProcessor(BaseProcessor):
         start = time.time()
 
         from MiniCPMO45.modeling_minicpmo_unified import MiniCPMO, ProcessorMode as ModelProcessorMode
+        from transformers import AutoConfig
 
         # Resolve attention implementation (auto-detect when set to "auto")
         resolved_attn = self._resolve_attn_implementation()
@@ -1354,12 +1376,42 @@ class UnifiedProcessor(BaseProcessor):
         if is_quantized:
             logger.info("Quantized model detected")
 
-        # Load base model
-        self.model = MiniCPMO.from_pretrained(
-            self.model_path,
-            trust_remote_code=True,
-            _attn_implementation=resolved_attn,
-        )
+        pt_only_checkpoint = bool(self.pt_path) and not self._has_hf_checkpoint_files(self.model_path)
+        pt_already_loaded = False
+        if pt_only_checkpoint:
+            logger.info(
+                "No HF checkpoint files found in model_path; "
+                "building model from config and loading pt directly"
+            )
+            config = AutoConfig.from_pretrained(self.model_path, trust_remote_code=True)
+            config._attn_implementation = resolved_attn
+            config._name_or_path = self.model_path
+            config.name_or_path = self.model_path
+            from accelerate import init_empty_weights
+
+            with init_empty_weights():
+                self.model = MiniCPMO(config)
+
+            state_dict = self._load_state_dict_from_pt(self.pt_path)
+            info = self.model.load_state_dict(state_dict, strict=False, assign=True)
+            logger.info(
+                "PT weights loaded — missing: %d, unexpected: %d",
+                len(info.missing_keys),
+                len(info.unexpected_keys),
+            )
+            if info.missing_keys:
+                logger.warning("Missing keys: %s...", info.missing_keys[:5])
+            if info.unexpected_keys:
+                logger.warning("Unexpected keys: %s...", info.unexpected_keys[:5])
+            del state_dict
+            pt_already_loaded = True
+        else:
+            # Load base model
+            self.model = MiniCPMO.from_pretrained(
+                self.model_path,
+                trust_remote_code=True,
+                _attn_implementation=resolved_attn,
+            )
 
         if is_quantized:
             # AWQ/GPTQ: integer qweight/qzeros must NOT be cast to bfloat16.
@@ -1387,7 +1439,7 @@ class UnifiedProcessor(BaseProcessor):
         init_start = time.time()
 
         self.model.init_unified(
-            pt_path=self.pt_path,
+            pt_path=None if pt_already_loaded else self.pt_path,
             preload_both_tts=self.preload_both_tts,
             duplex_config={
                 "generate_audio": self.duplex_config.generate_audio,
