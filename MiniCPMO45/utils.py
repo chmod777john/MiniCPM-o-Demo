@@ -2281,6 +2281,7 @@ class StreamDecoder:
         listen_prob_scale=1.0,
         text_repetition_penalty=1.05,
         text_repetition_window_size=512,
+        length_penalty=1.1,
     ):
         """
         Args:
@@ -2341,6 +2342,13 @@ class StreamDecoder:
                     else:
                         # encourage repetition: increase logits
                         logits[0, token_id] *= 1.0 / text_repetition_penalty
+
+        if length_penalty != 1.0:
+            turn_eos_id = self.turn_eos_id
+            if logits[0, turn_eos_id] > 0:
+                logits[0, turn_eos_id] = logits[0, turn_eos_id] / length_penalty
+            else:
+                logits[0, turn_eos_id] = logits[0, turn_eos_id] * length_penalty
 
         if listen_prob_scale != 1.0:  # modify listen token logit separately
             logits[0, self.listen_id] *= listen_prob_scale
