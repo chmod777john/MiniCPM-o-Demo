@@ -4594,7 +4594,9 @@ class MiniCPMTTS(PreTrainedModel):
                 num_key_value_heads=config.num_key_value_heads,
                 max_position_embeddings=config.max_position_embeddings,
                 attn_implementation=config.attn_implementation,
+                rope_theta=getattr(config, "rope_theta", 10000.0),
             )
+            model_config.rope_theta = getattr(config, "rope_theta", 10000.0)
 
             self.emb_text = nn.Embedding(config.num_text_tokens, config.hidden_size)
 
