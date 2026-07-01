@@ -60,19 +60,14 @@ class AudioDuplexBoardConfig:
 
 
 DEFAULT_MODEL_PATH = "/user/weihongliang/autoshow_omni/models/MiniCPM-o-4_5"
-DEFAULT_SDK_SRC = "/user/sunweiyue/lib/swy-dev/omni_agent_research/minicpm_o5_sdk/src"
+DEFAULT_SDK_SRC = "/user/weihongliang/o45_fc_assets/sdk/src"
 DEFAULT_CASE_FOLDER = (
-    "/user/sunweiyue/lib/swy-dev/omni_agent_research/minicpm_o5_training/"
-    "experiments/overfit_midtrain_v2_100/runs/subsets/overfit100_seed0/"
-    "delivery_train_data"
+    "/user/weihongliang/o45_fc_assets/training/delivery_train_data"
 )
 # 当前 demo 主线 checkpoint：SDK 0.0.5a0 overfit100 step100 (cctl tasks/137673)
 # teacher-forced probe tasks/137785 已验证 100/100 token exact，可作为协议 smoke 起点
 DEFAULT_PT_PATH = (
-    "/user/sunweiyue/lib/swy-dev/omni_agent_research/minicpm_o5_training/"
-    "experiments/overfit_midtrain_v2_100/runs/job_137673/checkpoints/minicpm-v/"
-    "swy_o5_midtrain_v2_overfit/o5_midtrain_v2_overfit100_sdk005a0_v1/"
-    "job_137673_ckpt_100/minicpm-v_100.pt"
+    "/user/weihongliang/o45_fc_assets/checkpoints/minicpm-v_100.pt"
 )
 
 

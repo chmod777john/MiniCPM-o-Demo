@@ -28,8 +28,8 @@ PYTHONPATH=. .venv/base/bin/python -m audio_duplex_board.run_server \
   --host 0.0.0.0 \
   --port 18080 \
   --model-path /user/weihongliang/autoshow_omni/models/MiniCPM-o-4_5 \
-  --pt-path /path/to/minicpm-v_100.pt \
-  --sdk-src /user/sunweiyue/lib/swy-dev/omni_agent_research/minicpm_o5_sdk/src
+  --pt-path /user/weihongliang/o45_fc_assets/checkpoints/minicpm-v_100.pt \
+  --sdk-src /user/weihongliang/o45_fc_assets/sdk/src
 ```
 
 GPU-free mock mode for UI/tool testing:
