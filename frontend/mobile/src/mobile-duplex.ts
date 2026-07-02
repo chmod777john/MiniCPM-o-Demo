@@ -50,6 +50,10 @@ export type DuplexSessionLike = {
   onSpeakStart: (text: string) => unknown
   onSpeakUpdate: (handle: unknown, text: string) => void
   onSpeakEnd: () => void
+  onThinkUpdate: (text: string) => void
+  onThinkEnd: (text: string) => void
+  onToolCall: (event: Record<string, unknown>) => void
+  onToolResult: (event: Record<string, unknown>) => void
   start: (
     systemPrompt: string,
     preparePayload: Record<string, unknown>,

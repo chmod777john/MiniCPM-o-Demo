@@ -50,6 +50,8 @@ export class RealtimeSession {
         this._lastDriftMs = null;
         this._lastKvCacheLength = 0;
         this._lastFrameMetrics = {};
+        this._thinkText = '';
+        this._toolCallBuffers = new Map();
 
         // Protocol event log for the data flow panel
         this._eventLog = [];
@@ -79,6 +81,10 @@ export class RealtimeSession {
     onSpeakEnd() {}
     onListenResult(result) {}
     onExtraResult(result, recvTime) {}
+    onThinkUpdate(text) {}
+    onThinkEnd(text) {}
+    onToolCall(event) {}
+    onToolResult(event) {}
     async onPrepared() {}
     onCleanup() {}
     onMetrics(data) {}
@@ -356,6 +362,8 @@ export class RealtimeSession {
         this.forceListenActive = false;
         this._queueReject = null;
         this._eventLog = [];
+        this._thinkText = '';
+        this._toolCallBuffers = new Map();
     }
 
     _handleMessage(msg) {
@@ -382,6 +390,29 @@ export class RealtimeSession {
 
             case 'response.output.delta':
                 this._handleOutputDelta(msg);
+                break;
+
+            case 'response.output.sp_tokens':
+                this._logProtoEvent('server', 'response.output.sp_tokens', msg.token || '', msg);
+                break;
+
+            case 'response.think.begin':
+            case 'response.think.delta':
+            case 'response.think.end':
+                this._handleThink(msg);
+                break;
+
+            case 'response.tool_call.args.begin':
+            case 'response.tool_call.args.delta':
+            case 'response.tool_call.args.end':
+            case 'response.tool_call.args.raw':
+            case 'response.tool_call.abort':
+                this._handleToolCall(msg);
+                break;
+
+            case 'response.tool_result':
+                this._logProtoEvent('server', 'response.tool_result', msg.tool_call_id || '', msg);
+                this.onToolResult(msg);
                 break;
 
             case 'session.closed':
@@ -477,6 +508,50 @@ export class RealtimeSession {
                 ...msg,
                 text: '',
             });
+        }
+    }
+
+    _handleThink(msg) {
+        const type = msg.type || '';
+        this._logProtoEvent('server', type, (msg.delta || '').slice(0, 40), msg);
+
+        if (type === 'response.think.begin') {
+            this._thinkText = '';
+            this.onThinkUpdate(this._thinkText);
+            return;
+        }
+        if (type === 'response.think.delta') {
+            this._thinkText += msg.delta || '';
+            this.onThinkUpdate(this._thinkText);
+            return;
+        }
+        if (type === 'response.think.end') {
+            this.onThinkEnd(this._thinkText);
+            this._thinkText = '';
+        }
+    }
+
+    _handleToolCall(msg) {
+        const type = msg.type || '';
+        const toolCallId = msg.tool_call_id || 'unknown';
+        this._logProtoEvent('server', type, toolCallId, msg);
+
+        if (type === 'response.tool_call.args.begin') {
+            this._toolCallBuffers.set(toolCallId, '');
+        } else if (type === 'response.tool_call.args.delta') {
+            const previous = this._toolCallBuffers.get(toolCallId) || '';
+            this._toolCallBuffers.set(toolCallId, previous + (msg.delta || ''));
+        } else if (type === 'response.tool_call.abort') {
+            this._toolCallBuffers.delete(toolCallId);
+        }
+
+        this.onToolCall({
+            ...msg,
+            accumulated: this._toolCallBuffers.get(toolCallId) || '',
+        });
+
+        if (type === 'response.tool_call.args.raw' || type === 'response.tool_call.abort') {
+            this._toolCallBuffers.delete(toolCallId);
         }
     }
 

@@ -103,6 +103,8 @@ export function useDuplexSession(
   const mediaRef = useRef<MobileLiveMediaProvider | null>(null)
   const startInFlightRef = useRef(false)
   const listenEntryIdRef = useRef<string | null>(null)
+  const thinkEntryIdRef = useRef<string | null>(null)
+  const toolEntryIdsRef = useRef<Map<string, string>>(new Map())
 
   const audioScreenOpen = screen === 'audio-duplex'
   const videoScreenOpen = screen === 'video-duplex'
@@ -141,6 +143,8 @@ export function useDuplexSession(
 
     startInFlightRef.current = false
     listenEntryIdRef.current = null
+    thinkEntryIdRef.current = null
+    toolEntryIdsRef.current.clear()
     mediaRef.current?.stop()
     mediaRef.current = null
 
@@ -385,9 +389,59 @@ export function useDuplexSession(
       session.onSpeakEnd = () => {
         listenEntryIdRef.current = null
       }
+      session.onThinkUpdate = (text) => {
+        const body = text?.trim() ? `Think: ${text}` : 'Think: ...'
+        if (!thinkEntryIdRef.current) {
+          thinkEntryIdRef.current = appendEntry('system', body)
+        } else {
+          updateEntry(thinkEntryIdRef.current, body)
+        }
+      }
+      session.onThinkEnd = (text) => {
+        const body = text?.trim() ? `Think: ${text}` : 'Think: done'
+        if (thinkEntryIdRef.current) {
+          updateEntry(thinkEntryIdRef.current, body)
+        } else {
+          appendEntry('system', body)
+        }
+        thinkEntryIdRef.current = null
+      }
+      session.onToolCall = (event) => {
+        const toolCallId = String(event.tool_call_id || 'unknown')
+        const type = String(event.type || '')
+        const raw = event.raw as Record<string, unknown> | undefined
+        const accumulated = String(event.accumulated || event.delta || '')
+        let body = `Tool call ${toolCallId}`
+        if (raw?.error) {
+          body = `Tool call ${toolCallId} failed: ${String(raw.error)}`
+        } else if (raw?.name) {
+          body = `Tool call ${toolCallId}: ${String(raw.name)} ${String(raw.arguments || '')}`
+        } else if (accumulated) {
+          body = `Tool call ${toolCallId}: ${accumulated}`
+        } else if (type.endsWith('.begin')) {
+          body = `Tool call ${toolCallId}: ...`
+        } else if (type.endsWith('.end')) {
+          body = `Tool call ${toolCallId}: done`
+        }
+
+        const existing = toolEntryIdsRef.current.get(toolCallId)
+        if (existing) {
+          updateEntry(existing, body)
+        } else {
+          toolEntryIdsRef.current.set(toolCallId, appendEntry('system', body))
+        }
+      }
+      session.onToolResult = (event) => {
+        const toolCallId = String(event.tool_call_id || 'unknown')
+        const result = event.result as Record<string, unknown> | undefined
+        const query = String(result?.query || event.name || toolCallId)
+        appendEntry('system', `Tool result ${toolCallId}: ${query}`)
+      }
       session.onCleanup = () => {
         startInFlightRef.current = false
         listenEntryIdRef.current = null
+        thinkEntryIdRef.current = null
+        toolEntryIdsRef.current.clear()
         mediaRef.current?.stop()
         mediaRef.current = null
         sessionRef.current = null
@@ -399,11 +453,29 @@ export function useDuplexSession(
       }
 
       const preparePayload: Record<string, unknown> = {
+        fc_duplex: true,
+        generate_audio: true,
         config: {
+          runtime: 'fc_duplex',
+          auto_execute_tools: true,
           length_penalty: withVideo
             ? settings.videoDuplexLengthPenalty
             : settings.audioDuplexLengthPenalty,
         },
+        tools: [
+          {
+            type: 'function',
+            function: {
+              name: 'display_object_on_board',
+              description: 'Display a named concrete object on the visual board so the user can see it.',
+              parameters: {
+                type: 'object',
+                properties: { name: { type: 'string' } },
+                required: ['name'],
+              },
+            },
+          },
+        ],
       }
 
       if (duplexSettings.refAudio.base64) {
