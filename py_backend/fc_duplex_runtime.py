@@ -93,19 +93,13 @@ class FcDuplexSessionRuntime:
         voice = _first_dict(params.get("voice"), params.get("defaults"))
         ref_audio_path = _coalesce(params.get("ref_audio_path"), voice.get("ref_audio_path"))
         prompt_wav_path = _coalesce(params.get("prompt_wav_path"), params.get("tts_ref_audio_path"), voice.get("tts_ref_audio_path"), ref_audio_path)
-        result = await asyncio.to_thread(
+        await asyncio.to_thread(
             self.backend.fc_duplex_prepare,
             system_prompt=str(_coalesce(params.get("system_prompt"), params.get("instructions"), default="")),
             tools=self._tools,
             ref_audio_path=ref_audio_path,
             prompt_wav_path=prompt_wav_path,
             generate_audio=bool(params.get("generate_audio", True)),
-        )
-        await self._send(
-            "response.output.sp_tokens",
-            session_id=self.session_id,
-            token="fc_prepare",
-            metadata=_model_to_dict(result),
         )
 
     async def push(self, payload: Dict[str, Any]) -> None:
