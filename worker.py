@@ -88,6 +88,12 @@ def _input_payload(message: Dict[str, Any]) -> Dict[str, Any]:
     raise RuntimeError("input.append must carry an object `input`")
 
 
+def _tool_result_payload(message: Dict[str, Any]) -> Dict[str, Any]:
+    payload = dict(message)
+    payload["type"] = "tool_result"
+    return payload
+
+
 def _init_payload(message: Dict[str, Any]) -> Dict[str, Any]:
     value = message.get("payload")
     if isinstance(value, dict):
@@ -232,6 +238,10 @@ async def _handle_remote_backend_runtime_ws(
 
                 if msg_type == "input.append":
                     await runtime.push(_input_payload(msg))
+                    continue
+
+                if msg_type == "input.tool_result":
+                    await runtime.push(_tool_result_payload(msg))
                     continue
 
                 if msg_type == "session.close":
