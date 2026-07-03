@@ -63,6 +63,65 @@ logging.basicConfig(
 logger = logging.getLogger("gateway")
 
 
+_FC_BOARD_CASE_FOLDER_CANDIDATES = [
+    os.environ.get("FC_BOARD_CASE_FOLDER"),
+    "/home/weihongliang/o45_fc_assets/training/delivery_train_data",
+    "/user/weihongliang/o45_fc_assets/training/delivery_train_data",
+]
+
+
+def _display_object_tool_default() -> Dict[str, Any]:
+    return {
+        "type": "function",
+        "function": {
+            "name": "display_object_on_board",
+            "description": (
+                "Display a named concrete object on the visual board so the user can see it. "
+                "Use only for concrete, visualizable objects mentioned in user speech."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {"name": {"type": "string"}},
+                "required": ["name"],
+            },
+        },
+    }
+
+
+def _extract_fc_board_defaults_from_case(case_path: str) -> Dict[str, Any]:
+    with open(case_path, "r", encoding="utf-8") as fp:
+        structure = json.load(fp)
+
+    data_root = os.path.dirname(case_path)
+    system_prompt_parts: List[str] = []
+    ref_audio_path: Optional[str] = None
+    for segment in (structure.get("system", {}) or {}).get("segments", []) or []:
+        kind = segment.get("kind")
+        if kind == "text":
+            text = segment.get("text") or ""
+            if text:
+                system_prompt_parts.append(text)
+        elif kind == "audio":
+            file_path = (segment.get("audio") or {}).get("file_path")
+            if file_path:
+                candidate = os.path.realpath(os.path.join(data_root, file_path))
+                if os.path.exists(candidate):
+                    ref_audio_path = candidate
+
+    return {
+        "system_prompt": "\n".join(system_prompt_parts) or None,
+        "ref_audio_path": ref_audio_path,
+        "tools": structure.get("tools") or [_display_object_tool_default()],
+    }
+
+
+def _fc_board_case_folder() -> Optional[str]:
+    for candidate in _FC_BOARD_CASE_FOLDER_CANDIDATES:
+        if candidate and os.path.isdir(candidate):
+            return candidate
+    return None
+
+
 
 _SESSION_ID_RE = re.compile(r'^[a-zA-Z0-9_\-]+$')
 
@@ -1272,6 +1331,42 @@ async def fc_board_page():
     if os.path.exists(page_path):
         return FileResponse(page_path)
     return HTMLResponse("<h1>FC Board</h1><p>Page not found</p>")
+
+
+@app.get("/api/fc_board/defaults")
+async def fc_board_defaults():
+    """Training-aligned defaults for the FC board API demo."""
+    case_folder = _fc_board_case_folder()
+    default_case_path = None
+    defaults: Dict[str, Any] = {
+        "system_prompt": None,
+        "ref_audio_path": None,
+        "tools": [_display_object_tool_default()],
+    }
+    if case_folder:
+        cases = sorted(
+            os.path.join(case_folder, name)
+            for name in os.listdir(case_folder)
+            if name.endswith(".json")
+        )
+        if cases:
+            default_case_path = cases[0]
+            try:
+                defaults.update(_extract_fc_board_defaults_from_case(default_case_path))
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "[fc_board_defaults] failed to extract defaults from %s: %s: %s",
+                    default_case_path,
+                    type(exc).__name__,
+                    exc,
+                )
+    return {
+        "case_folder": case_folder,
+        "default_case_path": default_case_path,
+        "default_system_prompt": defaults.get("system_prompt"),
+        "default_ref_audio_path": defaults.get("ref_audio_path"),
+        "default_tools": defaults.get("tools") or [_display_object_tool_default()],
+    }
 
 
 # ============ Docs Hosting ============

@@ -34,6 +34,7 @@ let aiAudioCount = 0;
 let micPeakSinceStart = 0;
 let blockSeq = 0;
 let activeNonSpokenBlockId = null;
+let fcBoardDefaults = null;
 const speechQueue = [];
 let speechDrainer = null;
 
@@ -82,21 +83,21 @@ function initPage() {
   el.kvMode.textContent = '/v1/realtime?mode=audio';
   el.kvCkpt.textContent = 'backend selected';
   el.kvTools.textContent = DISPLAY_OBJECT_TOOL.function.name;
-  el.systemPrompt.value = DEFAULT_SYSTEM_PROMPT;
-  el.refAudioPath.value = '';
+  applyDefaults({});
   el.generateAudio.checked = true;
   el.genAudioToggle.checked = true;
   setWsState('idle');
-  setStatus('Click Start to begin.');
+  setStatus('Loading defaults…');
   renderBoard();
+  loadFcBoardDefaults();
 }
 
 el.resetSystemPrompt?.addEventListener('click', () => {
-  el.systemPrompt.value = DEFAULT_SYSTEM_PROMPT;
+  el.systemPrompt.value = defaultSystemPrompt();
 });
 
 el.resetRefAudio?.addEventListener('click', () => {
-  el.refAudioPath.value = '';
+  el.refAudioPath.value = defaultRefAudioPath();
 });
 
 el.debugToggle?.addEventListener('click', () => {
@@ -199,8 +200,8 @@ function buildSessionInitPayload() {
   const payload = {
     mode: 'full_duplex',
     fc_duplex: true,
-    system_prompt: (el.systemPrompt?.value || '').trim() || DEFAULT_SYSTEM_PROMPT,
-    tools: [DISPLAY_OBJECT_TOOL],
+    system_prompt: (el.systemPrompt?.value || '').trim() || defaultSystemPrompt(),
+    tools: defaultTools(),
     generate_audio: generateAudio,
     config: {
       runtime: 'fc_duplex',
@@ -213,6 +214,40 @@ function buildSessionInitPayload() {
   };
   if (refAudioPath) payload.ref_audio_path = refAudioPath;
   return payload;
+}
+
+async function loadFcBoardDefaults() {
+  try {
+    const response = await fetch('/api/fc_board/defaults', { cache: 'no-store' });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    fcBoardDefaults = await response.json();
+    applyDefaults(fcBoardDefaults);
+    setStatus('Click Start to begin.');
+  } catch (err) {
+    console.warn('[fc-board] failed to load defaults:', err);
+    fcBoardDefaults = null;
+    applyDefaults({});
+    setStatus('Click Start to begin. Defaults endpoint unavailable; using fallback prompt.');
+  }
+}
+
+function applyDefaults(defaults) {
+  if (el.systemPrompt) el.systemPrompt.value = defaults.default_system_prompt || DEFAULT_SYSTEM_PROMPT;
+  if (el.refAudioPath) el.refAudioPath.value = defaults.default_ref_audio_path || '';
+  if (el.kvTools) el.kvTools.textContent = defaultTools().map(tool => tool?.function?.name || tool?.name || 'tool').join(', ');
+}
+
+function defaultSystemPrompt() {
+  return fcBoardDefaults?.default_system_prompt || DEFAULT_SYSTEM_PROMPT;
+}
+
+function defaultRefAudioPath() {
+  return fcBoardDefaults?.default_ref_audio_path || '';
+}
+
+function defaultTools() {
+  const tools = fcBoardDefaults?.default_tools;
+  return Array.isArray(tools) && tools.length ? tools : [DISPLAY_OBJECT_TOOL];
 }
 
 function applyApiEvent(event) {
