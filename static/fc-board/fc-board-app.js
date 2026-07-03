@@ -58,6 +58,7 @@ const el = {
   generateAudio: document.getElementById('generateAudio'),
   timeline: document.getElementById('timeline'),
   streamFeed: document.getElementById('streamFeed'),
+  streamFilter: document.getElementById('streamFilter'),
   board: document.getElementById('board'),
   aiSpeech: document.getElementById('aiSpeech'),
   nsStream: document.getElementById('nonSpokenStream'),
@@ -101,6 +102,8 @@ el.resetRefAudio?.addEventListener('click', () => {
 el.debugToggle?.addEventListener('click', () => {
   el.debugDrawer?.classList.toggle('open');
 });
+
+el.streamFilter?.addEventListener('change', applyStreamFilter);
 
 el.startMicLive.addEventListener('click', async () => {
   clearViews();
@@ -603,6 +606,7 @@ function appendStreamEvent(direction, event) {
   const row = document.createElement('article');
   row.className = `stream-row ${direction}`;
   const type = event.type || '(unknown)';
+  row.dataset.category = streamEventCategory(direction, event);
   row.innerHTML = `
     <div class="stream-head">
       <span class="stream-dir">${direction.toUpperCase()}</span>
@@ -615,7 +619,32 @@ function appendStreamEvent(direction, event) {
   while (el.streamFeed.children.length > 120) {
     el.streamFeed.firstElementChild?.remove();
   }
+  applyStreamFilter();
   el.streamFeed.scrollTop = el.streamFeed.scrollHeight;
+}
+
+function applyStreamFilter() {
+  if (!el.streamFeed) return;
+  const selected = el.streamFilter?.value || 'all';
+  for (const row of el.streamFeed.querySelectorAll('.stream-row')) {
+    const category = row.dataset.category || '';
+    const direction = row.classList.contains('tx') ? 'tx' : 'rx';
+    const visible = selected === 'all' || selected === category || selected === direction;
+    row.classList.toggle('hidden', !visible);
+  }
+}
+
+function streamEventCategory(direction, event) {
+  const type = event.type || '';
+  if (type === 'error' || type.endsWith('.error')) return 'error';
+  if (type.startsWith('session.')) return 'session';
+  if (type.startsWith('input.')) return 'input';
+  if (type === 'response.output.sp_tokens') return 'sp';
+  if (type === 'response.output.delta') return 'output';
+  if (type.startsWith('response.think')) return 'think';
+  if (type.startsWith('response.tool_call')) return 'tool_call';
+  if (type === 'response.tool_result') return 'tool_result';
+  return direction;
 }
 
 function summarizeStreamEvent(event) {

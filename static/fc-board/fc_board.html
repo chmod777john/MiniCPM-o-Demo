@@ -81,6 +81,22 @@
           Realtime Stream
           <span class="hint">TX / RX API events</span>
         </div>
+        <label class="stream-filter">
+          <span>Show</span>
+          <select id="streamFilter">
+            <option value="all">All</option>
+            <option value="tx">TX only</option>
+            <option value="rx">RX only</option>
+            <option value="session">Session</option>
+            <option value="input">Input</option>
+            <option value="output">Output delta</option>
+            <option value="sp">SP tokens</option>
+            <option value="think">Think</option>
+            <option value="tool_call">Tool call</option>
+            <option value="tool_result">Tool result</option>
+            <option value="error">Errors</option>
+          </select>
+        </label>
         <div id="streamFeed" class="stream-feed">
           <div class="placeholder">还没有数据流</div>
         </div>
