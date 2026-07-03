@@ -1265,6 +1265,15 @@ async def realtime_page():
     return HTMLResponse("<h1>Realtime API</h1><p>Page not found</p>")
 
 
+@app.get("/fc_board", response_class=HTMLResponse)
+async def fc_board_page():
+    """FC tool-calling board demo over the formal Realtime API."""
+    page_path = os.path.join(static_dir, "fc-board", "fc_board.html")
+    if os.path.exists(page_path):
+        return FileResponse(page_path)
+    return HTMLResponse("<h1>FC Board</h1><p>Page not found</p>")
+
+
 # ============ Docs Hosting ============
 
 docs_static_dir = os.path.join(static_dir, "docs")
