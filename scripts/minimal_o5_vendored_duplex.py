@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 import asyncio
+import json
 import os
+import time
 from pathlib import Path
 
 import librosa
@@ -116,11 +118,55 @@ def main():
 
     timeline = []
     speech_only = []
+    timings = []
     for i, chunk in enumerate(chunks[:10]):
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
+        prefill_start = time.perf_counter()
         prefill = duplex.streaming_prefill(audio_waveform=chunk)
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
+        prefill_s = time.perf_counter() - prefill_start
+
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
+        generate_start = time.perf_counter()
         result = duplex.streaming_generate()
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
+        generate_s = time.perf_counter() - generate_start
+
         text = result.get("text", "")
-        print(i, prefill, result.get("is_listen"), repr(text), result.get("n_tts_tokens"))
+        n_tts_tokens = result.get("n_tts_tokens")
+        round_timing = {
+            "round": i,
+            "prefill_s": prefill_s,
+            "generate_s": generate_s,
+            "total_s": prefill_s + generate_s,
+            "is_listen": result.get("is_listen"),
+            "n_tts_tokens": n_tts_tokens,
+            "text": text,
+            "prefill": prefill,
+        }
+        timings.append(round_timing)
+        print(
+            "round",
+            i,
+            "prefill_s",
+            f"{prefill_s:.4f}",
+            "generate_s",
+            f"{generate_s:.4f}",
+            "total_s",
+            f"{prefill_s + generate_s:.4f}",
+            "listen",
+            result.get("is_listen"),
+            "tts_tokens",
+            n_tts_tokens,
+            "text",
+            repr(text),
+            "prefill",
+            prefill,
+        )
         wav = result.get("audio_waveform")
         if wav is not None and len(wav) > 0:
             wav = np.asarray(wav, dtype=np.float32)
@@ -139,6 +185,9 @@ def main():
         np.concatenate(speech_only) if speech_only else np.zeros(0, dtype=np.float32),
         24000,
     )
+    with open(OUT_DIR / "timings.jsonl", "w", encoding="utf-8") as f:
+        for item in timings:
+            f.write(json.dumps(item, ensure_ascii=False) + "\n")
     print("wrote", OUT_DIR)
 
 
