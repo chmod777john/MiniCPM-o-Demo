@@ -190,6 +190,60 @@ body {
   text-overflow: ellipsis;
 }
 
+.stream-panel {
+  flex: 1 1 0;
+  min-height: 160px;
+}
+.stream-feed {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-right: 4px;
+}
+.stream-row {
+  border: 1px solid #f0f0eb;
+  border-radius: 6px;
+  background: #fafaf5;
+  padding: 6px 8px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10px;
+  line-height: 1.45;
+  color: #2d2d2d;
+}
+.stream-row.rx { border-left: 3px solid #1f51a6; }
+.stream-row.tx { border-left: 3px solid #1a7f37; }
+.stream-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 3px;
+}
+.stream-dir {
+  font-weight: 700;
+  font-size: 9px;
+}
+.stream-row.rx .stream-dir { color: #1f51a6; }
+.stream-row.tx .stream-dir { color: #1a7f37; }
+.stream-type {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.stream-time {
+  margin-left: auto;
+  color: #999;
+  font-size: 9px;
+}
+.stream-body {
+  color: #666;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 /* Status line: short live messages */
 .status-line {
   font-size: 11px;

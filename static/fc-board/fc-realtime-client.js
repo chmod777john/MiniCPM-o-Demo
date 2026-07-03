@@ -1,7 +1,8 @@
 export class FcRealtimeClient {
-  constructor({ onEvent, onStatus } = {}) {
+  constructor({ onEvent, onStatus, onSend } = {}) {
     this.onEvent = onEvent;
     this.onStatus = onStatus;
+    this.onSend = onSend;
     this.ws = null;
     this.ready = false;
     this.queued = false;
@@ -54,6 +55,7 @@ export class FcRealtimeClient {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
       throw new Error('WebSocket is not open');
     }
+    this.onSend?.(message);
     this.ws.send(JSON.stringify(message));
   }
 

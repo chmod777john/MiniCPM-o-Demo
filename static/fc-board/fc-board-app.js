@@ -57,6 +57,7 @@ const el = {
   padAfterSec: document.getElementById('padAfterSec'),
   generateAudio: document.getElementById('generateAudio'),
   timeline: document.getElementById('timeline'),
+  streamFeed: document.getElementById('streamFeed'),
   board: document.getElementById('board'),
   aiSpeech: document.getElementById('aiSpeech'),
   nsStream: document.getElementById('nonSpokenStream'),
@@ -179,6 +180,7 @@ el.runFileReplay.addEventListener('click', async () => {
 async function createRealtimeSession() {
   const client = new FcRealtimeClient({
     onEvent: applyApiEvent,
+    onSend: (message) => appendStreamEvent('tx', message),
     onStatus: setStatus,
   });
   setStatus('Connecting to /v1/realtime...');
@@ -211,6 +213,7 @@ function buildSessionInitPayload() {
 }
 
 function applyApiEvent(event) {
+  appendStreamEvent('rx', event);
   appendTimeline(`${event.type} ${event.kind || ''} ${event.tool_call_id || ''}`.trim());
   switch (event.type) {
     case 'session.created':
@@ -531,6 +534,7 @@ function clearViews() {
   toolCallBlocks.clear();
   activeNonSpokenBlockId = null;
   el.timeline.innerHTML = '';
+  el.streamFeed.innerHTML = '<div class="placeholder">还没有数据流</div>';
   el.board.innerHTML = '';
   renderBoard();
   speechQueue.length = 0;
@@ -590,6 +594,84 @@ function appendTimeline(text) {
   item.textContent = text;
   el.timeline.appendChild(item);
   el.timeline.scrollTop = el.timeline.scrollHeight;
+}
+
+function appendStreamEvent(direction, event) {
+  if (!el.streamFeed) return;
+  const placeholder = el.streamFeed.querySelector('.placeholder');
+  if (placeholder) placeholder.remove();
+  const row = document.createElement('article');
+  row.className = `stream-row ${direction}`;
+  const type = event.type || '(unknown)';
+  row.innerHTML = `
+    <div class="stream-head">
+      <span class="stream-dir">${direction.toUpperCase()}</span>
+      <span class="stream-type">${escapeHtml(type)}</span>
+      <span class="stream-time">${new Date().toLocaleTimeString()}</span>
+    </div>
+    <div class="stream-body">${escapeHtml(summarizeStreamEvent(event))}</div>
+  `;
+  el.streamFeed.appendChild(row);
+  while (el.streamFeed.children.length > 120) {
+    el.streamFeed.firstElementChild?.remove();
+  }
+  el.streamFeed.scrollTop = el.streamFeed.scrollHeight;
+}
+
+function summarizeStreamEvent(event) {
+  const type = event.type || '';
+  if (type === 'input.append') {
+    const audio = event.input?.audio_base64 || '';
+    return `audio_base64=${audio.length} chars · sample_rate=${event.input?.sample_rate || '-'}`;
+  }
+  if (type === 'session.init') {
+    const payload = event.payload || {};
+    return [
+      `mode=${payload.mode || '-'}`,
+      `fc_duplex=${Boolean(payload.fc_duplex)}`,
+      `tools=${(payload.tools || []).map((tool) => tool?.function?.name || '?').join(',') || '-'}`,
+      `generate_audio=${Boolean(payload.generate_audio)}`,
+    ].join(' · ');
+  }
+  if (type === 'response.output.delta') {
+    if (event.kind === 'audio') return `kind=audio · audio=${String(event.audio || '').length} chars · sample_rate=${event.sample_rate || '-'}`;
+    if (event.kind === 'text') return `kind=text · ${event.text || ''}`;
+    if (event.kind === 'non_spoken') return `kind=non_spoken · ${event.text || (event.token_strs || []).join('')}`;
+    return `kind=${event.kind || '-'}`;
+  }
+  if (type.startsWith('response.tool_call')) {
+    return `tool_call_id=${event.tool_call_id || '-'} · ${event.delta || formatRawForSummary(event.raw) || ''}`;
+  }
+  if (type === 'response.tool_result') {
+    const result = event.result || {};
+    return `tool_call_id=${event.tool_call_id || '-'} · query=${result.query || '-'} · error=${result.error || '-'}`;
+  }
+  if (type.startsWith('response.think')) {
+    return event.delta || '';
+  }
+  if (type === 'response.output.sp_tokens') {
+    return `token=${event.token || '-'}`;
+  }
+  if (type === 'session.created') {
+    return `session_id=${event.session_id || '-'} · mode=${event.mode || '-'}`;
+  }
+  if (type === 'session.queued' || type === 'session.queue_update') {
+    return `position=${event.position ?? '-'} · eta=${event.estimated_wait_s ?? '-'}s`;
+  }
+  if (type === 'session.close' || type === 'session.closed') {
+    return `reason=${event.reason || '-'}`;
+  }
+  return compactJson(event);
+}
+
+function formatRawForSummary(raw) {
+  if (!raw) return '';
+  if (raw.error) return `error=${raw.error}`;
+  return `${raw.name || ''} ${raw.arguments || ''}`.trim();
+}
+
+function compactJson(value) {
+  try { return JSON.stringify(value); } catch (_) { return String(value); }
 }
 
 function scrollNsToBottom() {
