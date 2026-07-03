@@ -1054,8 +1054,14 @@ class MiniCPMO(MiniCPMOPreTrainedModel):
         result_text = []
         for result in result_ids:
             result = result[result != 0]
+            if result.numel() == 0:
+                result_text.append("")
+                continue
             if result[0] == tokenizer.bos_id:
                 result = result[1:]
+                if result.numel() == 0:
+                    result_text.append("")
+                    continue
             if result[-1] in terminators:
                 result = result[:-1]
             result_text.append(tokenizer.decode(result))

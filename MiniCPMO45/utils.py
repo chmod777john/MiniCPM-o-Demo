@@ -71,7 +71,7 @@ def _install_qwen35moe_linattn_patch():
     import torch as _torch
     import torch.nn.functional as _F
 
-    def _patched_forward(self, hidden_states, cache_params=None, attention_mask=None):
+    def _patched_forward(self, hidden_states, cache_params=None, attention_mask=None, use_cache=None, **kwargs):
         hidden_states = _M.apply_mask_to_padding_states(hidden_states, attention_mask)
         batch_size, seq_len, _ = hidden_states.shape
         has_prev = cache_params is not None and cache_params.has_previous_state(self.layer_idx)
@@ -863,6 +863,8 @@ class TTSStreamingGenerator:
         condition: torch.Tensor,
         text_finished: bool = False,
         max_new_token: int = 500,
+        max_audio_tokens_per_text_token: int = 30,
+        min_audio_tokens: int = 75,
     ):
         """input a condition embedding chunk, generate audio token each time,
         and accumulate to buffer, only yield when buffer satisfies chunk_size.
@@ -872,6 +874,12 @@ class TTSStreamingGenerator:
         """
         self.idx += 1
         self.device = self.tts.device
+
+        # Length-proportional audio-token budget for this text chunk. This bounds
+        # cases where the acoustic decoder misses EOS and runs to max_new_token.
+        num_chunk_text_tokens = condition.shape[1]
+        audio_token_budget = max(min_audio_tokens, num_chunk_text_tokens * max_audio_tokens_per_text_token)
+        effective_max_new_token = min(max_new_token, audio_token_budget)
 
         # if text finished, first concatenate Text EOS
         if text_finished:
@@ -915,7 +923,7 @@ class TTSStreamingGenerator:
         finished = torch.zeros(1, dtype=torch.bool, device=self.device)
         chunk_generated_tokens = []
 
-        for t in range(max_new_token):
+        for t in range(effective_max_new_token):
             if t == 0:
                 inputs_embeds = current_condition
                 pos_ids = torch.arange(
@@ -1042,6 +1050,14 @@ class TTSStreamingGenerator:
                             break
                     else:  # generation of this audio chunk is not finished, continue generating
                         continue
+        else:
+            logger.warning(
+                "TTS streaming chunk hit audio-token budget (%d) without EOS "
+                "(text_tokens=%d, text_finished=%s); truncating to avoid runaway.",
+                effective_max_new_token,
+                num_chunk_text_tokens,
+                text_finished,
+            )
 
         # Save current chunk info for sliding_recompute and reindex
         self._chunk_info.append(current_chunk_info)
