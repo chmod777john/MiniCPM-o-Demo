@@ -161,13 +161,14 @@ class FcDuplexSessionRuntime:
         await asyncio.to_thread(self.backend.fc_duplex_cleanup)
 
     async def _run_non_spoken_loop(self, *, input_id: Optional[str]) -> None:
+        steps: List[Any] = []
         for _ in range(max(0, self._non_spoken_budget_per_unit)):
             step = await asyncio.to_thread(
                 self.backend.fc_duplex_non_spoken_generate,
                 max_tokens=1,
                 decode_mode=self._decode_mode,
             )
-            await self._emit_non_spoken_step(step, input_id=input_id)
+            steps.append(step)
             raw_flag = getattr(step, "generation_flag", "") or ""
             flag = str(getattr(raw_flag, "value", raw_flag))
             terminated = bool(getattr(step, "terminated", False))
@@ -175,6 +176,7 @@ class FcDuplexSessionRuntime:
                 NonSpokenStepGenerationFlag.no_action.value,
                 NonSpokenStepGenerationFlag.non_spoken_slot_eos.value,
             }:
+                await self._emit_non_spoken_batch(steps, input_id=input_id)
                 return
         step = await asyncio.to_thread(
             self.backend.fc_duplex_non_spoken_generate,
@@ -182,7 +184,8 @@ class FcDuplexSessionRuntime:
             decode_mode=self._decode_mode,
             close_reason="budget_reached",
         )
-        await self._emit_non_spoken_step(step, input_id=input_id)
+        steps.append(step)
+        await self._emit_non_spoken_batch(steps, input_id=input_id)
 
     async def _emit_spoken(self, spoken: Any, *, input_id: Optional[str]) -> None:
         is_listen = bool(getattr(spoken, "is_listen", False))
@@ -229,10 +232,23 @@ class FcDuplexSessionRuntime:
         if bool(getattr(spoken, "spoken_turn_eos", False)):
             await self._send_sp_token("spoken_turn_eos", input_id=input_id)
 
-    async def _emit_non_spoken_step(self, step: Any, *, input_id: Optional[str]) -> None:
-        token_strs = list(getattr(step, "token_strs", None) or [])
-        text = str(getattr(step, "text", "") or "")
-        close_reason = getattr(step, "close_reason", None)
+    async def _emit_non_spoken_batch(self, steps: List[Any], *, input_id: Optional[str]) -> None:
+        token_strs: List[str] = []
+        text_parts: List[str] = []
+        close_reason: Optional[str] = None
+        closed_spans: List[Any] = []
+
+        for step in steps:
+            token_strs.extend(str(token) for token in list(getattr(step, "token_strs", None) or []))
+            text = str(getattr(step, "text", "") or "")
+            if text:
+                text_parts.append(text)
+            step_close_reason = getattr(step, "close_reason", None)
+            if step_close_reason:
+                close_reason = str(step_close_reason)
+            closed_spans.extend(list(getattr(step, "closed_spans", None) or []))
+
+        text = "".join(text_parts)
         if token_strs or text:
             await self._send(
                 "response.output.delta",
@@ -244,10 +260,10 @@ class FcDuplexSessionRuntime:
                 token_strs=token_strs,
             )
         if close_reason:
-            token = _non_spoken_close_reason_to_sp_token(str(close_reason))
+            token = _non_spoken_close_reason_to_sp_token(close_reason)
             if token:
                 await self._send_sp_token(token, input_id=input_id)
-        for span in list(getattr(step, "closed_spans", None) or []):
+        for span in closed_spans:
             await self._emit_closed_span(span, input_id=input_id)
 
     async def _send_sp_token(self, token: str, *, input_id: Optional[str]) -> None:
