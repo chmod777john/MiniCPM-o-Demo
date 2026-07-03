@@ -195,6 +195,59 @@ tool response 注入模型上下文。
 | `non_spoken_hold` | `<|non_spoken_hold|>` | 模型要求 non-spoken lane 暂停/保持。 |
 | `non_spoken_abort` | `<|non_spoken_abort|>` | 模型要求中止当前 non-spoken 动作。 |
 
+#### 4.1.1 为什么这些 token 需要保留
+
+`response.output.sp_tokens` 的目的不是让普通应用层消费模型内部 token，而是在
+semantic resume / replay 时保留单靠 text/audio/tool-call 事件无法稳定推出的状态机信息。
+
+O5 duplex 输出不是一条单独的 assistant text stream，而是按 unit 交错展开 spoken lane 和
+non-spoken lane：
+
+```text
+unit_k:
+  ai_spoken_slot
+  ai_non_spoken_slot
+```
+
+因此，lane 内的决策 token 和 terminator token 会影响后续模型可见序列与状态机，不能简单
+依赖“有没有文本”来推理。
+
+必要性分层如下：
+
+- `listen`：如果同一协议流已经下发 `response.output.delta kind=listen`，则该 token 语义可由
+  `kind=listen` 推出，属于冗余但有用的只读 trace。保留它可以让 resume 日志更接近模型输出序列。
+- `speak`：如果同一 unit 已经有 spoken text/audio delta，通常可以推出 `<|speak|>`；但在
+  边界异常、空 spoken slice、或仅做 exact trace 时，显式记录仍有价值。backend MAY 在 text/audio
+  delta 已经明确表达发声时省略。
+- `tts_pad`：不能由“本 unit 没有 spoken text”稳定推出。它表示当前 unit 仍在同一个 spoken turn
+  timeline 内，但没有新增 spoken text token；这与 `listen`、异常无输出、或被省略的空 slice 不同。
+- `spoken_slot_eos`：表示当前 unit 内 spoken slot 结束。若没有显式 per-unit spoken slot boundary，
+  resume 时很难无歧义重建该 terminator 的插入位置。
+- `spoken_turn_eos`：表示整个 spoken turn 结束，而不只是当前 slot 结束。它决定后续 unit 是继续
+  同一个 spoken turn、进入 `tts_pad`、还是切回 listen，因此建议保留。
+- `no_action`：表示模型明确决定当前 non-spoken lane 无动作。它不同于 backend 没有运行
+  non-spoken decode、事件被省略、或异常无输出。
+- `non_spoken_eos`：表示 non-spoken lane 正常结束。它不是某个 `think.end` 或
+  `tool_call.args.end` 的简单同义词；span 可以闭合，但 lane 还需要自己的结束状态。
+- `non_spoken_budget_reached`：表示当前 unit 因预算耗尽而中断，后续 unit MAY 继续同一
+  non-spoken span。它和自然 `eos` 的 resume 行为不同，不能由 delta 停止推理出来。
+- `non_spoken_hold`：表示模型要求 non-spoken lane 暂停/保持。它是显式状态，不等价于没有新 delta。
+- `non_spoken_abort`：表示模型中止当前 non-spoken 动作。它和 parser error、runtime cancel、
+  budget stop 都不同；tool-call 场景下还需要与 `response.tool_call.abort` 的语义对齐。
+
+如果未来协议新增更高层的语义事件，例如：
+
+```text
+response.spoken.done reason=slot_eos|turn_eos
+response.non_spoken.done reason=no_action|eos|budget_reached|hold|abort
+```
+
+则这些事件可以承载同样的 resume 信息，`response.output.sp_tokens` 可以进一步降级为可选
+debug / exact-trace 字段。但无论用哪种表示，上述 lane 边界和终止原因本身不能丢失。
+
+纯结构骨架 token（`<unit>`、slot start/end、image/audio placeholder 等）不在此列：它们可由
+backend 根据模板、unit 输入和模态信息确定性重建，默认不下发。
+
 示例：
 
 ```json
