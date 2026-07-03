@@ -132,21 +132,12 @@ class FcDuplexSessionRuntime:
         tool_responses = list(self._pending_tool_responses)
         self._pending_tool_responses.clear()
 
-        t0 = time.perf_counter()
-        prefill = await asyncio.to_thread(
+        await asyncio.to_thread(
             self.backend.fc_duplex_prefill,
             audio_data=audio_base64,
             frame_list=frame_list,
             tool_responses=tool_responses or None,
             sample_rate=int(payload.get("sample_rate") or self._sample_rate),
-        )
-        await self._send(
-            "response.output.sp_tokens",
-            session_id=self.session_id,
-            response_id=self._response_id,
-            input_id=input_id,
-            token="fc_prefill",
-            metadata=_model_to_dict(prefill),
         )
 
         spoken = await asyncio.to_thread(
@@ -158,15 +149,7 @@ class FcDuplexSessionRuntime:
 
         await self._run_non_spoken_loop(input_id=input_id)
 
-        unit = await asyncio.to_thread(self.backend.fc_duplex_finalize)
-        await self._send(
-            "response.output.sp_tokens",
-            session_id=self.session_id,
-            response_id=self._response_id,
-            input_id=input_id,
-            token="fc_finalize",
-            metadata={"wall_clock_ms": round((time.perf_counter() - t0) * 1000, 1), **_model_to_dict(unit)},
-        )
+        await asyncio.to_thread(self.backend.fc_duplex_finalize)
 
     async def close(self) -> None:
         tasks = list(self._tool_tasks)
@@ -210,6 +193,7 @@ class FcDuplexSessionRuntime:
         metadata.pop("audio_waveform", None)
 
         if is_listen:
+            await self._send_sp_token("listen", input_id=input_id)
             await self._send(
                 "response.output.delta",
                 kind="listen",
@@ -219,6 +203,8 @@ class FcDuplexSessionRuntime:
                 metrics=metadata,
             )
             return
+        if is_speaking:
+            await self._send_sp_token("speak", input_id=input_id)
         if text:
             await self._send(
                 "response.output.delta",
@@ -240,6 +226,8 @@ class FcDuplexSessionRuntime:
                 sample_rate=int(getattr(spoken, "audio_sample_rate", None) or 24000),
                 metrics=metadata,
             )
+        if bool(getattr(spoken, "spoken_turn_eos", False)):
+            await self._send_sp_token("spoken_turn_eos", input_id=input_id)
 
     async def _emit_non_spoken_step(self, step: Any, *, input_id: Optional[str]) -> None:
         token_strs = list(getattr(step, "token_strs", None) or [])
@@ -256,15 +244,20 @@ class FcDuplexSessionRuntime:
                 token_strs=token_strs,
             )
         if close_reason:
-            await self._send(
-                "response.output.sp_tokens",
-                session_id=self.session_id,
-                response_id=self._response_id,
-                input_id=input_id,
-                token=f"non_spoken_{close_reason}",
-            )
+            token = _non_spoken_close_reason_to_sp_token(str(close_reason))
+            if token:
+                await self._send_sp_token(token, input_id=input_id)
         for span in list(getattr(step, "closed_spans", None) or []):
             await self._emit_closed_span(span, input_id=input_id)
+
+    async def _send_sp_token(self, token: str, *, input_id: Optional[str]) -> None:
+        await self._send(
+            "response.output.sp_tokens",
+            session_id=self.session_id,
+            response_id=self._response_id,
+            input_id=input_id,
+            token=token,
+        )
 
     async def _emit_closed_span(self, span: Any, *, input_id: Optional[str]) -> None:
         span_type = getattr(span, "type", None)
@@ -363,6 +356,20 @@ def fc_duplex_enabled(params: Dict[str, Any]) -> bool:
     if isinstance(value, str):
         return value in {"fc", "fc_duplex", "true", "1", "yes"}
     return bool(value)
+
+
+def _non_spoken_close_reason_to_sp_token(reason: str) -> Optional[str]:
+    if reason == "eos":
+        return "non_spoken_eos"
+    if reason == "no_action":
+        return "no_action"
+    if reason == "budget_reached":
+        return "non_spoken_budget_reached"
+    if reason == "hold":
+        return "non_spoken_hold"
+    if reason == "abort":
+        return "non_spoken_abort"
+    return None
 
 
 def _tool_call_raw(span: Any) -> Dict[str, Any]:

@@ -285,7 +285,7 @@ function handleOutputDelta(event) {
 
 function handleSpToken(event) {
   const token = String(event.token || '');
-  if (token.startsWith('non_spoken_')) {
+  if (['no_action', 'non_spoken_eos', 'non_spoken_budget_reached', 'non_spoken_hold', 'non_spoken_abort'].includes(token)) {
     closeActiveNonSpokenBlock();
   }
 }
