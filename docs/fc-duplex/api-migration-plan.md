@@ -35,6 +35,19 @@ FC MVP 源分支 worktree。它包含 sunweiyue 的 `audio_duplex_board` MVP 以
 - 等 `tool-api` 先跑通正式 API FC 行为后，再把 FC 推理核心和 API runtime 迁入这里。
 - 迁移时以 `tool-api` 的行为作为对照，避免同时引入推理迁移错误和 API 外周错误。
 
+### `MiniCPM-o-Demo-wt-agent-harness-2026-06-09`
+
+backend protocol / agent harness 参考 worktree。当前 FC tool-call API 补充协议不在
+`tool-api` worktree 内，而是在这里：
+
+```text
+/user/weihongliang/MiniCPM-o-Demo-wt-agent-harness-2026-06-09/docs/backend-protocol/duplex-tool-calling.md
+```
+
+下文提到的 `response.think.*`、`response.tool_call.args.*`、`input.tool_result` 和
+`response.output.sp_tokens` 语义，以这个文件为准。不要把它误写成当前 worktree 下的
+`docs/backend-protocol/duplex-tool-calling.md`。
+
 ### `main`
 
 当前 upstream/main 对应的普通 demo 主线。历史上 FC feature 曾进入过主线，随后被 revert。当前 `o45-fc-try` 不是从当前 `main` 直接分出，而是沿着被 revert 前的 FC feature 继续开发。
@@ -277,7 +290,38 @@ await edge_tts.Communicate(USER_TEXT, "zh-CN-XiaoxiaoNeural").save(str(path))
 原因：
 
 - 它们定义的是 board 页面事件，例如 `non_spoken_delta`、`tool_call_final`、`board_card_created`。
-- 正式 API 应该发 `docs/backend-protocol/duplex-tool-calling.md` 中的事件，例如 `response.think.*`、`response.tool_call.args.*`、`input.tool_result`。
+- 正式 API 应该发 agent-harness worktree 中
+  `/user/weihongliang/MiniCPM-o-Demo-wt-agent-harness-2026-06-09/docs/backend-protocol/duplex-tool-calling.md`
+  定义的事件，例如 `response.think.*`、`response.tool_call.args.*`、`input.tool_result`。
+
+### `response.output.sp_tokens` 约束
+
+`duplex-tool-calling.md` 明确定义了 `response.output.sp_tokens`，但它不是任意调试事件通道。
+
+关键约束：
+
+- `token` 是协议枚举，不是 tokenizer raw token 文本，也不是 token id。
+- 每个 special token 独占一条 `response.output.sp_tokens` 事件。
+- `response.output.sp_tokens` 是只读信息，runtime/client 不能根据它执行工具、取消工具、关闭 session 或强制 listen。
+- input-event 侧 special token，例如 `<|tool_started|>`、`<|event_budget_reached|>`、`<|tool_response_streaming|>`，不属于默认输出范围。
+
+当前输出侧允许的 `token` 枚举是：
+
+```text
+listen
+tts_pad
+speak
+spoken_slot_eos
+spoken_turn_eos
+no_action
+non_spoken_eos
+non_spoken_budget_reached
+non_spoken_hold
+non_spoken_abort
+```
+
+因此 `fc_prefill`、`fc_finalize` 这类 adapter 生命周期标记不是协议 token，不应通过
+`response.output.sp_tokens` 下发。
 
 ## Tool-call id 设计
 
@@ -749,7 +793,8 @@ PYTHONPATH=/home/weihongliang/o45_fc_assets/sdk/src:. \
 结果：
 
 - `session.init` 成功，`fc_prepare` 成功。
-- 每个 1s audio chunk 都完成了 `fc_prefill -> listen -> non_spoken_no_action -> fc_finalize`。
+- 每个 1s audio chunk 都完成了 FC runtime 的 prefill/listen/non-spoken/finalize 调用链。
+- 当时实现曾通过 `response.output.sp_tokens` 暴露 `fc_prefill` / `fc_finalize` 这类 adapter 生命周期标记；按上文协议约束，这些不是合法输出侧 sp-token，后续应删除或改为内部日志。
 - 没有 backend crash。
 - 没有触发 `response.think.*` 或 `response.tool_call.args.*`。
 - 没有生成模型音频 delta。
