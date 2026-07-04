@@ -12,6 +12,9 @@ import asyncio
 import base64
 import json
 import logging
+import os
+import re
+import time
 import uuid
 from contextlib import suppress
 from typing import Any, Awaitable, Callable, Dict, List, Optional
@@ -218,7 +221,22 @@ class FcDuplexSessionRuntime:
             self._queue_worker.cancel()
             with suppress(asyncio.CancelledError, Exception):
                 await self._queue_worker
+        await self._dump_model_trace(reason="session_close")
         await asyncio.to_thread(self.backend.fc_duplex_cleanup)
+
+    async def _dump_model_trace(self, *, reason: str) -> None:
+        dump = getattr(self.backend, "fc_duplex_dump_trace", None)
+        if dump is None:
+            return
+        trace_dir = os.environ.get("FC_DUPLEX_TRACE_DIR", "/user/weihongliang/fc_trace_logs")
+        session = re.sub(r"[^A-Za-z0-9_.-]+", "_", self.session_id or "session")
+        stamp = time.strftime("%Y%m%d_%H%M%S")
+        path = os.path.join(trace_dir, f"fc_trace_{session}_{stamp}.json")
+        try:
+            info = await asyncio.to_thread(dump, path=path, session_id=self.session_id, reason=reason)
+            logger.info("fc_model_trace_dumped session=%s path=%s info=%s", self.session_id, path, info)
+        except Exception:
+            logger.exception("failed to dump fc model trace: session=%s path=%s", self.session_id, path)
 
     async def _run_non_spoken_loop(self, *, input_id: Optional[str]) -> None:
         steps: List[Any] = []

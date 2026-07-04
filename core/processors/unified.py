@@ -1645,6 +1645,12 @@ class FcDuplexView:
             tools = request.tools
         return self._decode_result(self._model.fc_duplex_decode_output_ids(output_ids=output_ids, tools=tools))
 
+    def trace_snapshot(self, *, session_id: Optional[str] = None, reason: Optional[str] = None) -> dict:
+        return self._model.fc_duplex_trace_snapshot(session_id=session_id, reason=reason)
+
+    def dump_trace(self, path: str, *, session_id: Optional[str] = None, reason: Optional[str] = None) -> dict:
+        return self._model.fc_duplex_dump_trace(path=path, session_id=session_id, reason=reason)
+
     def cleanup(self) -> None:
         self._model.fc_duplex_cleanup()
 

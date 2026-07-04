@@ -4183,6 +4183,12 @@ class MiniCPMO(MiniCPMOPreTrainedModel):
     def fc_duplex_decode_output_ids(self, output_ids=None, tools=None) -> dict:
         return self._require_fc_duplex().decode_output_ids(output_ids=output_ids, tools=tools)
 
+    def fc_duplex_trace_snapshot(self, session_id=None, reason=None) -> dict:
+        return self._require_fc_duplex().trace_snapshot(session_id=session_id, reason=reason)
+
+    def fc_duplex_dump_trace(self, path, session_id=None, reason=None) -> dict:
+        return self._require_fc_duplex().dump_trace(path, session_id=session_id, reason=reason)
+
     def fc_duplex_cleanup(self) -> None:
         self._require_fc_duplex().cleanup()
     
@@ -4679,6 +4685,9 @@ class FcDuplexCapability:
         self.decoder.reset()
         self.output_ids = []
         self.units_info = []
+        self.trace_events = []
+        self._trace_step = 0
+        self._trace_started_at = time.time()
         self._tools = None
         self._current_unit_idx = 0
         self._current_unit_open = False
@@ -4698,6 +4707,70 @@ class FcDuplexCapability:
         self.flow_cache_base = None
         self.hift_cache_base = None
         self.pre_lookahead = 0
+
+    def _token_pieces(self, ids: list) -> list:
+        if not ids:
+            return []
+        try:
+            return list(self.tokenizer.convert_ids_to_tokens(list(ids)))
+        except Exception:
+            return []
+
+    def _trace_span(self, span: dict) -> dict:
+        if not isinstance(span, dict):
+            return {"repr": repr(span)}
+        item = dict(span)
+        tool_call = item.get("tool_call")
+        if isinstance(tool_call, dict):
+            item["tool_call"] = dict(tool_call)
+        return item
+
+    def _record_trace(self, event: str, **fields) -> None:
+        self._trace_step = getattr(self, "_trace_step", 0) + 1
+        item = {
+            "step": self._trace_step,
+            "event": event,
+            "ts": time.time(),
+            "unit": self._current_unit_idx,
+            "output_len": len(self.output_ids),
+        }
+        item.update(fields)
+        self.trace_events.append(item)
+
+    def trace_snapshot(self, *, session_id: Optional[str] = None, reason: Optional[str] = None) -> dict:
+        ids = list(getattr(self, "output_ids", []) or [])
+        snapshot = {
+            "schema": "fc_duplex_model_trace.v1",
+            "session_id": session_id,
+            "reason": reason,
+            "created_at": time.time(),
+            "started_at": getattr(self, "_trace_started_at", None),
+            "tool_format": self.tool_format,
+            "generate_audio": self.generate_audio,
+            "current_unit_idx": self._current_unit_idx,
+            "current_non_spoken_mode": self._non_spoken_mode,
+            "open_think_token_ids": list(self._think_buf),
+            "open_tool_call_token_ids": list(self._tool_call_buf),
+            "output_ids": ids,
+            "output_token_strs": self._token_pieces(ids),
+            "output_render": self.render_token_stream(ids) if ids else "",
+            "units_info": list(getattr(self, "units_info", []) or []),
+            "current_unit_info": dict(self._current_unit_info) if self._current_unit_info else None,
+            "events": list(getattr(self, "trace_events", []) or []),
+        }
+        if snapshot["open_think_token_ids"]:
+            snapshot["open_think_text"] = self._flush(snapshot["open_think_token_ids"])
+        if snapshot["open_tool_call_token_ids"]:
+            snapshot["open_tool_call_wire"] = self._flush(snapshot["open_tool_call_token_ids"])
+        return snapshot
+
+    def dump_trace(self, path: str, *, session_id: Optional[str] = None, reason: Optional[str] = None) -> dict:
+        snapshot = self.trace_snapshot(session_id=session_id, reason=reason)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(snapshot, f, ensure_ascii=False, indent=2)
+        logger.info("[FcDuplexCapability] trace dumped: %s", path)
+        return {"path": path, "n_output_ids": len(snapshot["output_ids"]), "n_events": len(snapshot["events"])}
 
     def _init_token2wav_cache(self, prompt_wav_path: str) -> None:
         if getattr(self.model, "tts", None) is None:
@@ -4916,6 +4989,15 @@ class FcDuplexCapability:
                 self.decoder.feed(torch.cat([t for group in embeds_nested for t in group], dim=0))
         self._feed_ids(suffix_ids)
         prefill_ids = prefix_ids + suffix_ids
+        self._record_trace(
+            "prepare",
+            token_ids=prefill_ids,
+            token_strs=self._token_pieces(prefill_ids),
+            output_render=self.render_token_stream(prefill_ids),
+            has_ref_audio=ref_audio is not None,
+            generate_audio=self.generate_audio,
+            resize_info=resize_info,
+        )
         return {
             "prefill_ids": prefill_ids,
             "resize_info": resize_info,
@@ -4980,6 +5062,13 @@ class FcDuplexCapability:
 
         self._spoken_logits = self._feed_ids([self.sid(self.K.AI_SPOKEN_SLOT_START)], want_logits=True)
         self._spoken_slot_open = True
+        self._record_trace(
+            "streaming_prefill",
+            n_audio=self._current_unit_info["n_audio"],
+            has_event=self._current_unit_info["has_event"],
+            tool_responses=[getattr(item, "model_dump", lambda: item)() for item in (tool_responses or [])],
+            unit_info=dict(self._current_unit_info),
+        )
         return dict(self._current_unit_info)
 
     def streaming_spoken_generate(self, max_tokens: int = 24, decode_mode: str = "greedy") -> dict:
@@ -5043,6 +5132,16 @@ class FcDuplexCapability:
             if audio_info.get("audio_waveform") is not None:
                 self._current_unit_info["audio_sample_rate"] = audio_info.get("audio_sample_rate")
                 self._current_unit_info["n_audio_samples"] = int(len(audio_info["audio_waveform"]))
+        self._record_trace(
+            "streaming_spoken_generate",
+            token_ids=list(spoken_ids),
+            token_strs=self._token_pieces(spoken_ids),
+            text=text,
+            is_listen=bool(is_listen),
+            is_speaking=bool(is_speaking),
+            spoken_turn_eos=bool(turn_eos),
+            n_audio_samples=int(len(audio_info["audio_waveform"])) if audio_info.get("audio_waveform") is not None else 0,
+        )
         return {
             "is_listen": bool(is_listen),
             "is_speaking": bool(is_speaking),
@@ -5081,6 +5180,15 @@ class FcDuplexCapability:
         if self._current_unit_info is not None:
             self._current_unit_info["non_spoken_ids"].append(tid)
             self._current_unit_info["non_spoken_terminator"] = reason
+        self._record_trace(
+            "streaming_non_spoken_close",
+            token_ids=[tid],
+            token_strs=self._token_pieces([tid]),
+            terminated=True,
+            close_reason=reason,
+            closed_spans=[],
+            text="",
+        )
         return {"token_ids": [tid], "terminated": True, "close_reason": reason, "closed_spans": [], "text": ""}
 
     def _track_non_spoken_token(self, nid: int) -> list:
@@ -5168,12 +5276,23 @@ class FcDuplexCapability:
         elif self._current_unit_info is not None:
             self._current_unit_info["closed_spans"].extend(closed_spans)
 
+        text = self._flush(text_ids) if text_ids else ""
+        self._record_trace(
+            "streaming_non_spoken_generate",
+            token_ids=list(token_ids),
+            token_strs=self._token_pieces(token_ids),
+            terminated=terminated,
+            close_reason=close,
+            closed_spans=[self._trace_span(span) for span in closed_spans],
+            text=text,
+            non_spoken_mode=self._non_spoken_mode,
+        )
         return {
             "token_ids": token_ids,
             "terminated": terminated,
             "close_reason": close,
             "closed_spans": closed_spans,
-            "text": self._flush(text_ids) if text_ids else "",
+            "text": text,
         }
 
     def finalize_unit(self) -> dict:
@@ -5189,6 +5308,7 @@ class FcDuplexCapability:
         self._current_unit_idx += 1
         self._current_unit_info = None
         self._current_unit_open = False
+        self._record_trace("finalize_unit", unit_info=info)
         return info
 
     def decode_output_ids(self, output_ids=None, tools=None) -> dict:

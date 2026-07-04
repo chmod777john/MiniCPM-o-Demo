@@ -372,6 +372,11 @@ class PyTorchBackend:
         fc_view = self.processor.set_fc_duplex_mode()
         return fc_view.finalize_unit(FcFinalizeUnitRequest())
 
+    def fc_duplex_dump_trace(self, *, path: str, session_id: Optional[str] = None, reason: Optional[str] = None) -> Any:
+        if self.processor is None:
+            return None
+        return self.processor.set_fc_duplex_mode().dump_trace(path, session_id=session_id, reason=reason)
+
     def fc_duplex_cleanup(self) -> None:
         if self.processor is None:
             return
