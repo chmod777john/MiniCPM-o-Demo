@@ -72,7 +72,8 @@ _FC_BOARD_CASE_FOLDER_CANDIDATES = [
 
 _FC_BOARD_LIVE_IMAGE_DIR = (
     Path(__file__).resolve().parent
-    / "audio_duplex_board"
+    / "demos"
+    / "fc_board"
     / "tools"
     / "display_object_on_board"
     / "live_image_downloads"
@@ -83,7 +84,7 @@ _FC_BOARD_TOOL_SERVICE = None
 def _fc_board_tool_service():
     global _FC_BOARD_TOOL_SERVICE
     if _FC_BOARD_TOOL_SERVICE is None:
-        from audio_duplex_board.tools.display_object_on_board.service import (
+        from demos.fc_board.tools.display_object_on_board.service import (
             DisplayObjectOnBoardService,
         )
 
@@ -1412,7 +1413,7 @@ async def fc_board_display_object_tool(payload: Dict[str, Any] = Body(...)):
     if not query:
         raise HTTPException(status_code=400, detail="display_object_on_board requires name/query")
 
-    from audio_duplex_board.tools.display_object_on_board.service import (
+    from demos.fc_board.tools.display_object_on_board.service import (
         board_image_result_from_tool_result,
     )
 
