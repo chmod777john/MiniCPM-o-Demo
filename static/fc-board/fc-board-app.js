@@ -205,7 +205,8 @@ function buildSessionInitPayload() {
     generate_audio: generateAudio,
     config: {
       runtime: 'fc_duplex',
-      auto_execute_tools: true,
+      auto_execute_tools: false,
+      non_spoken_scheduling: 'latency',
       sample_rate: 16000,
       max_spoken_tokens: 24,
       non_spoken_budget_per_unit: 12,
@@ -340,13 +341,16 @@ function handleToolCallRaw(event) {
   const args = parseArguments(raw.arguments);
   const query = String(args.name || '').trim();
   if (!query) return;
+  const result = executeDisplayObjectOnBoard({ query, toolCallId: event.tool_call_id });
   state.upsert({
     card_id: cardIdFor(event.tool_call_id),
     tool_call_id: event.tool_call_id,
     query,
-    status: 'searching',
+    status: 'ready',
+    image: result.image,
   });
   renderBoard();
+  sendDisplayObjectToolResult({ toolCallId: event.tool_call_id, query });
 }
 
 function handleToolResult(event) {
@@ -361,6 +365,35 @@ function handleToolResult(event) {
     error: result.error,
   });
   renderBoard();
+}
+
+function executeDisplayObjectOnBoard({ query, toolCallId }) {
+  return {
+    query,
+    image: {
+      query,
+      asset_id: `client-tool:${toolCallId || query}`,
+      image_url: placeholderImageDataUrl(query),
+      source_url: null,
+      title: query,
+      elapsed_ms: 0,
+      error: null,
+    },
+    error: null,
+  };
+}
+
+function sendDisplayObjectToolResult({ toolCallId, query }) {
+  if (!liveClient || !toolCallId) return;
+  const text = JSON.stringify({
+    status: 'displayed',
+    name: query,
+    reason: '已在画板显示该对象。',
+  });
+  liveClient.sendToolResult({
+    toolCallId,
+    contents: [{ kind: 'text', text }],
+  });
 }
 
 function blockIdFor(event, kind) {
@@ -752,6 +785,18 @@ function parseArguments(value) {
 function formatToolCall(raw) {
   if (!raw || raw.error) return raw?.error || '';
   return `<function name="${raw.name}">${raw.arguments || ''}</function>`;
+}
+
+function placeholderImageDataUrl(label) {
+  const safeLabel = escapeHtml(label || 'object');
+  const svg = `
+    <svg xmlns="http://www.w3.org/2000/svg" width="640" height="420" viewBox="0 0 640 420">
+      <rect width="640" height="420" fill="#0f172a"/>
+      <rect x="42" y="42" width="556" height="336" rx="18" fill="#1e293b" stroke="#38bdf8" stroke-width="3"/>
+      <text x="320" y="200" fill="#e2e8f0" font-family="sans-serif" font-size="36" font-weight="700" text-anchor="middle">${safeLabel}</text>
+      <text x="320" y="250" fill="#94a3b8" font-family="sans-serif" font-size="20" text-anchor="middle">display_object_on_board</text>
+    </svg>`;
+  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
 }
 
 function float32Base64ToWavBase64(audioBase64, sampleRate) {

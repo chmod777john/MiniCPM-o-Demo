@@ -11,23 +11,19 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
-import time
+import logging
 import uuid
 from contextlib import suppress
-from pathlib import Path
 from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 import numpy as np
 
-from audio_duplex_board.tools.display_object_on_board.service import (
-    DisplayObjectOnBoardService,
-    board_image_result_from_tool_result,
-)
 from core.schemas.fc_duplex import FcToolResponse, NonSpokenStepGenerationFlag
 from py_backend.media import decode_frame_base64_list
 
 
 SendEvent = Callable[[str], Awaitable[None]]
+logger = logging.getLogger(__name__)
 
 
 DEFAULT_DISPLAY_OBJECT_TOOL: Dict[str, Any] = {
@@ -69,11 +65,13 @@ class FcDuplexSessionRuntime:
         self._tool_seq = 0
         self._max_spoken_tokens = 24
         self._non_spoken_budget_per_unit = 12
+        self._non_spoken_scheduling = "latency"
         self._decode_mode = "greedy"
         self._sample_rate = 16000
-        self._auto_execute_tools = True
-        self._tool_tasks: set[asyncio.Task[None]] = set()
-        self._tool_service: Optional[DisplayObjectOnBoardService] = None
+        self._input_queue: asyncio.Queue[Dict[str, Any]] = asyncio.Queue()
+        self._queue_worker: Optional[asyncio.Task[None]] = None
+        self._next_input_event = asyncio.Event()
+        self._closed = False
 
     async def prepare(self, params: Dict[str, Any]) -> None:
         config = _first_dict(params.get("config"), params.get("duplex"), params.get("fc_duplex"))
@@ -81,14 +79,15 @@ class FcDuplexSessionRuntime:
         self._non_spoken_budget_per_unit = int(
             config.get("non_spoken_budget_per_unit", params.get("non_spoken_budget_per_unit", 12)) or 12
         )
+        requested_scheduling = str(
+            config.get("non_spoken_scheduling", params.get("non_spoken_scheduling", "latency")) or "latency"
+        ).lower()
+        if requested_scheduling not in {"latency", "quality"}:
+            raise RuntimeError("fc_duplex non_spoken_scheduling must be 'latency' or 'quality'")
+        self._non_spoken_scheduling = requested_scheduling
         self._decode_mode = str(config.get("decode_mode", params.get("decode_mode", "greedy")) or "greedy")
         self._sample_rate = int(config.get("sample_rate", params.get("sample_rate", 16000)) or 16000)
-        self._auto_execute_tools = bool(config.get("auto_execute_tools", params.get("auto_execute_tools", True)))
         self._tools = list(params.get("tools") or [DEFAULT_DISPLAY_OBJECT_TOOL])
-
-        tool_dir = params.get("tool_download_dir") or config.get("tool_download_dir")
-        download_dir = Path(tool_dir) if tool_dir else None
-        self._tool_service = DisplayObjectOnBoardService(download_dir=download_dir)
 
         voice = _first_dict(params.get("voice"), params.get("defaults"))
         ref_audio_path = _coalesce(params.get("ref_audio_path"), voice.get("ref_audio_path"))
@@ -109,7 +108,7 @@ class FcDuplexSessionRuntime:
             return
         if payload_type in {"tool_result.delta", "tool_result.done"}:
             raise RuntimeError(f"FC runtime does not support streaming tool results yet: {payload_type}")
-        await self.process_audio_input(payload)
+        await self.enqueue_audio_input(payload)
 
     async def queue_tool_result(self, payload: Dict[str, Any]) -> None:
         api_id = str(payload.get("tool_call_id") or "")
@@ -122,12 +121,42 @@ class FcDuplexSessionRuntime:
             FcToolResponse(call_id=internal_id, content=_contents_to_text(payload.get("contents")))
         )
 
-    async def process_audio_input(self, payload: Dict[str, Any]) -> None:
+    async def enqueue_audio_input(self, payload: Dict[str, Any]) -> None:
         audio_base64 = _extract_audio_base64(payload)
         if not audio_base64:
             raise RuntimeError("fc_duplex input requires audio")
+        worker_running = self._queue_worker is not None and not self._queue_worker.done()
+        if self._non_spoken_scheduling == "latency":
+            while not self._input_queue.empty():
+                with suppress(asyncio.QueueEmpty):
+                    self._input_queue.get_nowait()
+                    self._input_queue.task_done()
+        await self._input_queue.put(payload)
+        if self._non_spoken_scheduling == "latency" and worker_running:
+            self._next_input_event.set()
+        if self._queue_worker is None or self._queue_worker.done():
+            self._queue_worker = asyncio.create_task(self._consume_audio_queue())
+
+    async def _consume_audio_queue(self) -> None:
+        while not self._closed:
+            payload = await self._input_queue.get()
+            try:
+                await self._process_audio_payload(payload)
+            except Exception:
+                logger.exception("FC runtime failed to process audio payload")
+                raise
+            finally:
+                self._input_queue.task_done()
+            if self._input_queue.empty():
+                return
+
+    async def _process_audio_payload(self, payload: Dict[str, Any]) -> None:
         input_id = payload.get("input_id")
         self._response_id = self._response_id or str(payload.get("response_id") or f"resp_{uuid.uuid4().hex[:12]}")
+        audio_base64 = _extract_audio_base64(payload)
+        self._next_input_event.clear()
+        if self._non_spoken_scheduling == "latency" and not self._input_queue.empty():
+            self._next_input_event.set()
         frame_list = decode_frame_base64_list(_extract_frame_base64_list(payload)).frame_list
         tool_responses = list(self._pending_tool_responses)
         self._pending_tool_responses.clear()
@@ -152,17 +181,26 @@ class FcDuplexSessionRuntime:
         await asyncio.to_thread(self.backend.fc_duplex_finalize)
 
     async def close(self) -> None:
-        tasks = list(self._tool_tasks)
-        for task in tasks:
-            task.cancel()
-        for task in tasks:
+        self._closed = True
+        if self._queue_worker is not None:
+            self._queue_worker.cancel()
             with suppress(asyncio.CancelledError, Exception):
-                await task
+                await self._queue_worker
         await asyncio.to_thread(self.backend.fc_duplex_cleanup)
 
     async def _run_non_spoken_loop(self, *, input_id: Optional[str]) -> None:
         steps: List[Any] = []
         for _ in range(max(0, self._non_spoken_budget_per_unit)):
+            if self._non_spoken_scheduling == "latency" and self._next_input_event.is_set():
+                step = await asyncio.to_thread(
+                    self.backend.fc_duplex_non_spoken_generate,
+                    max_tokens=0,
+                    decode_mode=self._decode_mode,
+                    close_reason="budget_reached",
+                )
+                steps.append(step)
+                await self._emit_non_spoken_batch(steps, input_id=input_id)
+                return
             step = await asyncio.to_thread(
                 self.backend.fc_duplex_non_spoken_generate,
                 max_tokens=1,
@@ -194,6 +232,15 @@ class FcDuplexSessionRuntime:
         waveform = getattr(spoken, "audio_waveform", None)
         metadata = _model_to_dict(spoken)
         metadata.pop("audio_waveform", None)
+        logger.info(
+            "fc_spoken input_id=%s listen=%s speaking=%s text=%r token_strs=%s turn_eos=%s",
+            input_id,
+            is_listen,
+            is_speaking,
+            _short(text),
+            _short_list(getattr(spoken, "spoken_token_strs", None)),
+            bool(getattr(spoken, "spoken_turn_eos", False)),
+        )
 
         if is_listen:
             await self._send_sp_token("listen", input_id=input_id)
@@ -249,6 +296,15 @@ class FcDuplexSessionRuntime:
             closed_spans.extend(list(getattr(step, "closed_spans", None) or []))
 
         text = "".join(text_parts)
+        logger.info(
+            "fc_non_spoken_batch input_id=%s n_steps=%d close=%s text=%r token_strs=%s spans=%s",
+            input_id,
+            len(steps),
+            close_reason,
+            _short(text),
+            _short_list(token_strs),
+            [getattr(span, "type", None) for span in closed_spans],
+        )
         if token_strs or text:
             await self._send(
                 "response.output.delta",
@@ -328,32 +384,6 @@ class FcDuplexSessionRuntime:
             tool_call_id=api_id,
             raw=raw,
         )
-        if self._auto_execute_tools and not raw.get("error"):
-            task = asyncio.create_task(self._auto_execute_tool(api_id=api_id, raw=raw))
-            self._tool_tasks.add(task)
-            task.add_done_callback(self._tool_tasks.discard)
-
-    async def _auto_execute_tool(self, *, api_id: str, raw: Dict[str, Any]) -> None:
-        name = str(raw.get("name") or "")
-        if name != "display_object_on_board" or self._tool_service is None:
-            return
-        args = _parse_arguments(raw.get("arguments"))
-        query = str(args.get("name") or "").strip()
-        result = await asyncio.to_thread(self._tool_service.search, query)
-        image = board_image_result_from_tool_result(result, tool_call_id=api_id)
-        await self._send(
-            "response.tool_result",
-            session_id=self.session_id,
-            response_id=self._response_id,
-            tool_call_id=api_id,
-            name=name,
-            result={"query": result.query, "image": _model_to_dict(image), "error": result.error},
-        )
-        internal_id = self._api_to_internal.get(api_id)
-        if internal_id:
-            self._pending_tool_responses.append(
-                FcToolResponse(call_id=internal_id, content=result.tool_response_content)
-            )
 
     def _api_id_for_internal(self, internal_id: Optional[str]) -> str:
         if internal_id and internal_id in self._internal_to_api:
@@ -432,6 +462,19 @@ def _contents_to_text(contents: Any) -> str:
         else:
             parts.append(str(item))
     return "".join(parts)
+
+
+def _short(value: str, limit: int = 300) -> str:
+    if len(value) <= limit:
+        return value
+    return value[:limit] + "..."
+
+
+def _short_list(value: Any, limit: int = 80) -> List[str]:
+    items = [str(item) for item in list(value or [])]
+    if len(items) <= limit:
+        return items
+    return items[:limit] + [f"...(+{len(items) - limit})"]
 
 
 def _audio_waveform_to_float32_base64(audio_waveform: Any) -> str:

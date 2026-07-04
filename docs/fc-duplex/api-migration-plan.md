@@ -379,7 +379,7 @@ abort 流程：
 
 - 只做 `tool-api` 上的最小 API 化接线，不启动大规模 refactor。
 - 优先复制并改造 `audio_duplex_board/session.py` 的核心 runtime 逻辑，尽量少发明新结构。
-- tool-call response 优先支持 CLI/client 回填；必要时可以保留 backend auto-tool 作为最小闭环，但不做复杂 workaround。
+- tool-call response 由 client/runtime 上层执行并通过 `input.tool_result` 回填；backend runtime 不自动执行业务工具。
 - 可以新增一个纯 CLI smoke：连接 API、发送音频、监听 tool-call、回 `input.tool_result`。
 - 如果 CLI smoke 没触发 tool-call，不反复调参刷到触发；记录现象后停下。
 - 不为听感、模型选择行为或偶发输出做硬编码修补。
@@ -416,8 +416,7 @@ py_backend/fc_duplex_runtime.py
 - `_run_non_spoken_loop_polling`
 - `_emit_step_events`
 - `_emit_close_for_span`
-- `_dispatch_tool_call`
-- `_run_tool_search`
+- `_dispatch_tool_call` 的语义事件部分
 - pending tool response 相关状态
 
 可以先不迁：
@@ -487,20 +486,55 @@ input.append
 
 ### 6. 工具执行策略
 
-第一版为了保持 MVP 行为，可以 backend 自执行 `display_object_on_board`：
+正式路径不允许 backend runtime 自动执行业务工具。工具执行属于 client / 上层 runtime：
 
-- tool-call 闭合后调用 `DisplayObjectOnBoardService.search()`。
-- 生成训练对齐的 `tool_response_content`。
-- 下一次 prefill 注入模型。
+- backend 只发 `response.tool_call.args.begin/delta/end/raw`。
+- client 解析 `response.tool_call.args.raw`，执行对应工具。
+- client 通过 `input.tool_result` 回填结果。
+- backend runtime 维护 api id -> internal id 映射，再转成 `FcToolResponse`。
+- 下一次 `streaming_prefill(tool_responses=...)` 注入模型。
 
-同时 API 事件仍然对外发出完整 tool-call raw，便于后续改成 runtime/client 真执行工具。
+`display_object_on_board` 的模型可见 tool response content 需要保持训练对齐格式：JSON **字符串**，不是 dict。例如：
 
-第二版再切换为正式工具执行模型：
+```json
+{"status":"displayed","name":"小松鼠","reason":"已在画板显示该对象。"}
+```
 
-- backend 只发 `response.tool_call.args.raw`。
-- runtime/client 执行工具。
-- runtime/client 通过 `input.tool_result` 回填。
-- backend 根据 id 映射注入模型。
+因此正式 API 回填建议使用：
+
+```json
+{
+  "type": "input.tool_result",
+  "tool_call_id": "tc_000001",
+  "contents": [
+    {
+      "kind": "text",
+      "text": "{\"status\":\"displayed\",\"name\":\"小松鼠\",\"reason\":\"已在画板显示该对象。\"}"
+    }
+  ]
+}
+```
+
+backend runtime 只把 `contents[*].text` 拼成模型输入文本，不理解/执行具体业务工具。
+
+### 6.1 non-spoken 调度模式
+
+`session.init` 需要支持两种 non-spoken 调度模式，用于权衡实时性和完整 tool-call 质量：
+
+```json
+{
+  "fc_duplex": {
+    "non_spoken_scheduling": "latency"
+  }
+}
+```
+
+可选值：
+
+- `latency` / 性能模式：下一 audio chunk 到来时，当前 unit 应尽快以 `budget_reached` 收束，优先处理新输入。这个模式要求 API 层正确维护跨 unit open span：`budget_reached` 不代表 `<think>` / `<tool_call>` 闭合，不能发 tool-call done。
+- `quality` / 质量模式：audio chunk 进入队列，当前 unit 跑完固定 `non_spoken_budget_per_unit` 或自然 terminated 后再处理下一个 chunk。这样更容易让 think/tool-call 在当前 unit 内自然闭合，但会积压延迟。
+
+这属于 view 之上的 session/runtime 节奏控制；token 合法性、special token 插入和 `budget_reached` 如何进入模型上下文仍属于 `FcDuplexCapability` / modeling 层。
 
 ## 第二阶段：验证 `tool-api` 行为
 

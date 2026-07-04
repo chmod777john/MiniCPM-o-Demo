@@ -42,6 +42,14 @@ export class FcRealtimeClient {
     });
   }
 
+  sendToolResult({ toolCallId, contents }) {
+    this._send({
+      type: 'input.tool_result',
+      tool_call_id: toolCallId,
+      contents,
+    });
+  }
+
   close(reason = 'client_closed') {
     if (!this.ws) return;
     if (this.ws.readyState === WebSocket.OPEN) {
