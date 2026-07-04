@@ -81,6 +81,7 @@ class FcDuplexSessionRuntime:
         self._current_tool_call_id: Optional[str] = None
         self._current_block_streamed = False
         self._block_seq = 0
+        self._block_started_sent = False
 
     async def prepare(self, params: Dict[str, Any]) -> None:
         config = _first_dict(params.get("config"), params.get("duplex"), params.get("fc_duplex"))
@@ -239,7 +240,6 @@ class FcDuplexSessionRuntime:
             logger.exception("failed to dump fc model trace: session=%s path=%s", self.session_id, path)
 
     async def _run_non_spoken_loop(self, *, input_id: Optional[str]) -> None:
-        steps: List[Any] = []
         for _ in range(max(0, self._non_spoken_budget_per_unit)):
             if self._non_spoken_scheduling == "latency" and self._next_input_event.is_set():
                 step = await asyncio.to_thread(
@@ -248,15 +248,14 @@ class FcDuplexSessionRuntime:
                     decode_mode=self._decode_mode,
                     close_reason="budget_reached",
                 )
-                steps.append(step)
-                await self._emit_non_spoken_steps(steps, input_id=input_id)
+                await self._emit_step_events(step, input_id=input_id)
                 return
             step = await asyncio.to_thread(
                 self.backend.fc_duplex_non_spoken_generate,
                 max_tokens=1,
                 decode_mode=self._decode_mode,
             )
-            steps.append(step)
+            await self._emit_step_events(step, input_id=input_id)
             raw_flag = getattr(step, "generation_flag", "") or ""
             flag = str(getattr(raw_flag, "value", raw_flag))
             terminated = bool(getattr(step, "terminated", False))
@@ -264,7 +263,6 @@ class FcDuplexSessionRuntime:
                 NonSpokenStepGenerationFlag.no_action.value,
                 NonSpokenStepGenerationFlag.non_spoken_slot_eos.value,
             }:
-                await self._emit_non_spoken_steps(steps, input_id=input_id)
                 return
         step = await asyncio.to_thread(
             self.backend.fc_duplex_non_spoken_generate,
@@ -272,8 +270,7 @@ class FcDuplexSessionRuntime:
             decode_mode=self._decode_mode,
             close_reason="budget_reached",
         )
-        steps.append(step)
-        await self._emit_non_spoken_steps(steps, input_id=input_id)
+        await self._emit_step_events(step, input_id=input_id)
 
     async def _emit_spoken(self, spoken: Any, *, input_id: Optional[str]) -> None:
         is_listen = bool(getattr(spoken, "is_listen", False))
@@ -329,30 +326,48 @@ class FcDuplexSessionRuntime:
         if bool(getattr(spoken, "spoken_turn_eos", False)):
             await self._send_sp_token("spoken_turn_eos", input_id=input_id)
 
-    async def _emit_non_spoken_steps(self, steps: List[Any], *, input_id: Optional[str]) -> None:
-        for step in steps:
-            await self._emit_non_spoken_step(step, input_id=input_id)
+    async def _emit_step_events(self, step: Any, *, input_id: Optional[str]) -> None:
+        """Convert one FcNonSpokenGenerateResult into API events.
 
-    async def _emit_non_spoken_step(self, step: Any, *, input_id: Optional[str]) -> None:
+        This intentionally mirrors audio_duplex_board.session._emit_step_events:
+        token/text opens an unknown block immediately, every generated step is
+        streamed, and only closed_spans close the current block. Budget markers
+        never close an open block.
+        """
+
         token_ids = list(getattr(step, "token_ids", None) or [])
         token_strs = [str(token) for token in list(getattr(step, "token_strs", None) or [])]
-        text = str(getattr(step, "text", "") or "")
+        step_text = str(getattr(step, "text", "") or "")
         close_reason = getattr(step, "close_reason", None)
 
         logger.info(
             "fc_non_spoken_step input_id=%s close=%s text=%r token_strs=%s spans=%s",
             input_id,
             close_reason,
-            _short(text),
+            _short(step_text),
             _short_list(token_strs),
             [getattr(span, "type", None) for span in list(getattr(step, "closed_spans", None) or [])],
         )
 
-        if token_ids or token_strs or text:
-            await self._emit_non_spoken_delta(
+        # Same exception as MVP: a lone no_action terminator is not content and
+        # should not open an unknown block.
+        is_no_action_marker = (
+            bool(getattr(step, "terminated", False)) and str(close_reason or "") == "no_action"
+        )
+        should_open = (
+            self._current_block_id is None
+            and (token_ids or step_text)
+            and not is_no_action_marker
+        )
+        if should_open:
+            tentative_kind = _guess_block_kind_from_tokens(token_strs) if token_strs else None
+            await self._begin_block(tentative_kind, input_id=input_id)
+
+        if (token_ids or step_text) and self._current_block_id is not None:
+            await self._send_block_delta(
                 token_ids=token_ids,
                 token_strs=token_strs,
-                text=text,
+                step_text=step_text,
                 input_id=input_id,
             )
 
@@ -364,38 +379,37 @@ class FcDuplexSessionRuntime:
                 await self._abort_current_block(input_id=input_id)
 
         for span in list(getattr(step, "closed_spans", None) or []):
-            await self._emit_closed_span(span, input_id=input_id)
+            await self._emit_close_for_span(span, input_id=input_id)
 
-    async def _emit_non_spoken_delta(
+    async def _send_block_delta(
         self,
         *,
         token_ids: List[int],
         token_strs: List[str],
-        text: str,
+        step_text: str,
         input_id: Optional[str],
     ) -> None:
-        kind = self._current_block_kind or _guess_block_kind(token_strs, text)
-        if self._current_block_id is None:
-            await self._begin_block(kind, input_id=input_id)
-        elif kind and self._current_block_kind is None:
-            await self._upgrade_block_kind(kind, input_id=input_id)
+        if self._current_block_kind is None:
+            kind = _guess_block_kind_from_tokens(token_strs)
+            if kind:
+                await self._upgrade_block_kind(kind, input_id=input_id)
 
         if self._current_block_kind == "think":
-            if text:
+            if step_text:
                 self._current_block_streamed = True
                 await self._send(
                     "response.think.delta",
                     session_id=self.session_id,
                     response_id=self._response_id,
                     input_id=input_id,
-                    delta=text,
+                    delta=step_text,
                     token_observations=_token_observations(token_ids, token_strs),
                 )
             return
 
         if self._current_block_kind == "tool_call":
             tool_call_id = self._current_tool_call_id or self._current_block_id
-            if text:
+            if step_text:
                 self._current_block_streamed = True
                 await self._send(
                     "response.tool_call.args.delta",
@@ -403,20 +417,22 @@ class FcDuplexSessionRuntime:
                     response_id=self._response_id,
                     input_id=input_id,
                     tool_call_id=tool_call_id,
-                    delta=text,
+                    delta=step_text,
                     token_observations=_token_observations(token_ids, token_strs),
                 )
             return
 
-        if text or token_strs:
+        if step_text or token_strs:
             await self._send(
                 "debug.fc_non_spoken.delta",
                 session_id=self.session_id,
                 response_id=self._response_id,
                 input_id=input_id,
-                text=text,
+                text=step_text,
                 token_strs=token_strs,
                 token_ids=token_ids,
+                block_id=self._current_block_id,
+                block_kind=_kind_for_event(self._current_block_kind),
             )
 
     async def _begin_block(self, kind: Optional[str], *, input_id: Optional[str]) -> None:
@@ -425,10 +441,13 @@ class FcDuplexSessionRuntime:
         self._current_block_kind = kind
         self._current_tool_call_id = None
         self._current_block_streamed = False
+        self._block_started_sent = False
         if kind == "think":
+            self._block_started_sent = True
             await self._send("response.think.begin", session_id=self.session_id, response_id=self._response_id, input_id=input_id)
         elif kind == "tool_call":
             self._current_tool_call_id = self._api_id_for_internal(None)
+            self._block_started_sent = True
             await self._send(
                 "response.tool_call.args.begin",
                 session_id=self.session_id,
@@ -438,18 +457,24 @@ class FcDuplexSessionRuntime:
             )
 
     async def _upgrade_block_kind(self, kind: str, *, input_id: Optional[str]) -> None:
+        if kind == self._current_block_kind:
+            return
         self._current_block_kind = kind
         if kind == "think":
-            await self._send("response.think.begin", session_id=self.session_id, response_id=self._response_id, input_id=input_id)
+            if not self._block_started_sent:
+                self._block_started_sent = True
+                await self._send("response.think.begin", session_id=self.session_id, response_id=self._response_id, input_id=input_id)
         elif kind == "tool_call":
             self._current_tool_call_id = self._api_id_for_internal(None)
-            await self._send(
-                "response.tool_call.args.begin",
-                session_id=self.session_id,
-                response_id=self._response_id,
-                input_id=input_id,
-                tool_call_id=self._current_tool_call_id,
-            )
+            if not self._block_started_sent:
+                self._block_started_sent = True
+                await self._send(
+                    "response.tool_call.args.begin",
+                    session_id=self.session_id,
+                    response_id=self._response_id,
+                    input_id=input_id,
+                    tool_call_id=self._current_tool_call_id,
+                )
 
     async def _abort_current_block(self, *, input_id: Optional[str]) -> None:
         if self._current_block_kind == "tool_call" and self._current_tool_call_id:
@@ -464,6 +489,7 @@ class FcDuplexSessionRuntime:
         self._current_block_kind = None
         self._current_tool_call_id = None
         self._current_block_streamed = False
+        self._block_started_sent = False
 
     async def _send_sp_token(self, token: str, *, input_id: Optional[str]) -> None:
         await self._send(
@@ -474,11 +500,19 @@ class FcDuplexSessionRuntime:
             token=token,
         )
 
-    async def _emit_closed_span(self, span: Any, *, input_id: Optional[str]) -> None:
+    async def _emit_close_for_span(self, span: Any, *, input_id: Optional[str]) -> None:
+        """Close the current non-spoken block and emit final API events.
+
+        Mirrors audio_duplex_board.session._emit_close_for_span, replacing board
+        events with formal API events and leaving tool execution to the client.
+        """
+
         span_type = getattr(span, "type", None)
         if span_type == "think":
-            if self._current_block_kind != "think":
+            if self._current_block_id is None:
                 await self._begin_block("think", input_id=input_id)
+            elif self._current_block_kind != "think":
+                await self._upgrade_block_kind("think", input_id=input_id)
             text = str(getattr(span, "text", "") or "")
             if text and not self._current_block_streamed:
                 await self._send(
@@ -494,6 +528,11 @@ class FcDuplexSessionRuntime:
         if span_type != "tool_call":
             return
 
+        if self._current_block_id is None:
+            await self._begin_block("tool_call", input_id=input_id)
+        elif self._current_block_kind != "tool_call":
+            await self._upgrade_block_kind("tool_call", input_id=input_id)
+
         internal_id = getattr(span, "tool_call_id", None)
         if self._current_tool_call_id:
             api_id = self._current_tool_call_id
@@ -503,8 +542,10 @@ class FcDuplexSessionRuntime:
         else:
             api_id = self._api_id_for_internal(str(internal_id) if internal_id else None)
         wire = getattr(span, "wire", None) or ""
-        if self._current_block_kind != "tool_call":
+        if not self._current_tool_call_id:
             self._current_tool_call_id = api_id
+        if not self._block_started_sent:
+            self._block_started_sent = True
             await self._send(
                 "response.tool_call.args.begin",
                 session_id=self.session_id,
@@ -544,6 +585,7 @@ class FcDuplexSessionRuntime:
         self._current_block_kind = None
         self._current_tool_call_id = None
         self._current_block_streamed = False
+        self._block_started_sent = False
 
     def _api_id_for_internal(self, internal_id: Optional[str]) -> str:
         if internal_id and internal_id in self._internal_to_api:
@@ -624,16 +666,29 @@ def _contents_to_text(contents: Any) -> str:
     return "".join(parts)
 
 
-def _guess_block_kind(token_strs: List[str], text: str) -> Optional[str]:
-    pieces = list(token_strs)
-    if text:
-        pieces.append(text)
-    for piece in pieces:
+def _guess_block_kind_from_tokens(token_strs: List[str]) -> Optional[str]:
+    """Best-effort kind detection from token pieces.
+
+    Mirrors audio_duplex_board.session._guess_block_kind_from_tokens: returns
+    ``think`` or ``tool_call`` when an opener token appears, otherwise None so
+    the caller keeps an unknown block open until a later step or closed span
+    reveals the kind.
+    """
+
+    for piece in token_strs:
+        if not isinstance(piece, str):
+            continue
         if "think" in piece and "<" in piece:
             return "think"
         if "tool_call" in piece and "<" in piece:
             return "tool_call"
     return None
+
+
+def _kind_for_event(kind: Optional[str]) -> str:
+    if kind in ("think", "tool_call"):
+        return kind
+    return "unknown"
 
 
 def _token_observations(token_ids: List[int], token_strs: List[str]) -> Optional[List[Dict[str, Any]]]:
