@@ -187,6 +187,7 @@ class FcDuplexSessionRuntime:
                 return
 
     async def _process_audio_payload(self, payload: Dict[str, Any]) -> None:
+        unit_t0 = time.perf_counter()
         input_id = payload.get("input_id")
         self._response_id = self._response_id or str(payload.get("response_id") or f"resp_{uuid.uuid4().hex[:12]}")
         audio_base64 = _extract_audio_base64(payload)
@@ -211,8 +212,12 @@ class FcDuplexSessionRuntime:
             decode_mode=self._decode_mode,
         )
         await self._emit_spoken(spoken, input_id=input_id)
+        spoken_done_elapsed_ms = (time.perf_counter() - unit_t0) * 1000
 
-        await self._run_non_spoken_loop(input_id=input_id)
+        await self._run_non_spoken_loop(
+            input_id=input_id,
+            pre_non_spoken_elapsed_ms=spoken_done_elapsed_ms,
+        )
 
         await asyncio.to_thread(self.backend.fc_duplex_finalize)
 
@@ -239,7 +244,7 @@ class FcDuplexSessionRuntime:
         except Exception:
             logger.exception("failed to dump fc model trace: session=%s path=%s", self.session_id, path)
 
-    async def _run_non_spoken_loop(self, *, input_id: Optional[str]) -> None:
+    async def _run_non_spoken_loop(self, *, input_id: Optional[str], pre_non_spoken_elapsed_ms: float) -> None:
         used = 0
         step_durations_ms: List[float] = []
         for _ in range(max(0, self._non_spoken_budget_per_unit)):
@@ -251,7 +256,12 @@ class FcDuplexSessionRuntime:
                     close_reason="budget_reached",
                 )
                 await self._emit_step_events(step, input_id=input_id)
-                await self._emit_budget_debug(input_id=input_id, used=used, step_durations_ms=step_durations_ms)
+                await self._emit_budget_debug(
+                    input_id=input_id,
+                    used=used,
+                    step_durations_ms=step_durations_ms,
+                    pre_non_spoken_elapsed_ms=pre_non_spoken_elapsed_ms,
+                )
                 return
             step_t0 = time.perf_counter()
             step = await asyncio.to_thread(
@@ -269,7 +279,12 @@ class FcDuplexSessionRuntime:
                 NonSpokenStepGenerationFlag.no_action.value,
                 NonSpokenStepGenerationFlag.non_spoken_slot_eos.value,
             }:
-                await self._emit_budget_debug(input_id=input_id, used=used, step_durations_ms=step_durations_ms)
+                await self._emit_budget_debug(
+                    input_id=input_id,
+                    used=used,
+                    step_durations_ms=step_durations_ms,
+                    pre_non_spoken_elapsed_ms=pre_non_spoken_elapsed_ms,
+                )
                 return
         step = await asyncio.to_thread(
             self.backend.fc_duplex_non_spoken_generate,
@@ -278,7 +293,12 @@ class FcDuplexSessionRuntime:
             close_reason="budget_reached",
         )
         await self._emit_step_events(step, input_id=input_id)
-        await self._emit_budget_debug(input_id=input_id, used=used, step_durations_ms=step_durations_ms)
+        await self._emit_budget_debug(
+            input_id=input_id,
+            used=used,
+            step_durations_ms=step_durations_ms,
+            pre_non_spoken_elapsed_ms=pre_non_spoken_elapsed_ms,
+        )
 
     async def _emit_budget_debug(
         self,
@@ -286,6 +306,7 @@ class FcDuplexSessionRuntime:
         input_id: Optional[str],
         used: int,
         step_durations_ms: List[float],
+        pre_non_spoken_elapsed_ms: float,
     ) -> None:
         await self._send(
             "response.debug",
@@ -293,7 +314,10 @@ class FcDuplexSessionRuntime:
             response_id=self._response_id,
             input_id=input_id,
             debug={
-                "estimated_max_budget_1s": _estimate_max_budget_1s(step_durations_ms),
+                "estimated_max_budget_1s": _estimate_remaining_budget_1s(
+                    step_durations_ms,
+                    pre_non_spoken_elapsed_ms=pre_non_spoken_elapsed_ms,
+                ),
                 "used": int(used),
             },
         )
@@ -727,7 +751,11 @@ def _token_observations(token_ids: List[int], token_strs: List[str]) -> Optional
     return observations
 
 
-def _estimate_max_budget_1s(step_durations_ms: List[float]) -> Optional[int]:
+def _estimate_remaining_budget_1s(
+    step_durations_ms: List[float],
+    *,
+    pre_non_spoken_elapsed_ms: float,
+) -> Optional[int]:
     if not step_durations_ms:
         return None
     sorted_durations = sorted(duration for duration in step_durations_ms if duration > 0)
@@ -735,7 +763,8 @@ def _estimate_max_budget_1s(step_durations_ms: List[float]) -> Optional[int]:
         return None
     index = min(len(sorted_durations) - 1, int(0.95 * (len(sorted_durations) - 1)))
     p95_ms = max(sorted_durations[index], 1.0)
-    return max(1, int(1000.0 // p95_ms))
+    available_ms = max(0.0, 1000.0 - pre_non_spoken_elapsed_ms)
+    return int(available_ms // p95_ms)
 
 
 def _short(value: str, limit: int = 300) -> str:
