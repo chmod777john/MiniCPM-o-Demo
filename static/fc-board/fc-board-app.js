@@ -56,7 +56,6 @@ const el = {
   aiAudioList: document.getElementById('aiAudioList'),
   padBeforeSec: document.getElementById('padBeforeSec'),
   padAfterSec: document.getElementById('padAfterSec'),
-  generateAudio: document.getElementById('generateAudio'),
   timeline: document.getElementById('timeline'),
   streamFeed: document.getElementById('streamFeed'),
   streamFilter: document.getElementById('streamFilter'),
@@ -68,7 +67,6 @@ const el = {
   kvTools: document.getElementById('kvTools'),
   systemPrompt: document.getElementById('systemPrompt'),
   refAudioPath: document.getElementById('refAudioPath'),
-  genAudioToggle: document.getElementById('genAudioToggle'),
   resetSystemPrompt: document.getElementById('resetSystemPrompt'),
   resetRefAudio: document.getElementById('resetRefAudio'),
   debugToggle: document.getElementById('debugToggle'),
@@ -84,8 +82,6 @@ function initPage() {
   el.kvCkpt.textContent = 'backend selected';
   el.kvTools.textContent = DISPLAY_OBJECT_TOOL.function.name;
   applyDefaults({});
-  el.generateAudio.checked = true;
-  el.genAudioToggle.checked = true;
   setWsState('idle');
   setStatus('Loading defaults…');
   renderBoard();
@@ -196,13 +192,12 @@ async function createRealtimeSession() {
 
 function buildSessionInitPayload() {
   const refAudioPath = (el.refAudioPath?.value || '').trim();
-  const generateAudio = Boolean(el.genAudioToggle?.checked);
   const payload = {
     mode: 'full_duplex',
     fc_duplex: true,
     system_prompt: (el.systemPrompt?.value || '').trim() || defaultSystemPrompt(),
     tools: defaultTools(),
-    generate_audio: generateAudio,
+    generate_audio: true,
     config: {
       runtime: 'fc_duplex',
       auto_execute_tools: false,

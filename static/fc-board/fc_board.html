@@ -50,7 +50,7 @@
         </ul>
       </section>
 
-      <!-- System prompt + reference audio + TTS toggle.
+      <!-- System prompt + reference audio.
            Changes take effect on the NEXT Start mic click. -->
       <section class="panel settings-edit-panel">
         <details class="cfg-group" open>
@@ -65,14 +65,6 @@
                  placeholder="absolute path to .wav" />
           <p class="hint">Optional. Empty means the backend uses its default reference audio.</p>
           <button id="resetRefAudio" class="ctrl-btn tiny">Clear</button>
-        </details>
-        <details class="cfg-group">
-          <summary>TTS</summary>
-          <label class="inline-checkbox">
-            <input id="genAudioToggle" type="checkbox" checked />
-            <span>Generate AI audio (TTS)</span>
-          </label>
-          <p class="hint">Requires the selected backend model to support audio generation.</p>
         </details>
       </section>
 
@@ -168,7 +160,7 @@
         <div id="timeline" class="timeline"></div>
       </div>
       <div>
-        <h3>AI audio replay (when TTS on)</h3>
+        <h3>AI audio replay</h3>
         <div id="aiAudioList" class="audio-list"></div>
       </div>
       <div>
@@ -178,7 +170,6 @@
         <div class="form-row">
           <label>Pad before <input id="padBeforeSec" type="number" value="0" min="0" max="30" /></label>
           <label>Pad after <input id="padAfterSec" type="number" value="2" min="0" max="30" /></label>
-          <label><input id="generateAudio" type="checkbox" /> Generate AI audio (TTS)</label>
         </div>
         <div class="actions">
           <button id="runFileReplay" class="primary">Run file streaming</button>
