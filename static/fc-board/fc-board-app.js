@@ -341,16 +341,14 @@ function handleToolCallRaw(event) {
   const args = parseArguments(raw.arguments);
   const query = String(args.name || '').trim();
   if (!query) return;
-  const result = executeDisplayObjectOnBoard({ query, toolCallId: event.tool_call_id });
   state.upsert({
     card_id: cardIdFor(event.tool_call_id),
     tool_call_id: event.tool_call_id,
     query,
-    status: 'ready',
-    image: result.image,
+    status: 'searching',
   });
   renderBoard();
-  sendDisplayObjectToolResult({ toolCallId: event.tool_call_id, query });
+  executeDisplayObjectOnBoard({ query, toolCallId: event.tool_call_id });
 }
 
 function handleToolResult(event) {
@@ -367,25 +365,55 @@ function handleToolResult(event) {
   renderBoard();
 }
 
-function executeDisplayObjectOnBoard({ query, toolCallId }) {
-  return {
-    query,
-    image: {
+async function executeDisplayObjectOnBoard({ query, toolCallId }) {
+  let result;
+  try {
+    const response = await fetch('/api/fc_board/tools/display_object_on_board', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name: query, tool_call_id: toolCallId }),
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    result = await response.json();
+  } catch (err) {
+    result = {
       query,
-      asset_id: `client-tool:${toolCallId || query}`,
-      image_url: placeholderImageDataUrl(query),
-      source_url: null,
-      title: query,
-      elapsed_ms: 0,
-      error: null,
-    },
-    error: null,
-  };
+      image: {
+        query,
+        asset_id: `client-tool:${toolCallId || query}`,
+        image_url: placeholderImageDataUrl(query),
+        source_url: null,
+        title: query,
+        elapsed_ms: 0,
+        error: String(err?.message || err),
+      },
+      error: String(err?.message || err),
+      tool_response_content: JSON.stringify({
+        status: 'displayed',
+        name: query,
+        reason: '已在画板显示该对象。',
+      }),
+    };
+  }
+  state.upsert({
+    card_id: cardIdFor(toolCallId),
+    tool_call_id: toolCallId,
+    query: result.query || query,
+    status: result.error ? 'error' : 'ready',
+    image: result.image,
+    error: result.error,
+  });
+  renderBoard();
+  sendDisplayObjectToolResult({
+    toolCallId,
+    query: result.query || query,
+    content: result.tool_response_content,
+  });
 }
 
-function sendDisplayObjectToolResult({ toolCallId, query }) {
+function sendDisplayObjectToolResult({ toolCallId, query, content }) {
   if (!liveClient || !toolCallId) return;
-  const text = JSON.stringify({
+  const text = content || JSON.stringify({
     status: 'displayed',
     name: query,
     reason: '已在画板显示该对象。',

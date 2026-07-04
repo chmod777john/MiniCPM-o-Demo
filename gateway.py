@@ -27,6 +27,7 @@ from urllib.parse import urlencode
 
 import zipfile
 from io import BytesIO
+from pathlib import Path
 
 import httpx
 import numpy as np
@@ -68,6 +69,26 @@ _FC_BOARD_CASE_FOLDER_CANDIDATES = [
     "/home/weihongliang/o45_fc_assets/training/delivery_train_data",
     "/user/weihongliang/o45_fc_assets/training/delivery_train_data",
 ]
+
+_FC_BOARD_LIVE_IMAGE_DIR = (
+    Path(__file__).resolve().parent
+    / "audio_duplex_board"
+    / "tools"
+    / "display_object_on_board"
+    / "live_image_downloads"
+)
+_FC_BOARD_TOOL_SERVICE = None
+
+
+def _fc_board_tool_service():
+    global _FC_BOARD_TOOL_SERVICE
+    if _FC_BOARD_TOOL_SERVICE is None:
+        from audio_duplex_board.tools.display_object_on_board.service import (
+            DisplayObjectOnBoardService,
+        )
+
+        _FC_BOARD_TOOL_SERVICE = DisplayObjectOnBoardService(download_dir=_FC_BOARD_LIVE_IMAGE_DIR)
+    return _FC_BOARD_TOOL_SERVICE
 
 
 def _display_object_tool_default() -> Dict[str, Any]:
@@ -1258,6 +1279,13 @@ static_dir = os.path.join(os.path.dirname(__file__), "static")
 if os.path.exists(static_dir):
     app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
+_FC_BOARD_LIVE_IMAGE_DIR.mkdir(parents=True, exist_ok=True)
+app.mount(
+    "/live-image-downloads",
+    StaticFiles(directory=str(_FC_BOARD_LIVE_IMAGE_DIR)),
+    name="fc_board_live_image_downloads",
+)
+
 
 @app.get("/", response_class=HTMLResponse)
 async def index():
@@ -1366,6 +1394,36 @@ async def fc_board_defaults():
         "default_system_prompt": defaults.get("system_prompt"),
         "default_ref_audio_path": defaults.get("ref_audio_path"),
         "default_tools": defaults.get("tools") or [_display_object_tool_default()],
+    }
+
+
+@app.post("/api/fc_board/tools/display_object_on_board")
+async def fc_board_display_object_tool(payload: Dict[str, Any] = Body(...)):
+    """Execute the board display tool outside the model runtime.
+
+    This endpoint is intentionally part of the frontend/tool layer rather than
+    FcDuplexSessionRuntime. It reuses the standalone MVP search service and
+    returns both the board image payload and the training-aligned tool response
+    string that the client should send back as input.tool_result.
+    """
+
+    query = str(payload.get("name") or payload.get("query") or "").strip()
+    tool_call_id = payload.get("tool_call_id")
+    if not query:
+        raise HTTPException(status_code=400, detail="display_object_on_board requires name/query")
+
+    from audio_duplex_board.tools.display_object_on_board.service import (
+        board_image_result_from_tool_result,
+    )
+
+    result = await asyncio.to_thread(_fc_board_tool_service().search, query)
+    image = board_image_result_from_tool_result(result, tool_call_id=str(tool_call_id or query))
+    image_payload = image.model_dump() if hasattr(image, "model_dump") else image.dict()
+    return {
+        "query": result.query,
+        "image": image_payload,
+        "error": result.error,
+        "tool_response_content": result.tool_response_content,
     }
 
 
