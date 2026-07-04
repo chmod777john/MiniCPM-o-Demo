@@ -231,6 +231,9 @@ body {
   line-height: 1.45;
   color: #2d2d2d;
 }
+.stream-row[open] {
+  background: #fff;
+}
 .stream-row.rx { border-left: 3px solid #1f51a6; }
 .stream-row.tx { border-left: 3px solid #1a7f37; }
 .stream-row.hidden { display: none; }
@@ -239,7 +242,16 @@ body {
   align-items: center;
   gap: 6px;
   margin-bottom: 3px;
+  cursor: pointer;
+  list-style: none;
 }
+.stream-head::-webkit-details-marker { display: none; }
+.stream-head::before {
+  content: "▸";
+  color: #999;
+  font-size: 9px;
+}
+.stream-row[open] .stream-head::before { content: "▾"; }
 .stream-dir {
   font-weight: 700;
   font-size: 9px;
@@ -262,6 +274,20 @@ body {
   white-space: pre-wrap;
   word-break: break-word;
 }
+.stream-json {
+  display: none;
+  margin: 6px 0 0;
+  padding: 8px;
+  max-height: 260px;
+  overflow: auto;
+  border: 1px solid #e6e6df;
+  border-radius: 4px;
+  background: #111827;
+  color: #e5e7eb;
+  font: 10px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
+  white-space: pre;
+}
+.stream-row[open] .stream-json { display: block; }
 
 /* Status line: short live messages */
 .status-line {

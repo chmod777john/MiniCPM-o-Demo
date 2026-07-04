@@ -699,17 +699,20 @@ function appendStreamEvent(direction, event) {
   if (!el.streamFeed) return;
   const placeholder = el.streamFeed.querySelector('.placeholder');
   if (placeholder) placeholder.remove();
-  const row = document.createElement('article');
+  const row = document.createElement('details');
   row.className = `stream-row ${direction}`;
   const type = event.type || '(unknown)';
   row.dataset.category = streamEventCategory(direction, event);
+  const summary = summarizeStreamEvent(event);
+  const json = prettyJson(event);
   row.innerHTML = `
-    <div class="stream-head">
+    <summary class="stream-head">
       <span class="stream-dir">${direction.toUpperCase()}</span>
       <span class="stream-type">${escapeHtml(type)}</span>
       <span class="stream-time">${new Date().toLocaleTimeString()}</span>
-    </div>
-    <div class="stream-body">${escapeHtml(summarizeStreamEvent(event))}</div>
+    </summary>
+    <div class="stream-body">${escapeHtml(summary)}</div>
+    <pre class="stream-json">${escapeHtml(json)}</pre>
   `;
   el.streamFeed.appendChild(row);
   while (el.streamFeed.children.length > 120) {
@@ -797,6 +800,10 @@ function formatRawForSummary(raw) {
 
 function compactJson(value) {
   try { return JSON.stringify(value); } catch (_) { return String(value); }
+}
+
+function prettyJson(value) {
+  try { return JSON.stringify(value, null, 2); } catch (_) { return String(value); }
 }
 
 function scrollNsToBottom() {
