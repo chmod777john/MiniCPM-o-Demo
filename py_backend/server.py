@@ -604,9 +604,9 @@ async def backend_ws(ws: WebSocket) -> None:
             if msg_type == "input.append":
                 await session.push(message)
                 continue
-            if msg_type == "input.tool_result":
+            if msg_type in {"input.tool_result", "input.tool_result.delta", "input.tool_result.done"}:
                 payload = dict(message)
-                payload["type"] = "tool_result"
+                payload["type"] = msg_type.removeprefix("input.")
                 await session.push({"type": "input.append", "input": payload})
                 continue
             # close 只走 HTTP unary 控制通道（见协议 network §3.2），WS 上不接受 close

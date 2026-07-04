@@ -60,6 +60,7 @@ class FcDuplexSessionRuntime:
         self._response_id: Optional[str] = None
         self._tools: List[Dict[str, Any]] = []
         self._pending_tool_responses: List[FcToolResponse] = []
+        self._streaming_tool_results: Dict[str, List[Any]] = {}
         self._api_to_internal: Dict[str, str] = {}
         self._internal_to_api: Dict[str, str] = {}
         self._tool_seq = 0
@@ -72,6 +73,11 @@ class FcDuplexSessionRuntime:
         self._queue_worker: Optional[asyncio.Task[None]] = None
         self._next_input_event = asyncio.Event()
         self._closed = False
+        self._current_block_id: Optional[str] = None
+        self._current_block_kind: Optional[str] = None
+        self._current_tool_call_id: Optional[str] = None
+        self._current_block_streamed = False
+        self._block_seq = 0
 
     async def prepare(self, params: Dict[str, Any]) -> None:
         config = _first_dict(params.get("config"), params.get("duplex"), params.get("fc_duplex"))
@@ -106,8 +112,12 @@ class FcDuplexSessionRuntime:
         if payload_type == "tool_result":
             await self.queue_tool_result(payload)
             return
-        if payload_type in {"tool_result.delta", "tool_result.done"}:
-            raise RuntimeError(f"FC runtime does not support streaming tool results yet: {payload_type}")
+        if payload_type == "tool_result.delta":
+            await self.queue_tool_result_delta(payload)
+            return
+        if payload_type == "tool_result.done":
+            await self.finish_tool_result_stream(payload)
+            return
         await self.enqueue_audio_input(payload)
 
     async def queue_tool_result(self, payload: Dict[str, Any]) -> None:
@@ -119,6 +129,28 @@ class FcDuplexSessionRuntime:
             raise RuntimeError(f"unknown tool_call_id: {api_id}")
         self._pending_tool_responses.append(
             FcToolResponse(call_id=internal_id, content=_contents_to_text(payload.get("contents")))
+        )
+
+    async def queue_tool_result_delta(self, payload: Dict[str, Any]) -> None:
+        api_id = str(payload.get("tool_call_id") or "")
+        if not api_id:
+            raise RuntimeError("input.tool_result.delta requires tool_call_id")
+        if api_id not in self._api_to_internal:
+            raise RuntimeError(f"unknown tool_call_id: {api_id}")
+        self._streaming_tool_results.setdefault(api_id, []).append(payload.get("delta"))
+
+    async def finish_tool_result_stream(self, payload: Dict[str, Any]) -> None:
+        api_id = str(payload.get("tool_call_id") or "")
+        if not api_id:
+            raise RuntimeError("input.tool_result.done requires tool_call_id")
+        internal_id = self._api_to_internal.get(api_id)
+        if not internal_id:
+            raise RuntimeError(f"unknown tool_call_id: {api_id}")
+        deltas = self._streaming_tool_results.pop(api_id, None)
+        if deltas is None:
+            raise RuntimeError(f"tool_result.done without prior delta for tool_call_id: {api_id}")
+        self._pending_tool_responses.append(
+            FcToolResponse(call_id=internal_id, content=_contents_to_text(deltas))
         )
 
     async def enqueue_audio_input(self, payload: Dict[str, Any]) -> None:
@@ -199,7 +231,7 @@ class FcDuplexSessionRuntime:
                     close_reason="budget_reached",
                 )
                 steps.append(step)
-                await self._emit_non_spoken_batch(steps, input_id=input_id)
+                await self._emit_non_spoken_steps(steps, input_id=input_id)
                 return
             step = await asyncio.to_thread(
                 self.backend.fc_duplex_non_spoken_generate,
@@ -214,7 +246,7 @@ class FcDuplexSessionRuntime:
                 NonSpokenStepGenerationFlag.no_action.value,
                 NonSpokenStepGenerationFlag.non_spoken_slot_eos.value,
             }:
-                await self._emit_non_spoken_batch(steps, input_id=input_id)
+                await self._emit_non_spoken_steps(steps, input_id=input_id)
                 return
         step = await asyncio.to_thread(
             self.backend.fc_duplex_non_spoken_generate,
@@ -223,7 +255,7 @@ class FcDuplexSessionRuntime:
             close_reason="budget_reached",
         )
         steps.append(step)
-        await self._emit_non_spoken_batch(steps, input_id=input_id)
+        await self._emit_non_spoken_steps(steps, input_id=input_id)
 
     async def _emit_spoken(self, spoken: Any, *, input_id: Optional[str]) -> None:
         is_listen = bool(getattr(spoken, "is_listen", False))
@@ -279,48 +311,141 @@ class FcDuplexSessionRuntime:
         if bool(getattr(spoken, "spoken_turn_eos", False)):
             await self._send_sp_token("spoken_turn_eos", input_id=input_id)
 
-    async def _emit_non_spoken_batch(self, steps: List[Any], *, input_id: Optional[str]) -> None:
-        token_strs: List[str] = []
-        text_parts: List[str] = []
-        close_reason: Optional[str] = None
-        closed_spans: List[Any] = []
-
+    async def _emit_non_spoken_steps(self, steps: List[Any], *, input_id: Optional[str]) -> None:
         for step in steps:
-            token_strs.extend(str(token) for token in list(getattr(step, "token_strs", None) or []))
-            text = str(getattr(step, "text", "") or "")
-            if text:
-                text_parts.append(text)
-            step_close_reason = getattr(step, "close_reason", None)
-            if step_close_reason:
-                close_reason = str(step_close_reason)
-            closed_spans.extend(list(getattr(step, "closed_spans", None) or []))
+            await self._emit_non_spoken_step(step, input_id=input_id)
 
-        text = "".join(text_parts)
+    async def _emit_non_spoken_step(self, step: Any, *, input_id: Optional[str]) -> None:
+        token_ids = list(getattr(step, "token_ids", None) or [])
+        token_strs = [str(token) for token in list(getattr(step, "token_strs", None) or [])]
+        text = str(getattr(step, "text", "") or "")
+        close_reason = getattr(step, "close_reason", None)
+
         logger.info(
-            "fc_non_spoken_batch input_id=%s n_steps=%d close=%s text=%r token_strs=%s spans=%s",
+            "fc_non_spoken_step input_id=%s close=%s text=%r token_strs=%s spans=%s",
             input_id,
-            len(steps),
             close_reason,
             _short(text),
             _short_list(token_strs),
-            [getattr(span, "type", None) for span in closed_spans],
+            [getattr(span, "type", None) for span in list(getattr(step, "closed_spans", None) or [])],
         )
-        if token_strs or text:
+
+        if token_ids or token_strs or text:
+            await self._emit_non_spoken_delta(
+                token_ids=token_ids,
+                token_strs=token_strs,
+                text=text,
+                input_id=input_id,
+            )
+
+        if close_reason:
+            token = _non_spoken_close_reason_to_sp_token(str(close_reason))
+            if token:
+                await self._send_sp_token(token, input_id=input_id)
+            if str(close_reason) == "abort":
+                await self._abort_current_block(input_id=input_id)
+
+        for span in list(getattr(step, "closed_spans", None) or []):
+            await self._emit_closed_span(span, input_id=input_id)
+
+    async def _emit_non_spoken_delta(
+        self,
+        *,
+        token_ids: List[int],
+        token_strs: List[str],
+        text: str,
+        input_id: Optional[str],
+    ) -> None:
+        kind = self._current_block_kind or _guess_block_kind(token_strs, text)
+        if self._current_block_id is None:
+            await self._begin_block(kind, input_id=input_id)
+        elif kind and self._current_block_kind is None:
+            await self._upgrade_block_kind(kind, input_id=input_id)
+
+        if self._current_block_kind == "think":
+            if text:
+                self._current_block_streamed = True
+                await self._send(
+                    "response.think.delta",
+                    session_id=self.session_id,
+                    response_id=self._response_id,
+                    input_id=input_id,
+                    delta=text,
+                    token_observations=_token_observations(token_ids, token_strs),
+                )
+            return
+
+        if self._current_block_kind == "tool_call":
+            tool_call_id = self._current_tool_call_id or self._current_block_id
+            if text:
+                self._current_block_streamed = True
+                await self._send(
+                    "response.tool_call.args.delta",
+                    session_id=self.session_id,
+                    response_id=self._response_id,
+                    input_id=input_id,
+                    tool_call_id=tool_call_id,
+                    delta=text,
+                    token_observations=_token_observations(token_ids, token_strs),
+                )
+            return
+
+        if text or token_strs:
             await self._send(
-                "response.output.delta",
-                kind="non_spoken",
+                "debug.fc_non_spoken.delta",
                 session_id=self.session_id,
                 response_id=self._response_id,
                 input_id=input_id,
                 text=text,
                 token_strs=token_strs,
+                token_ids=token_ids,
             )
-        if close_reason:
-            token = _non_spoken_close_reason_to_sp_token(close_reason)
-            if token:
-                await self._send_sp_token(token, input_id=input_id)
-        for span in closed_spans:
-            await self._emit_closed_span(span, input_id=input_id)
+
+    async def _begin_block(self, kind: Optional[str], *, input_id: Optional[str]) -> None:
+        self._block_seq += 1
+        self._current_block_id = f"nsb_{self._block_seq:06d}"
+        self._current_block_kind = kind
+        self._current_tool_call_id = None
+        self._current_block_streamed = False
+        if kind == "think":
+            await self._send("response.think.begin", session_id=self.session_id, response_id=self._response_id, input_id=input_id)
+        elif kind == "tool_call":
+            self._current_tool_call_id = self._api_id_for_internal(None)
+            await self._send(
+                "response.tool_call.args.begin",
+                session_id=self.session_id,
+                response_id=self._response_id,
+                input_id=input_id,
+                tool_call_id=self._current_tool_call_id,
+            )
+
+    async def _upgrade_block_kind(self, kind: str, *, input_id: Optional[str]) -> None:
+        self._current_block_kind = kind
+        if kind == "think":
+            await self._send("response.think.begin", session_id=self.session_id, response_id=self._response_id, input_id=input_id)
+        elif kind == "tool_call":
+            self._current_tool_call_id = self._api_id_for_internal(None)
+            await self._send(
+                "response.tool_call.args.begin",
+                session_id=self.session_id,
+                response_id=self._response_id,
+                input_id=input_id,
+                tool_call_id=self._current_tool_call_id,
+            )
+
+    async def _abort_current_block(self, *, input_id: Optional[str]) -> None:
+        if self._current_block_kind == "tool_call" and self._current_tool_call_id:
+            await self._send(
+                "response.tool_call.abort",
+                session_id=self.session_id,
+                response_id=self._response_id,
+                input_id=input_id,
+                tool_call_id=self._current_tool_call_id,
+            )
+        self._current_block_id = None
+        self._current_block_kind = None
+        self._current_tool_call_id = None
+        self._current_block_streamed = False
 
     async def _send_sp_token(self, token: str, *, input_id: Optional[str]) -> None:
         await self._send(
@@ -334,9 +459,10 @@ class FcDuplexSessionRuntime:
     async def _emit_closed_span(self, span: Any, *, input_id: Optional[str]) -> None:
         span_type = getattr(span, "type", None)
         if span_type == "think":
-            await self._send("response.think.begin", session_id=self.session_id, response_id=self._response_id, input_id=input_id)
+            if self._current_block_kind != "think":
+                await self._begin_block("think", input_id=input_id)
             text = str(getattr(span, "text", "") or "")
-            if text:
+            if text and not self._current_block_streamed:
                 await self._send(
                     "response.think.delta",
                     session_id=self.session_id,
@@ -345,21 +471,30 @@ class FcDuplexSessionRuntime:
                     delta=text,
                 )
             await self._send("response.think.end", session_id=self.session_id, response_id=self._response_id, input_id=input_id)
+            self._clear_current_block()
             return
         if span_type != "tool_call":
             return
 
         internal_id = getattr(span, "tool_call_id", None)
-        api_id = self._api_id_for_internal(str(internal_id) if internal_id else None)
+        if self._current_tool_call_id:
+            api_id = self._current_tool_call_id
+            if internal_id:
+                self._internal_to_api[str(internal_id)] = api_id
+                self._api_to_internal[api_id] = str(internal_id)
+        else:
+            api_id = self._api_id_for_internal(str(internal_id) if internal_id else None)
         wire = getattr(span, "wire", None) or ""
-        await self._send(
-            "response.tool_call.args.begin",
-            session_id=self.session_id,
-            response_id=self._response_id,
-            input_id=input_id,
-            tool_call_id=api_id,
-        )
-        if wire:
+        if self._current_block_kind != "tool_call":
+            self._current_tool_call_id = api_id
+            await self._send(
+                "response.tool_call.args.begin",
+                session_id=self.session_id,
+                response_id=self._response_id,
+                input_id=input_id,
+                tool_call_id=api_id,
+            )
+        if wire and not self._current_block_streamed:
             await self._send(
                 "response.tool_call.args.delta",
                 session_id=self.session_id,
@@ -384,6 +519,13 @@ class FcDuplexSessionRuntime:
             tool_call_id=api_id,
             raw=raw,
         )
+        self._clear_current_block()
+
+    def _clear_current_block(self) -> None:
+        self._current_block_id = None
+        self._current_block_kind = None
+        self._current_tool_call_id = None
+        self._current_block_streamed = False
 
     def _api_id_for_internal(self, internal_id: Optional[str]) -> str:
         if internal_id and internal_id in self._internal_to_api:
@@ -462,6 +604,28 @@ def _contents_to_text(contents: Any) -> str:
         else:
             parts.append(str(item))
     return "".join(parts)
+
+
+def _guess_block_kind(token_strs: List[str], text: str) -> Optional[str]:
+    pieces = list(token_strs)
+    if text:
+        pieces.append(text)
+    for piece in pieces:
+        if "think" in piece and "<" in piece:
+            return "think"
+        if "tool_call" in piece and "<" in piece:
+            return "tool_call"
+    return None
+
+
+def _token_observations(token_ids: List[int], token_strs: List[str]) -> Optional[List[Dict[str, Any]]]:
+    if not token_ids:
+        return None
+    observations = []
+    for index, token_id in enumerate(token_ids):
+        text = token_strs[index] if index < len(token_strs) else ""
+        observations.append({"id": int(token_id), "text": text})
+    return observations
 
 
 def _short(value: str, limit: int = 300) -> str:

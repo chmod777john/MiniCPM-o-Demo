@@ -90,7 +90,8 @@ def _input_payload(message: Dict[str, Any]) -> Dict[str, Any]:
 
 def _tool_result_payload(message: Dict[str, Any]) -> Dict[str, Any]:
     payload = dict(message)
-    payload["type"] = "tool_result"
+    msg_type = str(message.get("type") or "")
+    payload["type"] = msg_type.removeprefix("input.") or "tool_result"
     return payload
 
 
@@ -240,7 +241,7 @@ async def _handle_remote_backend_runtime_ws(
                     await runtime.push(_input_payload(msg))
                     continue
 
-                if msg_type == "input.tool_result":
+                if msg_type in {"input.tool_result", "input.tool_result.delta", "input.tool_result.done"}:
                     await runtime.push(_tool_result_payload(msg))
                     continue
 

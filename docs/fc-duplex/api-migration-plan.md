@@ -536,6 +536,15 @@ backend runtime 只把 `contents[*].text` 拼成模型输入文本，不理解/�
 
 这属于 view 之上的 session/runtime 节奏控制；token 合法性、special token 插入和 `budget_reached` 如何进入模型上下文仍属于 `FcDuplexCapability` / modeling 层。
 
+当前 `tool-api` 实现状态：
+
+- `FcDuplexSessionRuntime` 按 MVP session 的主循环执行 `prefill -> spoken -> non-spoken loop -> finalize`。
+- `latency` 模式下 audio 输入进入单元素待处理队列；新 chunk 到来会触发当前 non-spoken loop 以 `budget_reached` 收束，并保留最新待处理 chunk。
+- `quality` 模式下 audio 输入按队列顺序处理，不丢弃待处理 chunk。
+- `response.output.delta kind=non_spoken` 已从 backend 正式输出中移除；未能实时归类到 think/tool_call 的中间 token 只通过 `debug.fc_non_spoken.delta` 观察。
+- `input.tool_result` 与 `input.tool_result.delta/done` 都已接入；流式 tool result 在 backend 聚合到 `done` 后作为完整 `FcToolResponse` 注入下一次 prefill。
+- `MiniCPMO45/modeling_minicpmo_unified.py`、`core/processors/unified.py`、`core/schemas/fc_duplex.py` 与 clean MVP worktree 保持字面一致，view 以下没有为 API 外周额外 fork。
+
 ## 第二阶段：验证 `tool-api` 行为
 
 验证重点：
