@@ -68,6 +68,8 @@ const el = {
   kvTools: document.getElementById('kvTools'),
   systemPrompt: document.getElementById('systemPrompt'),
   refAudioPath: document.getElementById('refAudioPath'),
+  nonSpokenScheduling: document.getElementById('nonSpokenScheduling'),
+  nonSpokenBudget: document.getElementById('nonSpokenBudget'),
   resetSystemPrompt: document.getElementById('resetSystemPrompt'),
   resetRefAudio: document.getElementById('resetRefAudio'),
   debugToggle: document.getElementById('debugToggle'),
@@ -197,6 +199,10 @@ async function createRealtimeSession() {
 
 function buildSessionInitPayload() {
   const refAudioPath = (el.refAudioPath?.value || '').trim();
+  const nonSpokenScheduling = ['quality', 'latency'].includes(el.nonSpokenScheduling?.value)
+    ? el.nonSpokenScheduling.value
+    : 'quality';
+  const nonSpokenBudget = clampInt(el.nonSpokenBudget?.value, 1, 512, 12);
   const payload = {
     mode: 'full_duplex',
     fc_duplex: true,
@@ -206,10 +212,10 @@ function buildSessionInitPayload() {
     config: {
       runtime: 'fc_duplex',
       auto_execute_tools: false,
-      non_spoken_scheduling: 'quality',
+      non_spoken_scheduling: nonSpokenScheduling,
       sample_rate: 16000,
       max_spoken_tokens: 24,
-      non_spoken_budget_per_unit: 12,
+      non_spoken_budget_per_unit: nonSpokenBudget,
       decode_mode: 'greedy',
     },
   };
@@ -823,6 +829,12 @@ function formatRawForSummary(raw) {
 
 function compactJson(value) {
   try { return JSON.stringify(value); } catch (_) { return String(value); }
+}
+
+function clampInt(value, min, max, fallback) {
+  const parsed = Number.parseInt(String(value ?? ''), 10);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(min, Math.min(max, parsed));
 }
 
 function prettyJson(value) {

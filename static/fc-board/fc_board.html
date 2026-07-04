@@ -66,6 +66,21 @@
           <p class="hint">Optional. Empty means the backend uses its default reference audio.</p>
           <button id="resetRefAudio" class="ctrl-btn tiny">Clear</button>
         </details>
+        <details class="cfg-group">
+          <summary>Runtime</summary>
+          <label class="field-row">
+            <span>Mode</span>
+            <select id="nonSpokenScheduling">
+              <option value="quality" selected>Quality</option>
+              <option value="latency">Latency</option>
+            </select>
+          </label>
+          <label class="field-row">
+            <span>Budget</span>
+            <input id="nonSpokenBudget" type="number" min="1" max="512" step="1" value="12" />
+          </label>
+          <p class="hint">Budget is non-spoken decode steps per audio unit. MVP hard cap was 200.</p>
+        </details>
       </section>
 
       <section class="panel stream-panel">

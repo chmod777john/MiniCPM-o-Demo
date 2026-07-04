@@ -678,7 +678,9 @@ body {
 }
 .cfg-group summary::marker { color: #ccc; }
 .cfg-group textarea,
-.cfg-group input[type="text"] {
+.cfg-group input[type="text"],
+.cfg-group input[type="number"],
+.cfg-group select {
   width: 100%;
   margin: 6px 0;
   padding: 6px 8px;
@@ -691,7 +693,8 @@ body {
   resize: vertical;
 }
 .cfg-group textarea:focus,
-.cfg-group input:focus {
+.cfg-group input:focus,
+.cfg-group select:focus {
   outline: none;
   border-color: #aaa;
   background: #fff;
@@ -709,6 +712,18 @@ body {
   color: #2d2d2d;
   margin: 6px 0;
   cursor: pointer;
+}
+.cfg-group .field-row {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  margin: 6px 0;
+  color: #2d2d2d;
+}
+.cfg-group .field-row span {
+  color: #666;
+  font-size: 11px;
 }
 .ctrl-btn.tiny {
   font-size: 10px;
