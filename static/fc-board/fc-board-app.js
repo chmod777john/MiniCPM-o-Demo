@@ -70,6 +70,9 @@ const el = {
   refAudioPath: document.getElementById('refAudioPath'),
   nonSpokenScheduling: document.getElementById('nonSpokenScheduling'),
   nonSpokenBudget: document.getElementById('nonSpokenBudget'),
+  debugBudgetUsed: document.getElementById('debugBudgetUsed'),
+  debugBudgetMax: document.getElementById('debugBudgetMax'),
+  debugBudgetUpdated: document.getElementById('debugBudgetUpdated'),
   resetSystemPrompt: document.getElementById('resetSystemPrompt'),
   resetRefAudio: document.getElementById('resetRefAudio'),
   debugToggle: document.getElementById('debugToggle'),
@@ -300,6 +303,9 @@ function applyApiEvent(event) {
     case 'response.output.sp_tokens':
       handleSpToken(event);
       return;
+    case 'response.debug':
+      handleDebugEvent(event);
+      return;
     default:
       return;
   }
@@ -333,6 +339,19 @@ function handleSpToken(event) {
   const token = String(event.token || '');
   if (['no_action', 'non_spoken_eos', 'non_spoken_budget_reached', 'non_spoken_hold', 'non_spoken_abort'].includes(token)) {
     closeActiveNonSpokenBlock();
+  }
+}
+
+function handleDebugEvent(event) {
+  const debug = event.debug || {};
+  if ('used' in debug && el.debugBudgetUsed) {
+    el.debugBudgetUsed.textContent = formatMaybeNumber(debug.used);
+  }
+  if ('estimated_max_budget_1s' in debug && el.debugBudgetMax) {
+    el.debugBudgetMax.textContent = formatMaybeNumber(debug.estimated_max_budget_1s);
+  }
+  if (el.debugBudgetUpdated) {
+    el.debugBudgetUpdated.textContent = new Date().toLocaleTimeString();
   }
 }
 
@@ -768,6 +787,7 @@ function streamEventCategory(direction, event) {
   if (type.startsWith('session.')) return 'session';
   if (type.startsWith('input.')) return 'input';
   if (type === 'response.output.sp_tokens') return 'sp';
+  if (type === 'response.debug') return 'debug';
   if (type === 'response.output.delta') return 'output';
   if (type.startsWith('response.think')) return 'think';
   if (type.startsWith('response.tool_call')) return 'tool_call';
@@ -808,6 +828,10 @@ function summarizeStreamEvent(event) {
   }
   if (type === 'response.output.sp_tokens') {
     return `token=${event.token || '-'}`;
+  }
+  if (type === 'response.debug') {
+    const debug = event.debug || {};
+    return `used=${formatMaybeNumber(debug.used)} · max/1s=${formatMaybeNumber(debug.estimated_max_budget_1s)}`;
   }
   if (type === 'session.created') {
     return `session_id=${event.session_id || '-'} · mode=${event.mode || '-'}`;
@@ -909,6 +933,12 @@ function writeAscii(view, offset, value) {
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function formatMaybeNumber(value) {
+  if (value === null || value === undefined || value === '') return '—';
+  if (typeof value === 'number' && Number.isFinite(value)) return String(Math.round(value));
+  return String(value);
 }
 
 function escapeHtml(value) {

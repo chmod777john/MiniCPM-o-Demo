@@ -83,6 +83,15 @@
         </details>
       </section>
 
+      <section class="panel runtime-debug-panel">
+        <div class="panel-title">Runtime debug</div>
+        <ul class="kv runtime-debug-kv">
+          <li><span class="k">Used</span><span class="v" id="debugBudgetUsed">—</span></li>
+          <li><span class="k">Max / 1s</span><span class="v" id="debugBudgetMax">—</span></li>
+          <li><span class="k">Updated</span><span class="v" id="debugBudgetUpdated">—</span></li>
+        </ul>
+      </section>
+
       <section class="panel stream-panel">
         <div class="panel-title">
           Realtime Stream
@@ -98,6 +107,7 @@
             <option value="input">Input</option>
             <option value="output">Output delta</option>
             <option value="sp">SP tokens</option>
+            <option value="debug">Debug</option>
             <option value="think">Think</option>
             <option value="tool_call">Tool call</option>
             <option value="tool_result">Tool result</option>

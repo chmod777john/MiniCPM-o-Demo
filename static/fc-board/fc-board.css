@@ -190,6 +190,13 @@ body {
   text-overflow: ellipsis;
 }
 
+.runtime-debug-panel {
+  flex: 0 0 auto;
+}
+.runtime-debug-kv .v {
+  font-size: 12px;
+}
+
 .stream-panel {
   flex: 1 1 0;
   min-height: 160px;
