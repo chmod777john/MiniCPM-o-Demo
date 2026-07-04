@@ -35,6 +35,7 @@ let micPeakSinceStart = 0;
 let blockSeq = 0;
 let activeNonSpokenBlockId = null;
 let fcBoardDefaults = null;
+let micLiveState = 'idle';
 const speechQueue = [];
 let speechDrainer = null;
 
@@ -83,6 +84,7 @@ function initPage() {
   el.kvTools.textContent = DISPLAY_OBJECT_TOOL.function.name;
   applyDefaults({});
   setWsState('idle');
+  setMicLiveState('idle');
   setStatus('Loading defaults…');
   renderBoard();
   loadFcBoardDefaults();
@@ -103,6 +105,8 @@ el.debugToggle?.addEventListener('click', () => {
 el.streamFilter?.addEventListener('change', applyStreamFilter);
 
 el.startMicLive.addEventListener('click', async () => {
+  if (micLiveState !== 'idle' && micLiveState !== 'stopped' && micLiveState !== 'closed' && micLiveState !== 'error') return;
+  setMicLiveState('starting');
   clearViews();
   resetMicPeak();
   try {
@@ -130,15 +134,16 @@ el.startMicLive.addEventListener('click', async () => {
       onStatus: setStatus,
     });
     await micProvider.start();
-    setMicState('live');
+    setMicLiveState('live');
     setStatus('Listening via /v1/realtime · mention concrete objects for the board');
   } catch (err) {
     setStatus(`Mic live error: ${err.message}`);
-    stopMicLive();
+    stopMicLive('error');
   }
 });
 
 el.stopMicLive.addEventListener('click', () => {
+  if (micLiveState === 'idle' || micLiveState === 'stopped' || micLiveState === 'closed') return;
   stopMicLive();
   setStatus('Stopped');
 });
@@ -255,6 +260,7 @@ function applyApiEvent(event) {
       return;
     case 'session.closed':
       setWsState('closed');
+      releaseMicLive('closed');
       setStatus(`Session closed: ${event.reason || 'closed'}`);
       return;
     case 'response.output.delta':
@@ -609,7 +615,8 @@ function appendAiAudio(index, audioBase64, sampleRate) {
   el.aiAudioList.appendChild(wrap);
 }
 
-function stopMicLive() {
+function stopMicLive(finalState = 'stopped') {
+  setMicLiveState('stopping');
   if (micProvider) {
     micProvider.stop();
     micProvider = null;
@@ -618,8 +625,17 @@ function stopMicLive() {
     try { liveClient.close('mic_live_stopped'); } catch (_) {}
     liveClient = null;
   }
-  setMicState('stopped');
+  setMicLiveState(finalState);
   setWsState('closed');
+}
+
+function releaseMicLive(finalState = 'closed') {
+  if (micProvider) {
+    micProvider.stop();
+    micProvider = null;
+  }
+  liveClient = null;
+  setMicLiveState(finalState);
 }
 
 function clearViews() {
@@ -652,6 +668,18 @@ function setMicState(state) {
     el.statusLamp.classList.remove('live');
     if (label) label.textContent = state ? state.toUpperCase() : 'IDLE';
   }
+}
+
+function setMicLiveState(state) {
+  micLiveState = state;
+  setMicState(state);
+  updateControlState();
+}
+
+function updateControlState() {
+  const active = micLiveState === 'starting' || micLiveState === 'live' || micLiveState === 'stopping';
+  if (el.startMicLive) el.startMicLive.disabled = active;
+  if (el.stopMicLive) el.stopMicLive.disabled = !active || micLiveState === 'stopping';
 }
 
 function setWsState(state) {
