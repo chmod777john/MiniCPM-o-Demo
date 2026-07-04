@@ -24,6 +24,7 @@ const DISPLAY_OBJECT_TOOL = {
 const state = new BoardState({ maxCards: 6 });
 const nonSpokenBlocks = new Map();
 const toolCallBlocks = new Map();
+const streamEvents = new Map();
 const audioPlayer = new AudioPlayer({ outputSampleRate: 24000 });
 
 let liveClient = null;
@@ -36,6 +37,7 @@ let blockSeq = 0;
 let activeNonSpokenBlockId = null;
 let fcBoardDefaults = null;
 let micLiveState = 'idle';
+let streamEventSeq = 0;
 const speechQueue = [];
 let speechDrainer = null;
 
@@ -60,6 +62,10 @@ const el = {
   timeline: document.getElementById('timeline'),
   streamFeed: document.getElementById('streamFeed'),
   streamFilter: document.getElementById('streamFilter'),
+  streamEventDialog: document.getElementById('streamEventDialog'),
+  streamEventModalDir: document.getElementById('streamEventModalDir'),
+  streamEventModalType: document.getElementById('streamEventModalType'),
+  streamEventModalJson: document.getElementById('streamEventModalJson'),
   board: document.getElementById('board'),
   aiSpeech: document.getElementById('aiSpeech'),
   nsStream: document.getElementById('nonSpokenStream'),
@@ -108,6 +114,18 @@ el.debugToggle?.addEventListener('click', () => {
 });
 
 el.streamFilter?.addEventListener('change', applyStreamFilter);
+
+el.streamFeed?.addEventListener('click', (event) => {
+  const button = event.target.closest('[data-action="open-stream-event"]');
+  if (!button) return;
+  event.preventDefault();
+  event.stopPropagation();
+  openStreamEventDialog(button.dataset.eventId);
+});
+
+el.streamEventDialog?.addEventListener('click', (event) => {
+  if (event.target === el.streamEventDialog) el.streamEventDialog.close();
+});
 
 el.startMicLive.addEventListener('click', async () => {
   if (micLiveState !== 'idle' && micLiveState !== 'stopped' && micLiveState !== 'closed' && micLiveState !== 'error') return;
@@ -747,8 +765,11 @@ function appendStreamEvent(direction, event) {
   if (!el.streamFeed) return;
   const placeholder = el.streamFeed.querySelector('.placeholder');
   if (placeholder) placeholder.remove();
+  const eventId = `stream_evt_${++streamEventSeq}`;
+  streamEvents.set(eventId, { direction, event });
   const row = document.createElement('details');
   row.className = `stream-row ${direction}`;
+  row.dataset.eventId = eventId;
   const type = event.type || '(unknown)';
   row.dataset.category = streamEventCategory(direction, event);
   const summary = summarizeStreamEvent(event);
@@ -758,16 +779,27 @@ function appendStreamEvent(direction, event) {
       <span class="stream-dir">${direction.toUpperCase()}</span>
       <span class="stream-type">${escapeHtml(type)}</span>
       <span class="stream-time">${new Date().toLocaleTimeString()}</span>
+      <button class="stream-open" type="button" data-action="open-stream-event" data-event-id="${eventId}" title="Open event">Open</button>
     </summary>
     <div class="stream-body">${escapeHtml(summary)}</div>
     <pre class="stream-json">${escapeHtml(json)}</pre>
   `;
   el.streamFeed.appendChild(row);
-  while (el.streamFeed.children.length > 120) {
-    el.streamFeed.firstElementChild?.remove();
-  }
   applyStreamFilter();
   el.streamFeed.scrollTop = el.streamFeed.scrollHeight;
+}
+
+function openStreamEventDialog(eventId) {
+  const record = streamEvents.get(eventId);
+  if (!record || !el.streamEventDialog || !el.streamEventModalJson) return;
+  const type = record.event.type || '(unknown)';
+  if (el.streamEventModalDir) {
+    el.streamEventModalDir.textContent = record.direction.toUpperCase();
+    el.streamEventModalDir.className = `stream-dir ${record.direction}`;
+  }
+  if (el.streamEventModalType) el.streamEventModalType.textContent = type;
+  el.streamEventModalJson.textContent = prettyJson(record.event);
+  el.streamEventDialog.showModal();
 }
 
 function applyStreamFilter() {
