@@ -243,7 +243,7 @@ await edge_tts.Communicate(USER_TEXT, "zh-CN-XiaoxiaoNeural").save(str(path))
 
 ### Standalone MVP 外周不应整体迁入
 
-`audio_duplex_board` 是独立 demo 应用，不是正式 backend/gateway API 体系。
+旧 `audio_duplex_board` 是独立 demo 应用，不是正式 backend/gateway API 体系；当前分支已移除该 standalone 目录，历史参考保留在 `/user/weihongliang/MiniCPM-o-Demo-o45-fc-try`。
 
 不应作为最终主入口迁入：
 
@@ -253,7 +253,7 @@ await edge_tts.Communicate(USER_TEXT, "zh-CN-XiaoxiaoNeural").save(str(path))
 - `audio_duplex_board/remote_view.py`
 - `audio_duplex_board/ws_remote_view.py`
 
-这些文件可以作为参考，但正式路径应落在 `py_backend/server.py`、`worker.py`、`gateway.py` 和 runtime/API 事件体系中。
+这些文件只作为历史参考，不在当前正式分支保留。正式路径应落在 `py_backend/server.py`、`worker.py`、`gateway.py` 和 runtime/API 事件体系中。
 
 ## 应吸收的逻辑
 
@@ -270,7 +270,7 @@ await edge_tts.Communicate(USER_TEXT, "zh-CN-XiaoxiaoNeural").save(str(path))
 
 ### 来自 `audio_duplex_board/tools/display_object_on_board/service.py`
 
-可以第一阶段直接 import。
+已迁入当前分支的 demo 层：`demos/fc_board/tools/display_object_on_board/service.py`。
 
 价值：
 
@@ -280,7 +280,7 @@ await edge_tts.Communicate(USER_TEXT, "zh-CN-XiaoxiaoNeural").save(str(path))
 
 注意：
 
-- 下载目录最好改为 API runtime 自己的数据目录，避免继续落在 `audio_duplex_board/tools/.../live_image_downloads`。
+- 下载目录已改到 `demos/fc_board/tools/display_object_on_board/live_image_downloads`，不再落在旧 standalone 目录。
 - 后续如果正式 API 由 client/runtime 执行工具，则该 service 可以退化为本地 demo tool executor，而不是 backend 必需组件。
 
 ### 来自 `audio_duplex_board/schemas.py` 和 `events.py`
@@ -559,7 +559,7 @@ backend runtime 只把 `contents[*].text` 拼成模型输入文本，不理解/�
 
 对齐方式：
 
-- 保留 `audio_duplex_board/session.py` 作为行为参考。
+- 使用 `/user/weihongliang/MiniCPM-o-Demo-o45-fc-try/audio_duplex_board/session.py` 作为行为参考；当前分支不再保留 standalone 目录。
 - 对复制出的 runtime 核心函数做文本 diff。
 - 如果行为异常，优先对比 per-unit 调度、stop/budget、pending tool response 注入时机。
 
@@ -621,7 +621,7 @@ MiniCPMO / FcDuplexCapability
 - polling、时钟、budget 决策放在 runtime/session 层。
 - special token 的具体补齐放在 view/capability 层。
 - gateway/worker 不放业务 tool-call 状态机。
-- `audio_duplex_board` 保留为参考和 debug demo，不作为正式 API 架构的一部分。
+- 旧 `audio_duplex_board` 不作为正式 API 架构的一部分，也不在当前分支保留；需要对照时使用 `o45-fc-try` worktree。
 
 ## 2026-07-02 本轮最小实现状态
 

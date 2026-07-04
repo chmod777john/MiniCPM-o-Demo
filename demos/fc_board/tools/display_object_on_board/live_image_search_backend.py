@@ -2,8 +2,8 @@
 
 本文件是从 swy-dev 仓库
 `omni_agent_research/minicpm_o5_dataset/display_object_on_board_midtrain/display_object_tool/live_image_search_backend.py`
-复制而来，使外部 Demo repo 的 audio_duplex_board 原型应用不再依赖 swy-dev 绝对路径
-import。两份代码应保持同步；后续应在两边都改并同步提交。
+复制而来，使 FC board demo 不再依赖 swy-dev 绝对路径 import。两份代码应保持同步；
+后续应在两边都改并同步提交。
 
 本模块为 `display_object_on_board` 提供"实时搜图"能力：调用方传入 `query_text`，
 后端实时请求图片搜索源，下载排名靠前的候选并返回相关性较高、下载成功的一张图片。

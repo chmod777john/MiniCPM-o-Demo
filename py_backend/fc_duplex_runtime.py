@@ -1,7 +1,7 @@
 """Minimal FC duplex runtime for the backend protocol server.
 
-This module adapts the standalone audio_duplex_board scheduling pattern to the
-backend protocol without importing the standalone server/web stack.  It keeps the
+This module adapts the standalone FC board MVP scheduling pattern to the
+backend protocol without importing the old standalone server/web stack. It keeps the
 model-facing FC primitive calls intact and only owns API event shaping plus the
 external-tool-id to internal-tool-id mapping.
 """
