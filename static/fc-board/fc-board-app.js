@@ -782,7 +782,7 @@ function openStreamDialog() {
   }
   el.streamModalList.innerHTML = records.map((record, index) => {
     const type = record.event.type || '(unknown)';
-    return `<details class="stream-row ${record.direction} modal-stream-row" open>
+    return `<details class="stream-row ${record.direction} modal-stream-row">
       ${renderStreamRowContent({
         direction: record.direction,
         event: record.event,
@@ -811,10 +811,18 @@ function renderStreamRowContent({ direction, event, type, timeText }) {
 }
 
 function renderStreamEventMedia(event) {
-  if (event.type !== 'response.output.delta' || event.kind !== 'audio' || !event.audio) return '';
-  const sampleRate = Number(event.sample_rate || 24000);
+  let audioBase64 = '';
+  let sampleRate = 24000;
+  if (event.type === 'response.output.delta' && event.kind === 'audio' && event.audio) {
+    audioBase64 = event.audio;
+    sampleRate = Number(event.sample_rate || 24000);
+  } else if (event.type === 'input.append' && event.input?.audio_base64) {
+    audioBase64 = event.input.audio_base64;
+    sampleRate = Number(event.input.sample_rate || 16000);
+  }
+  if (!audioBase64) return '';
   try {
-    const wavBase64 = float32Base64ToWavBase64(event.audio, sampleRate);
+    const wavBase64 = float32Base64ToWavBase64(audioBase64, sampleRate);
     return `<div class="stream-media"><audio controls src="data:audio/wav;base64,${wavBase64}"></audio></div>`;
   } catch (err) {
     return `<div class="stream-media error">audio decode failed: ${escapeHtml(err?.message || err)}</div>`;
