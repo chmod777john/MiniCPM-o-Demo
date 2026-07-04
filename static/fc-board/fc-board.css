@@ -192,9 +192,45 @@ body {
 
 .runtime-debug-panel {
   flex: 0 0 auto;
+  gap: 8px;
+  padding: 10px;
 }
-.runtime-debug-kv .v {
-  font-size: 12px;
+.runtime-debug-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: #8a8a83;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0;
+}
+.runtime-metrics {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+.runtime-metric {
+  min-width: 0;
+  border: 1px solid #ecece5;
+  border-radius: 6px;
+  background: #fbfbf7;
+  padding: 8px;
+}
+.runtime-metric .metric-label {
+  display: block;
+  color: #92928a;
+  font-size: 10px;
+  line-height: 1.2;
+  text-transform: uppercase;
+}
+.runtime-metric strong {
+  display: block;
+  margin-top: 3px;
+  color: #242424;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 18px;
+  line-height: 1.05;
+  font-weight: 650;
 }
 
 .stream-panel {

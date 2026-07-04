@@ -84,12 +84,20 @@
       </section>
 
       <section class="panel runtime-debug-panel">
-        <div class="panel-title">Runtime debug</div>
-        <ul class="kv runtime-debug-kv">
-          <li><span class="k">Used</span><span class="v" id="debugBudgetUsed">—</span></li>
-          <li><span class="k">Max / 1s</span><span class="v" id="debugBudgetMax">—</span></li>
-          <li><span class="k">Updated</span><span class="v" id="debugBudgetUpdated">—</span></li>
-        </ul>
+        <div class="runtime-debug-head">
+          <span>Runtime</span>
+          <span id="debugBudgetUpdated">—</span>
+        </div>
+        <div class="runtime-metrics">
+          <div class="runtime-metric">
+            <span class="metric-label">used</span>
+            <strong id="debugBudgetUsed">—</strong>
+          </div>
+          <div class="runtime-metric">
+            <span class="metric-label">max / 1s</span>
+            <strong id="debugBudgetMax">—</strong>
+          </div>
+        </div>
       </section>
 
       <section class="panel stream-panel">
