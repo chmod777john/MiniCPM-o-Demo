@@ -755,6 +755,44 @@ model.safetensors.index.json
 /home/weihongliang/o45_fc_assets/sdk/src
 ```
 
+## SDK 与当前推理代码的保障边界
+
+根据 `minicpm_o5_sdk` guidebook 的推理章节，FC/O5 duplex 推理最硬的不变量是：训练时构造出的 token id 流必须和推理时喂给模型的 token id 流按位一致。它特别强调不要把 HF `AutoTokenizer.from_pretrained(...)` 当成 duplex 协议 tokenizer 直接使用，因为：
+
+- HF added token longest-match 可能把用户普通文本里的 `<image>` / `<tool_call>` / `<think>` 等字面误编码成协议 control token id。
+- BPE 是相邻 token greedy merge，`encode(chunk1) + encode(chunk2)` 不保证等于 `encode(chunk1 + chunk2)`；unit/budget 切分如果由 runtime 自己按字符串切，会造成训练和推理 token 边界漂移。
+- tool definitions、tool call、tool response 等模型可见字符串必须复用 SDK 的 stringify / normalize / serializer 入口，不能各层自己拼一个“看起来等价”的格式。
+
+当前 `tool-api` 代码已经接入了 SDK 的一部分硬事实，但不是全链路由 SDK 协议状态机兜底：
+
+| guidebook 事项 | 当前代码是否由 SDK 保证 | 当前落点 |
+|---|---:|---|
+| special token id 不手猜 | 基本是 | `MiniCPMO45/modeling_minicpmo_unified.py` 的 `FcDuplexCapability._ensure_protocol()` 使用 `load_builtin_o45_fc_tokenizer()` 和 `O5SpecialTokenRegistry.from_tokenizer(...)`。 |
+| ordinary content 不撞 control id | 基本是 | `FcDuplexCapability.encode_text()` 调 SDK `encode_ordinary_with_offsets()`；`decode_text()` 调 SDK `decode_ordinary()`。 |
+| tool definition / tool call serializer | 部分是 | `get_o5_tool_serializer()` 用于 tool system block 渲染和 tool call deserialize。 |
+| tool response content normalize | 是 | `_input_event_slot_ids()` 里调用 `normalize_tool_response_content(raw)`。 |
+| target 显式选择 | 当前写死 O45_FC | FC MVP 当前使用 `load_builtin_o45_fc_tokenizer()` / `O5TokenizerID.O45_FC`；未来切 O5 需要显式替换，不应靠路径猜。 |
+| 实时推理完整走 SDK `tokenize_training_data(...)` | 否 | 实时 prefill 仍由 `FcDuplexCapability` 手写 `_system_prefill_parts()`、`_unit_input_ids()`、`_input_event_slot_ids()` 等 skeleton。 |
+| unit-aware budget / BPE 切分完全由 SDK pipeline 保证 | 不完全 | 单段 ordinary encode 用 SDK；但 unit/budget 调度和 slot 组织由推理代码手写。只要不自行把长 content 字符串切碎再分别 encode，风险较低，但不是 SDK 全链路兜底。 |
+| decode 输出用 SDK streaming parser | 否 | `FcDuplexCapability` 自己维护 `_non_spoken_mode`、`_think_buf`、`_tool_call_buf` 并产生 `closed_spans`。 |
+| API 层跨 unit open span 状态 | 否 | `py_backend/fc_duplex_runtime.py` 没有 import SDK，也没有完整复用 standalone MVP `session.py` 的 block 状态机；它只根据 `closed_spans` 发 API event。 |
+
+因此，当前结构应理解为：
+
+```text
+py_backend/fc_duplex_runtime.py
+  手写 session 调度 / budget / API event
+      ↓
+core/processors/unified.py FcDuplexView
+  thin wrapper
+      ↓
+MiniCPMO45/modeling_minicpmo_unified.py FcDuplexCapability
+  使用 SDK tokenizer / special token registry / tool serializer
+  但 prefill skeleton、unit slot、non-spoken 状态机仍主要手写
+```
+
+这意味着：SDK 已经保护了 token id、ordinary encode、special token、tool serializer 这些底层协议事实；但 budget 跨 unit 的 open span、tool-call streaming event、API id 映射和前端可见事件仍由 `py_backend/fc_duplex_runtime.py` / MVP session 逻辑负责。后续如果出现 tool-call 片段泄露到 speech、budget 后 span 类型丢失、或 API 事件不符合正式协议，不能简单归因于“SDK 已经保证”，需要检查 runtime/session 状态机。
+
 启动 backend 时需要把它加入 `PYTHONPATH`，否则 `session.init` 会报：
 
 ```text
