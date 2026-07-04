@@ -65,7 +65,7 @@ const el = {
   openStreamDialog: document.getElementById('openStreamDialog'),
   streamDialog: document.getElementById('streamDialog'),
   streamModalCount: document.getElementById('streamModalCount'),
-  streamModalJson: document.getElementById('streamModalJson'),
+  streamModalList: document.getElementById('streamModalList'),
   board: document.getElementById('board'),
   aiSpeech: document.getElementById('aiSpeech'),
   nsStream: document.getElementById('nonSpokenStream'),
@@ -768,34 +768,57 @@ function appendStreamEvent(direction, event) {
   row.dataset.eventId = eventId;
   const type = event.type || '(unknown)';
   row.dataset.category = streamEventCategory(direction, event);
-  const summary = summarizeStreamEvent(event);
-  const json = prettyJson(event);
-  row.innerHTML = `
-    <summary class="stream-head">
-      <span class="stream-dir">${direction.toUpperCase()}</span>
-      <span class="stream-type">${escapeHtml(type)}</span>
-      <span class="stream-time">${new Date().toLocaleTimeString()}</span>
-    </summary>
-    <div class="stream-body">${escapeHtml(summary)}</div>
-    <pre class="stream-json">${escapeHtml(json)}</pre>
-  `;
+  row.innerHTML = renderStreamRowContent({ direction, event, type, timeText: new Date().toLocaleTimeString() });
   el.streamFeed.appendChild(row);
   applyStreamFilter();
   el.streamFeed.scrollTop = el.streamFeed.scrollHeight;
 }
 
 function openStreamDialog() {
-  if (!el.streamDialog || !el.streamModalJson) return;
-  const records = [...streamEvents.values()].map((record, index) => ({
-    index: index + 1,
-    direction: record.direction,
-    event: record.event,
-  }));
+  if (!el.streamDialog || !el.streamModalList) return;
+  const records = [...streamEvents.values()];
   if (el.streamModalCount) {
     el.streamModalCount.textContent = `${records.length} event${records.length === 1 ? '' : 's'}`;
   }
-  el.streamModalJson.textContent = prettyJson(records);
+  el.streamModalList.innerHTML = records.map((record, index) => {
+    const type = record.event.type || '(unknown)';
+    return `<details class="stream-row ${record.direction} modal-stream-row" open>
+      ${renderStreamRowContent({
+        direction: record.direction,
+        event: record.event,
+        type,
+        timeText: `#${index + 1}`,
+      })}
+    </details>`;
+  }).join('') || '<div class="placeholder">No stream events yet</div>';
   el.streamDialog.showModal();
+}
+
+function renderStreamRowContent({ direction, event, type, timeText }) {
+  const summary = summarizeStreamEvent(event);
+  const json = prettyJson(event);
+  const media = renderStreamEventMedia(event);
+  return `
+    <summary class="stream-head">
+      <span class="stream-dir">${direction.toUpperCase()}</span>
+      <span class="stream-type">${escapeHtml(type)}</span>
+      <span class="stream-time">${escapeHtml(timeText)}</span>
+    </summary>
+    <div class="stream-body">${escapeHtml(summary)}</div>
+    ${media}
+    <pre class="stream-json">${escapeHtml(json)}</pre>
+  `;
+}
+
+function renderStreamEventMedia(event) {
+  if (event.type !== 'response.output.delta' || event.kind !== 'audio' || !event.audio) return '';
+  const sampleRate = Number(event.sample_rate || 24000);
+  try {
+    const wavBase64 = float32Base64ToWavBase64(event.audio, sampleRate);
+    return `<div class="stream-media"><audio controls src="data:audio/wav;base64,${wavBase64}"></audio></div>`;
+  } catch (err) {
+    return `<div class="stream-media error">audio decode failed: ${escapeHtml(err?.message || err)}</div>`;
+  }
 }
 
 function applyStreamFilter() {
