@@ -4711,10 +4711,25 @@ class FcDuplexCapability:
     def _token_pieces(self, ids: list) -> list:
         if not ids:
             return []
+        pieces = []
+        ordinary = []
+        ordinary_positions = []
+        for tid in ids:
+            tid = int(tid)
+            if tid in self.id2name:
+                pieces.append(str(self.id2name[tid]))
+            else:
+                pieces.append(None)
+                ordinary.append(tid)
+                ordinary_positions.append(len(pieces) - 1)
         try:
-            return list(self.tokenizer.convert_ids_to_tokens(list(ids)))
+            converted = list(self.tokenizer.convert_ids_to_tokens(ordinary)) if ordinary else []
         except Exception:
-            return []
+            converted = []
+        for index, pos in enumerate(ordinary_positions):
+            piece = converted[index] if index < len(converted) else None
+            pieces[pos] = str(piece) if piece is not None else f"<id:{ordinary[index]}>"
+        return [str(piece) for piece in pieces]
 
     def _trace_span(self, span: dict) -> dict:
         if not isinstance(span, dict):

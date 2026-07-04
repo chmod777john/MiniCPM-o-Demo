@@ -1341,11 +1341,12 @@ class FcDuplexView:
         return NonSpokenStepGenerationFlag.non_spoken_slot_eos
 
     def _token_strs(self, token_ids: List[int]) -> List[str]:
-        """Map token ids to raw vocab pieces via tokenizer id-to-token lookup.
+        """Map token ids to raw vocab pieces or FC special-token display names.
 
-        This is NOT BPE merged decode. It returns the per-token pieces the
-        tokenizer stores in its vocab (e.g. byte-level BPE may show 'Ġapple'
-        for ' apple', and special tokens show as '<|tool_call|>').
+        This is NOT BPE merged decode. For FC protocol special tokens it returns
+        the SDK registry display name, because the HF tokenizer may not know rows
+        added for the trained checkpoint and can return ``None``. For ordinary
+        tokens it returns the per-token pieces stored in the tokenizer vocab.
 
         Returns:
             A list with the same length as `token_ids`. Falls back to an empty
@@ -1355,11 +1356,30 @@ class FcDuplexView:
 
         if not token_ids:
             return []
+        fc_duplex = getattr(self._model, "fc_duplex", None)
+        id2name = getattr(fc_duplex, "id2name", {}) or {}
         tokenizer = getattr(self._model, "tokenizer", None)
-        if tokenizer is None or not hasattr(tokenizer, "convert_ids_to_tokens"):
-            return []
         try:
-            return list(tokenizer.convert_ids_to_tokens(list(token_ids)))
+            ordinary = []
+            ordinary_positions = []
+            result: List[Optional[str]] = []
+            for token_id in token_ids:
+                tid = int(token_id)
+                if tid in id2name:
+                    result.append(str(id2name[tid]))
+                else:
+                    result.append(None)
+                    ordinary.append(tid)
+                    ordinary_positions.append(len(result) - 1)
+            if ordinary and tokenizer is not None and hasattr(tokenizer, "convert_ids_to_tokens"):
+                converted = list(tokenizer.convert_ids_to_tokens(ordinary))
+                for index, pos in enumerate(ordinary_positions):
+                    piece = converted[index] if index < len(converted) else None
+                    result[pos] = str(piece) if piece is not None else f"<id:{ordinary[index]}>"
+            for index, pos in enumerate(ordinary_positions):
+                if result[pos] is None:
+                    result[pos] = f"<id:{ordinary[index]}>"
+            return [str(item) for item in result]
         except Exception:
             return []
 
