@@ -62,10 +62,10 @@ const el = {
   timeline: document.getElementById('timeline'),
   streamFeed: document.getElementById('streamFeed'),
   streamFilter: document.getElementById('streamFilter'),
-  streamEventDialog: document.getElementById('streamEventDialog'),
-  streamEventModalDir: document.getElementById('streamEventModalDir'),
-  streamEventModalType: document.getElementById('streamEventModalType'),
-  streamEventModalJson: document.getElementById('streamEventModalJson'),
+  openStreamDialog: document.getElementById('openStreamDialog'),
+  streamDialog: document.getElementById('streamDialog'),
+  streamModalCount: document.getElementById('streamModalCount'),
+  streamModalJson: document.getElementById('streamModalJson'),
   board: document.getElementById('board'),
   aiSpeech: document.getElementById('aiSpeech'),
   nsStream: document.getElementById('nonSpokenStream'),
@@ -115,16 +115,12 @@ el.debugToggle?.addEventListener('click', () => {
 
 el.streamFilter?.addEventListener('change', applyStreamFilter);
 
-el.streamFeed?.addEventListener('click', (event) => {
-  const button = event.target.closest('[data-action="open-stream-event"]');
-  if (!button) return;
-  event.preventDefault();
-  event.stopPropagation();
-  openStreamEventDialog(button.dataset.eventId);
+el.openStreamDialog?.addEventListener('click', () => {
+  openStreamDialog();
 });
 
-el.streamEventDialog?.addEventListener('click', (event) => {
-  if (event.target === el.streamEventDialog) el.streamEventDialog.close();
+el.streamDialog?.addEventListener('click', (event) => {
+  if (event.target === el.streamDialog) el.streamDialog.close();
 });
 
 el.startMicLive.addEventListener('click', async () => {
@@ -779,7 +775,6 @@ function appendStreamEvent(direction, event) {
       <span class="stream-dir">${direction.toUpperCase()}</span>
       <span class="stream-type">${escapeHtml(type)}</span>
       <span class="stream-time">${new Date().toLocaleTimeString()}</span>
-      <button class="stream-open" type="button" data-action="open-stream-event" data-event-id="${eventId}" title="Open event">Open</button>
     </summary>
     <div class="stream-body">${escapeHtml(summary)}</div>
     <pre class="stream-json">${escapeHtml(json)}</pre>
@@ -789,17 +784,18 @@ function appendStreamEvent(direction, event) {
   el.streamFeed.scrollTop = el.streamFeed.scrollHeight;
 }
 
-function openStreamEventDialog(eventId) {
-  const record = streamEvents.get(eventId);
-  if (!record || !el.streamEventDialog || !el.streamEventModalJson) return;
-  const type = record.event.type || '(unknown)';
-  if (el.streamEventModalDir) {
-    el.streamEventModalDir.textContent = record.direction.toUpperCase();
-    el.streamEventModalDir.className = `stream-dir ${record.direction}`;
+function openStreamDialog() {
+  if (!el.streamDialog || !el.streamModalJson) return;
+  const records = [...streamEvents.values()].map((record, index) => ({
+    index: index + 1,
+    direction: record.direction,
+    event: record.event,
+  }));
+  if (el.streamModalCount) {
+    el.streamModalCount.textContent = `${records.length} event${records.length === 1 ? '' : 's'}`;
   }
-  if (el.streamEventModalType) el.streamEventModalType.textContent = type;
-  el.streamEventModalJson.textContent = prettyJson(record.event);
-  el.streamEventDialog.showModal();
+  el.streamModalJson.textContent = prettyJson(records);
+  el.streamDialog.showModal();
 }
 
 function applyStreamFilter() {

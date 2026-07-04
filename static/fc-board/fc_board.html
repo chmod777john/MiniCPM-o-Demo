@@ -104,6 +104,7 @@
         <div class="panel-title">
           Realtime Stream
           <span class="hint">TX / RX API events</span>
+          <button id="openStreamDialog" class="panel-title-action" type="button">Open stream</button>
         </div>
         <label class="stream-filter">
           <span>Show</span>
@@ -212,16 +213,16 @@
     </div>
   </aside>
 
-  <dialog id="streamEventDialog" class="stream-event-dialog">
-    <form method="dialog" class="stream-event-modal">
-      <header class="stream-event-modal-head">
+  <dialog id="streamDialog" class="stream-dialog">
+    <form method="dialog" class="stream-modal">
+      <header class="stream-modal-head">
         <div>
-          <span id="streamEventModalDir" class="stream-dir">RX</span>
-          <strong id="streamEventModalType">event</strong>
+          <strong>Realtime Stream</strong>
+          <span id="streamModalCount" class="stream-modal-count">0 events</span>
         </div>
         <button class="modal-close" value="close" aria-label="Close">×</button>
       </header>
-      <pre id="streamEventModalJson" class="stream-event-modal-json"></pre>
+      <pre id="streamModalJson" class="stream-modal-json"></pre>
     </form>
   </dialog>
 
