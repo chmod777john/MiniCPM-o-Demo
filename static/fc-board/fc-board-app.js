@@ -206,7 +206,7 @@ function buildSessionInitPayload() {
     config: {
       runtime: 'fc_duplex',
       auto_execute_tools: false,
-      non_spoken_scheduling: 'latency',
+      non_spoken_scheduling: 'quality',
       sample_rate: 16000,
       max_spoken_tokens: 24,
       non_spoken_budget_per_unit: 12,
