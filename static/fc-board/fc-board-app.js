@@ -61,8 +61,6 @@ const el = {
   streamFeed: document.getElementById('streamFeed'),
   streamFilter: document.getElementById('streamFilter'),
   board: document.getElementById('board'),
-  boardCardDialog: document.getElementById('boardCardDialog'),
-  boardCardModalBody: document.getElementById('boardCardModalBody'),
   aiSpeech: document.getElementById('aiSpeech'),
   nsStream: document.getElementById('nonSpokenStream'),
   kvMode: document.getElementById('kvMode'),
@@ -103,24 +101,6 @@ el.resetSystemPrompt?.addEventListener('click', () => {
 
 el.resetRefAudio?.addEventListener('click', () => {
   el.refAudioPath.value = defaultRefAudioPath();
-});
-
-el.board?.addEventListener('click', (event) => {
-  const card = event.target.closest('.card[data-card-id]');
-  if (!card) return;
-  openBoardCardDialog(card.dataset.cardId);
-});
-
-el.board?.addEventListener('keydown', (event) => {
-  if (event.key !== 'Enter' && event.key !== ' ') return;
-  const card = event.target.closest('.card[data-card-id]');
-  if (!card) return;
-  event.preventDefault();
-  openBoardCardDialog(card.dataset.cardId);
-});
-
-el.boardCardDialog?.addEventListener('click', (event) => {
-  if (event.target === el.boardCardDialog) el.boardCardDialog.close();
 });
 
 el.debugToggle?.addEventListener('click', () => {
@@ -592,7 +572,7 @@ function renderBoard() {
     const image = card.image?.image_url
       ? `<img src="${escapeHtml(card.image.image_url)}" alt="${escapeHtml(card.query)}" />`
       : `<div class="placeholder">${card.status === 'searching' ? '搜图中…' : (card.error || '—')}</div>`;
-    return `<article class="card ${escapeHtml(card.status)}" data-card-id="${escapeHtml(card.card_id)}" tabindex="0" title="${escapeHtml(card.tool_call_id || '')}">
+    return `<article class="card ${escapeHtml(card.status)}" title="${escapeHtml(card.tool_call_id || '')}">
       ${image}
       <div class="card-body">
         <strong>${escapeHtml(card.query)}</strong>
@@ -600,37 +580,6 @@ function renderBoard() {
       </div>
     </article>`;
   }).join('');
-}
-
-function openBoardCardDialog(cardId) {
-  const card = state.cards.find((item) => item.card_id === cardId);
-  if (!card || !el.boardCardDialog || !el.boardCardModalBody) return;
-  const imageUrl = card.image?.image_url || '';
-  const title = card.image?.title || card.query || '';
-  const sourceUrl = card.image?.source_url || '';
-  const assetId = card.image?.asset_id || '';
-  const elapsed = card.image?.elapsed_ms;
-  el.boardCardModalBody.innerHTML = `
-    <div class="modal-media">
-      ${imageUrl
-        ? `<img src="${escapeHtml(imageUrl)}" alt="${escapeHtml(card.query)}" />`
-        : `<div class="modal-placeholder">${escapeHtml(card.error || 'No image')}</div>`}
-    </div>
-    <div class="modal-info">
-      <div class="modal-kicker">display_object_on_board</div>
-      <h2>${escapeHtml(card.query || 'Object')}</h2>
-      <dl>
-        <div><dt>Status</dt><dd>${escapeHtml(card.status || 'unknown')}</dd></div>
-        <div><dt>Tool call</dt><dd>${escapeHtml(card.tool_call_id || '—')}</dd></div>
-        <div><dt>Title</dt><dd>${escapeHtml(title || '—')}</dd></div>
-        <div><dt>Asset</dt><dd>${escapeHtml(assetId || '—')}</dd></div>
-        <div><dt>Elapsed</dt><dd>${elapsed === undefined || elapsed === null ? '—' : `${Math.round(Number(elapsed))} ms`}</dd></div>
-        ${card.error ? `<div><dt>Error</dt><dd>${escapeHtml(card.error)}</dd></div>` : ''}
-      </dl>
-      ${sourceUrl ? `<a class="modal-source" href="${escapeHtml(sourceUrl)}" target="_blank" rel="noreferrer">Open source</a>` : ''}
-    </div>
-  `;
-  el.boardCardDialog.showModal();
 }
 
 function enqueueSpeech(text, audioMs) {
@@ -814,6 +763,9 @@ function appendStreamEvent(direction, event) {
     <pre class="stream-json">${escapeHtml(json)}</pre>
   `;
   el.streamFeed.appendChild(row);
+  while (el.streamFeed.children.length > 120) {
+    el.streamFeed.firstElementChild?.remove();
+  }
   applyStreamFilter();
   el.streamFeed.scrollTop = el.streamFeed.scrollHeight;
 }
