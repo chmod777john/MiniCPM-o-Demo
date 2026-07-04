@@ -240,6 +240,8 @@ class FcDuplexSessionRuntime:
             logger.exception("failed to dump fc model trace: session=%s path=%s", self.session_id, path)
 
     async def _run_non_spoken_loop(self, *, input_id: Optional[str]) -> None:
+        used = 0
+        step_durations_ms: List[float] = []
         for _ in range(max(0, self._non_spoken_budget_per_unit)):
             if self._non_spoken_scheduling == "latency" and self._next_input_event.is_set():
                 step = await asyncio.to_thread(
@@ -249,12 +251,16 @@ class FcDuplexSessionRuntime:
                     close_reason="budget_reached",
                 )
                 await self._emit_step_events(step, input_id=input_id)
+                await self._emit_budget_debug(input_id=input_id, used=used, step_durations_ms=step_durations_ms)
                 return
+            step_t0 = time.perf_counter()
             step = await asyncio.to_thread(
                 self.backend.fc_duplex_non_spoken_generate,
                 max_tokens=1,
                 decode_mode=self._decode_mode,
             )
+            step_durations_ms.append((time.perf_counter() - step_t0) * 1000)
+            used += 1
             await self._emit_step_events(step, input_id=input_id)
             raw_flag = getattr(step, "generation_flag", "") or ""
             flag = str(getattr(raw_flag, "value", raw_flag))
@@ -263,6 +269,7 @@ class FcDuplexSessionRuntime:
                 NonSpokenStepGenerationFlag.no_action.value,
                 NonSpokenStepGenerationFlag.non_spoken_slot_eos.value,
             }:
+                await self._emit_budget_debug(input_id=input_id, used=used, step_durations_ms=step_durations_ms)
                 return
         step = await asyncio.to_thread(
             self.backend.fc_duplex_non_spoken_generate,
@@ -271,6 +278,25 @@ class FcDuplexSessionRuntime:
             close_reason="budget_reached",
         )
         await self._emit_step_events(step, input_id=input_id)
+        await self._emit_budget_debug(input_id=input_id, used=used, step_durations_ms=step_durations_ms)
+
+    async def _emit_budget_debug(
+        self,
+        *,
+        input_id: Optional[str],
+        used: int,
+        step_durations_ms: List[float],
+    ) -> None:
+        await self._send(
+            "response.debug",
+            session_id=self.session_id,
+            response_id=self._response_id,
+            input_id=input_id,
+            debug={
+                "estimated_max_budget_1s": _estimate_max_budget_1s(step_durations_ms),
+                "used": int(used),
+            },
+        )
 
     async def _emit_spoken(self, spoken: Any, *, input_id: Optional[str]) -> None:
         is_listen = bool(getattr(spoken, "is_listen", False))
@@ -699,6 +725,17 @@ def _token_observations(token_ids: List[int], token_strs: List[str]) -> Optional
         text = token_strs[index] if index < len(token_strs) else ""
         observations.append({"id": int(token_id), "text": text})
     return observations
+
+
+def _estimate_max_budget_1s(step_durations_ms: List[float]) -> Optional[int]:
+    if not step_durations_ms:
+        return None
+    sorted_durations = sorted(duration for duration in step_durations_ms if duration > 0)
+    if not sorted_durations:
+        return None
+    index = min(len(sorted_durations) - 1, int(0.95 * (len(sorted_durations) - 1)))
+    p95_ms = max(sorted_durations[index], 1.0)
+    return max(1, int(1000.0 // p95_ms))
 
 
 def _short(value: str, limit: int = 300) -> str:
