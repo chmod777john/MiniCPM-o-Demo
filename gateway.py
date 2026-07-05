@@ -1441,7 +1441,11 @@ async def realtime_ws(ws: WebSocket):
         await ws.close(code=1008, reason=f"Unsupported realtime mode: {mode}")
         return
 
-    max_duration_s = 300 if mode == "video" else 600
+    # Temporary o5 demo allowance: video duplex can lag behind real time while
+    # inference is still being optimized. Keep the API session watchdog, but
+    # make the total session duration 4x the original limits to avoid ending
+    # otherwise healthy long-running manual tests.
+    max_duration_s = 1200 if mode == "video" else 2400
     request_type = "omni_duplex" if mode == "video" else "audio_duplex"
 
     await _api_worker_passthrough_ws(
