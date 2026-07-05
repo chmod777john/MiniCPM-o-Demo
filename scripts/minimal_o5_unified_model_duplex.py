@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 import asyncio
+import json
 import os
+import time
 from pathlib import Path
 
 import librosa
@@ -22,6 +24,10 @@ USER_TEXT = os.environ.get("USER_TEXT", "请详细介绍西安的历史文化、
 USER_WAV = os.environ.get("USER_WAV")
 EDGE_TTS_VOICE = "zh-CN-XiaoxiaoNeural"
 TRAILING_SILENCE_SECONDS = 6
+ENABLE_COMPILE = os.environ.get("ENABLE_COMPILE", "0") == "1"
+COMPILE_MODE = os.environ.get("COMPILE_MODE", "default")
+COMPILE_WARMUP = os.environ.get("COMPILE_WARMUP", "1") == "1"
+COMPILE_SKIP = [x for x in os.environ.get("COMPILE_SKIP", "").split(",") if x]
 
 
 def load_16k(path):
@@ -109,6 +115,17 @@ def main():
         chat_vocoder="token2wav",
     )
 
+    if ENABLE_COMPILE:
+        cache_dir = os.environ.get("TORCHINDUCTOR_CACHE_DIR")
+        print("torch_compile", "enabled", "mode", COMPILE_MODE, "cache", cache_dir, "skip", COMPILE_SKIP)
+        compile_start = time.perf_counter()
+        model.apply_torch_compile(mode=COMPILE_MODE, dynamic=True, skip_modules=COMPILE_SKIP or None)
+        if COMPILE_WARMUP:
+            model.warmup_compile(ref_audio_path=REF_WAV, max_warmup_chunks=10, total_estimate_seconds=1000)
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
+        print("torch_compile_ready_s", f"{time.perf_counter() - compile_start:.4f}")
+
     ref_audio = load_16k(REF_WAV)
     model.duplex_prepare(
         prefix_system_prompt="<|im_start|>system\nStreaming Omni Conversation.\n<|audio_start|>",
@@ -125,8 +142,19 @@ def main():
 
     timeline = []
     speech_only = []
+    timings = []
     for i, chunk in enumerate(chunks[:10]):
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
+        prefill_start = time.perf_counter()
         prefill = model.duplex_prefill(audio_waveform=chunk)
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
+        prefill_s = time.perf_counter() - prefill_start
+
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
+        generate_start = time.perf_counter()
         result = model.duplex_generate(
             decode_mode="sampling",
             temperature=0.7,
@@ -137,8 +165,44 @@ def main():
             text_repetition_window_size=512,
             length_penalty=1.1,
         )
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
+        generate_s = time.perf_counter() - generate_start
+
         text = result.get("text", "")
-        print(i, prefill, result.get("is_listen"), repr(text), result.get("n_tts_tokens"))
+        n_tts_tokens = result.get("n_tts_tokens")
+        round_timing = {
+            "round": i,
+            "prefill_s": prefill_s,
+            "generate_s": generate_s,
+            "total_s": prefill_s + generate_s,
+            "is_listen": result.get("is_listen"),
+            "n_tts_tokens": n_tts_tokens,
+            "text": text,
+            "prefill": prefill,
+            "compile_enabled": ENABLE_COMPILE,
+            "compile_mode": COMPILE_MODE if ENABLE_COMPILE else None,
+            "compile_cache_dir": os.environ.get("TORCHINDUCTOR_CACHE_DIR") if ENABLE_COMPILE else None,
+        }
+        timings.append(round_timing)
+        print(
+            "round",
+            i,
+            "prefill_s",
+            f"{prefill_s:.4f}",
+            "generate_s",
+            f"{generate_s:.4f}",
+            "total_s",
+            f"{prefill_s + generate_s:.4f}",
+            "listen",
+            result.get("is_listen"),
+            "tts_tokens",
+            n_tts_tokens,
+            "text",
+            repr(text),
+            "prefill",
+            prefill,
+        )
         wav = result.get("audio_waveform")
         if wav is not None and len(wav) > 0:
             wav = np.asarray(wav, dtype=np.float32)
@@ -158,6 +222,9 @@ def main():
         np.concatenate(speech_only) if speech_only else np.zeros(0, dtype=np.float32),
         24000,
     )
+    with open(OUT_DIR / "timings.jsonl", "w", encoding="utf-8") as f:
+        for item in timings:
+            f.write(json.dumps(item, ensure_ascii=False) + "\n")
     print("wrote", OUT_DIR)
 
 

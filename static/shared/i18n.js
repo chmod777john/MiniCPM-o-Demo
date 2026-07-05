@@ -118,7 +118,7 @@ const zh = {
   ms: 'ms',
   maxKV: '最大 KV',
   tok: 'tok',
-  maxKVHint: '≤ 8192（最大训练长度）',
+  maxKVHint: '≤ 32768',
 
   // audio devices
   audioDevices: '音频设备',
@@ -319,7 +319,7 @@ const en = {
   ms: 'ms',
   maxKV: 'MaxKV',
   tok: 'tok',
-  maxKVHint: '≤ 8192 (max training length)',
+  maxKVHint: '≤ 32768',
 
   // audio devices
   audioDevices: 'Audio Devices',
@@ -512,4 +512,3 @@ function createLangToggle(parent) {
 if (typeof window !== 'undefined') {
   window.I18n = { getLang, getT, setLang, createLangToggle, t: _t, bundles };
 }
-

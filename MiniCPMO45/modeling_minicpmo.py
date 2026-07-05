@@ -183,15 +183,6 @@ from .utils import TTSStreamingGenerator
 logger = logging.getLogger(__name__)
 
 
-def _apply_vendored_chat_template(processor_or_tokenizer):
-    tokenizer = getattr(processor_or_tokenizer, "tokenizer", processor_or_tokenizer)
-    template_path = os.path.join(os.path.dirname(__file__), "chat_template.jinja")
-    if tokenizer is not None and os.path.isfile(template_path):
-        with open(template_path, "r", encoding="utf-8") as f:
-            tokenizer.chat_template = f.read()
-    return processor_or_tokenizer
-
-
 class MiniCPMOPreTrainedModel(Qwen3_5PreTrainedModel):
     config_class = MiniCPMOConfig
 
@@ -202,12 +193,12 @@ class MiniCPMO(MiniCPMOPreTrainedModel):
 
         text_model_type = getattr(config, "text_model_type", "qwen3_5_text")
         text_config = AutoConfig.for_model(text_model_type)
+        if torch.cuda.is_available() and torch.cuda.get_device_capability()[0] < 9:
+            # torch._grouped_mm used by the default MoE grouped implementation is H100-only in torch 2.8.
+            text_config._experts_implementation = "eager"
         for key, value in config.to_dict().items():
             if hasattr(text_config, key) and key != "model_type":
                 setattr(text_config, key, value)
-        if torch.cuda.is_available() and torch.cuda.get_device_capability() != (9, 0):
-            # torch._grouped_mm used by the default MoE grouped implementation is H100-only in torch 2.8.
-            text_config._experts_implementation = "eager"
         if isinstance(getattr(text_config, "torch_dtype", None), str):
             text_config.torch_dtype = getattr(torch, text_config.torch_dtype, None)
         self.llm = AutoModelForCausalLM.from_config(text_config)
@@ -1299,7 +1290,6 @@ class MiniCPMO(MiniCPMOPreTrainedModel):
             self.processor = MiniCPMOProcessor.from_pretrained(self.config._name_or_path, trust_remote_code=True)
         if tokenizer is not None:
             self.processor.tokenizer = tokenizer
-        _apply_vendored_chat_template(self.processor)
 
     @torch.inference_mode()
     def chat(
@@ -1502,6 +1492,15 @@ class MiniCPMO(MiniCPMOPreTrainedModel):
         if answer is not None:
             answer = answer.split("<|tts_eos|>")[0]
 
+        if use_tts_template and generate_audio:
+            logger.info(
+                "[chat non-stream TTS] answer_chars=%s generated_tokens=%s tts_bound=%s spk_bound=%s",
+                len(answer) if isinstance(answer, str) else None,
+                int(generated_ids.shape[0]),
+                tts_bound,
+                spk_bound,
+            )
+
         if use_tts_template and generate_audio and output_audio_path:
             import soundfile as sf
 
@@ -1663,6 +1662,12 @@ class MiniCPMO(MiniCPMOPreTrainedModel):
                 device=self.tts.device,
             ),
         )
+        logger.info(
+            "[chat non-stream TTS] condition_tokens=%s audio_code_tokens=%s finished=%s",
+            int(tts_embeds.shape[0]),
+            int(outputs.new_ids.shape[1]) if outputs.new_ids is not None else None,
+            bool(outputs.finished),
+        )
 
         import io
 
@@ -1689,6 +1694,12 @@ class MiniCPMO(MiniCPMOPreTrainedModel):
         )
         # convert wav bytes back to tensor for caller compatibility
         waveform, sr = sf.read(io.BytesIO(wav_bytes))
+        logger.info(
+            "[chat non-stream TTS] waveform_samples=%s sample_rate=%s duration=%.2fs",
+            len(waveform),
+            sr,
+            len(waveform) / sr if sr else -1,
+        )
         return torch.tensor(waveform, dtype=torch.float32)
 
     @torch.inference_mode()
@@ -2853,14 +2864,12 @@ class MiniCPMODuplex:
             from transformers import AutoTokenizer
 
             instance.tokenizer = AutoTokenizer.from_pretrained(instance.name_or_path, trust_remote_code=True)
-            _apply_vendored_chat_template(instance.tokenizer)
 
         if instance.processor is None:
             from .processing_minicpmo import MiniCPMOProcessor
 
             instance.processor = MiniCPMOProcessor.from_pretrained(instance.name_or_path, trust_remote_code=True)
             instance.processor.tokenizer = instance.tokenizer
-        _apply_vendored_chat_template(instance.processor)
 
         # Ensure model has processor reference (same as __init__)
         instance.model.processor = instance.processor
@@ -4611,10 +4620,9 @@ class MiniCPMTTS(PreTrainedModel):
                 num_hidden_layers=config.num_hidden_layers,
                 num_key_value_heads=config.num_key_value_heads,
                 max_position_embeddings=config.max_position_embeddings,
-                attn_implementation=config.attn_implementation,
                 rope_theta=getattr(config, "rope_theta", 10000.0),
+                attn_implementation=config.attn_implementation,
             )
-            model_config.rope_theta = getattr(config, "rope_theta", 10000.0)
 
             self.emb_text = nn.Embedding(config.num_text_tokens, config.hidden_size)
 

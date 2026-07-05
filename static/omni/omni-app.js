@@ -1761,9 +1761,11 @@ document.querySelectorAll('.lp-preset-btn').forEach(btn => {
 document.getElementById('omniLengthPenalty')?.addEventListener('input', syncLpPresetHighlight);
 document.getElementById('omniLengthPenalty')?.addEventListener('change', syncLpPresetHighlight);
 
-// MaxKV hard cap at 8192
+const MAX_KV_TOKENS_LIMIT = 32768;
+
+// MaxKV client-side stop threshold cap
 document.getElementById('maxKvTokens')?.addEventListener('change', function () {
-    if (parseInt(this.value, 10) > 8192) this.value = 8192;
+    if (parseInt(this.value, 10) > MAX_KV_TOKENS_LIMIT) this.value = MAX_KV_TOKENS_LIMIT;
 });
 
 // Control buttons (mic calibration is handled by MixerController)

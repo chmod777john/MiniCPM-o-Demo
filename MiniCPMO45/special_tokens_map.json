@@ -120,105 +120,7 @@
       "single_word": false
     },
     {
-      "content": "<answer>",
-      "lstrip": false,
-      "normalized": false,
-      "rstrip": false,
-      "single_word": false
-    },
-    {
-      "content": "</answer>",
-      "lstrip": false,
-      "normalized": false,
-      "rstrip": false,
-      "single_word": false
-    },
-    {
-      "content": "<focus>",
-      "lstrip": false,
-      "normalized": false,
-      "rstrip": false,
-      "single_word": false
-    },
-    {
-      "content": "</focus>",
-      "lstrip": false,
-      "normalized": false,
-      "rstrip": false,
-      "single_word": false
-    },
-    {
-      "content": "<line>",
-      "lstrip": false,
-      "normalized": false,
-      "rstrip": false,
-      "single_word": false
-    },
-    {
-      "content": "</line>",
-      "lstrip": false,
-      "normalized": false,
-      "rstrip": false,
-      "single_word": false
-    },
-    {
-      "content": "<perception>",
-      "lstrip": false,
-      "normalized": false,
-      "rstrip": false,
-      "single_word": false
-    },
-    {
-      "content": "</perception>",
-      "lstrip": false,
-      "normalized": false,
-      "rstrip": false,
-      "single_word": false
-    },
-    {
-      "content": "<source_image>",
-      "lstrip": false,
-      "normalized": false,
-      "rstrip": false,
-      "single_word": false
-    },
-    {
-      "content": "</source_image>",
-      "lstrip": false,
-      "normalized": false,
-      "rstrip": false,
-      "single_word": false
-    },
-    {
-      "content": "<image_save_to>",
-      "lstrip": false,
-      "normalized": false,
-      "rstrip": false,
-      "single_word": false
-    },
-    {
-      "content": "</image_save_to>",
-      "lstrip": false,
-      "normalized": false,
-      "rstrip": false,
-      "single_word": false
-    },
-    {
-      "content": "<|audio_start|>",
-      "lstrip": false,
-      "normalized": false,
-      "rstrip": false,
-      "single_word": false
-    },
-    {
       "content": "<|audio|>",
-      "lstrip": false,
-      "normalized": false,
-      "rstrip": false,
-      "single_word": false
-    },
-    {
-      "content": "<|audio_end|>",
       "lstrip": false,
       "normalized": false,
       "rstrip": false,
@@ -337,14 +239,7 @@
       "single_word": false
     },
     {
-      "content": "<|turn_bos|>",
-      "lstrip": false,
-      "normalized": false,
-      "rstrip": false,
-      "single_word": false
-    },
-    {
-      "content": "<|turn_eos|>",
+      "content": "<|chunk_bos|>",
       "lstrip": false,
       "normalized": false,
       "rstrip": false,
@@ -352,13 +247,6 @@
     },
     {
       "content": "<|chunk_eos|>",
-      "lstrip": false,
-      "normalized": false,
-      "rstrip": false,
-      "single_word": false
-    },
-    {
-      "content": "<|chunk_bos|>",
       "lstrip": false,
       "normalized": false,
       "rstrip": false,

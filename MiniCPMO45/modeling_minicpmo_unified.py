@@ -21,6 +21,7 @@ import os
 import tempfile
 import threading
 import time
+import io
 from copy import deepcopy
 from typing import Dict
 from typing import List
@@ -39,7 +40,6 @@ from enum import Enum
 
 # 相对导入（同目录）
 from .modeling_minicpmo import gen_logits
-from .modeling_minicpmo import _apply_vendored_chat_template
 from .modeling_minicpmo import MiniCPMO as BaseMiniCPMO
 from .modeling_minicpmo import MiniCPMODuplex as BaseMiniCPMODuplex
 from .modeling_minicpmo import MiniCPMOPreTrainedModel
@@ -59,6 +59,33 @@ from .utils import TTSSamplingParams
 from .utils import TTSStreamingGenerator
 
 logger = logging.getLogger(__name__)
+
+
+def _patch_token2wav_bytesio_save() -> None:
+    """Make stepaudio2 Token2wav BytesIO output work with torchcodec torchaudio."""
+
+    try:
+        import stepaudio2.token2wav as token2wav_mod
+    except Exception:
+        return
+    torchaudio_mod = getattr(token2wav_mod, "torchaudio", None)
+    if torchaudio_mod is None or getattr(torchaudio_mod.save, "_minicpmo_bytesio_patch", False):
+        return
+
+    original_save = torchaudio_mod.save
+
+    def save_compat(uri, src, sample_rate, *args, **kwargs):
+        if isinstance(uri, io.BytesIO):
+            audio = src.detach().cpu().numpy()
+            if audio.ndim == 2:
+                audio = audio.T
+            sf.write(uri, audio, sample_rate, format="WAV")
+            uri.seek(0)
+            return None
+        return original_save(uri, src, sample_rate, *args, **kwargs)
+
+    save_compat._minicpmo_bytesio_patch = True
+    torchaudio_mod.save = save_compat
 
 
 class ProcessorMode(Enum):
@@ -117,6 +144,7 @@ class MiniCPMO(BaseMiniCPMO):
                 from stepaudio2 import Token2wav
             except ImportError:
                 raise ImportError(f"please install Token2wav via: pip install stepaudio2-minicpmo")
+            _patch_token2wav_bytesio_save()
 
             model_dir = self._ensure_asset_dir("assets/token2wav", model_dir)
             logger.info(f"Token2wav model_dir: {model_dir}, enable_float16: {enable_float16}, n_timesteps: {n_timesteps}")
@@ -1375,7 +1403,6 @@ class MiniCPMO(BaseMiniCPMO):
 
         if not hasattr(self, "processor") or self.processor is None:
             self.processor = MiniCPMOProcessor.from_pretrained(self.config._name_or_path, trust_remote_code=True)
-            _apply_vendored_chat_template(self.processor)
 
         # ── 1. 消息解析（复用 chat() 的逻辑） ──
 
@@ -1540,7 +1567,6 @@ class MiniCPMO(BaseMiniCPMO):
             self.processor = MiniCPMOProcessor.from_pretrained(
                 self.config._name_or_path, trust_remote_code=True
             )
-            _apply_vendored_chat_template(self.processor)
         tokenizer = self.processor.tokenizer
 
         # 1. 构建 bos string（与 streaming_generate 对齐）
@@ -1719,7 +1745,6 @@ class MiniCPMO(BaseMiniCPMO):
 
         if not hasattr(self, "processor") or self.processor is None:
             self.processor = MiniCPMOProcessor.from_pretrained(self.config._name_or_path, trust_remote_code=True)
-            _apply_vendored_chat_template(self.processor)
 
         images = []
         audios = []
@@ -1919,7 +1944,6 @@ class MiniCPMO(BaseMiniCPMO):
 
         if not hasattr(self, "processor") or self.processor is None:
             self.processor = MiniCPMOProcessor.from_pretrained(self.config._name_or_path, trust_remote_code=True)
-            _apply_vendored_chat_template(self.processor)
 
         # reset current turn generated token IDs
         if hasattr(self, "_streaming_generated_token_ids"):

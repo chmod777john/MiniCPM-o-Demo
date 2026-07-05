@@ -1,11 +1,16 @@
 
 # pip install -r requirements.txt
 
+--extra-index-url https://download.pytorch.org/whl/cu128
+
 # Core ML
-transformers>=5.2.0,<5.6.0
+torch==2.11.0+cu128
+torchvision==0.26.0+cu128
+torchaudio==2.11.0+cu128
+torchcodec==0.11.1+cu128
+transformers==5.13.0
 accelerate==1.12.0
 safetensors>=0.7.0
-torchvision==0.23.0
 
 # MiniCPM-o 4.6 / o5
 # minicpmo-utils 1.0.6 metadata pins librosa==0.9.0, but o5 runtime is validated
@@ -36,6 +41,7 @@ Pygments>=2.18.0
 PyYAML>=6.0
 librosa>=0.10.2
 soundfile>=0.12.1
+edge-tts>=7.2.0
 
 # Data / Schema
 pydantic>=2.11.0

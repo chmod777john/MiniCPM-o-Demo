@@ -31,25 +31,6 @@ from transformers.cache_utils import DynamicCache
 
 logger = logging.getLogger(__name__)
 
-
-def _install_grouped_mm_device_guard():
-    if not torch.cuda.is_available():
-        return
-    capability = torch.cuda.get_device_capability()
-    if capability == (9, 0):
-        return
-    try:
-        import transformers.integrations.moe as _moe
-    except Exception as exc:  # pragma: no cover
-        logger.warning("grouped-mm device guard skipped (import failed): %s", exc)
-        return
-
-    _moe._can_use_grouped_mm = lambda input, weight, offs: False
-    logger.info("Disabled transformers MoE grouped_mm on CUDA capability %s", capability)
-
-
-_install_grouped_mm_device_guard()
-
 # === [PATCH] Qwen3.5MoE linear-attention chunked-prefill cache fix ===========
 # Upstream transformers Qwen3_5MoeGatedDeltaNet.forward only continues the
 # conv/recurrent state when seq_len==1 (decode). Multi-token continuation
@@ -679,7 +660,8 @@ class TTSStreamingGenerator:
         self.token_window_size = model.token_window_size  # token-level window for sliding_window/reindex (default 300)
 
         # RoPE config (for reindex mode)
-        self.rope_theta = model.model.config.rope_theta
+        rope_parameters = getattr(model.model.config, "rope_parameters", {}) or {}
+        self.rope_theta = getattr(model.model.config, "rope_theta", rope_parameters.get("rope_theta", 10000.0))
         self.head_dim = model.model.config.hidden_size // model.model.config.num_attention_heads
 
         # Logits processors
@@ -875,8 +857,14 @@ class TTSStreamingGenerator:
         self.idx += 1
         self.device = self.tts.device
 
-        # Length-proportional audio-token budget for this text chunk. This bounds
-        # cases where the acoustic decoder misses EOS and runs to max_new_token.
+        # Length-proportional audio-token budget for THIS text chunk. Without it the
+        # acoustic decoder can fail to sample EOS and run all the way to the flat
+        # ``max_new_token`` (500 ≈ 20s at 25 tok/s), producing long stretches of
+        # repeated single-syllable garbage (observed on short utterances). The spoken
+        # audio:text ratio tops out around ~16 audio tokens/text token even on short
+        # clips, so ~30/token plus a floor keeps a comfortable margin while bounding
+        # runaways. ``condition`` here is still just the chunk's merged text embeds
+        # (Text EOS / Audio BOS are appended below), so its length == #text tokens.
         num_chunk_text_tokens = condition.shape[1]
         audio_token_budget = max(min_audio_tokens, num_chunk_text_tokens * max_audio_tokens_per_text_token)
         effective_max_new_token = min(max_new_token, audio_token_budget)
@@ -1051,6 +1039,9 @@ class TTSStreamingGenerator:
                     else:  # generation of this audio chunk is not finished, continue generating
                         continue
         else:
+            # Loop ran to the budget without ever ``break``-ing, i.e. the acoustic
+            # decoder never sampled EOS for this chunk. Audio is truncated here to
+            # bound runaways; warn so it is visible in logs.
             logger.warning(
                 "TTS streaming chunk hit audio-token budget (%d) without EOS "
                 "(text_tokens=%d, text_finished=%s); truncating to avoid runaway.",

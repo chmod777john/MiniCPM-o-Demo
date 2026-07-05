@@ -938,6 +938,10 @@ class DuplexView:
         Returns:
             DuplexGenerateResult
         """
+        duplex = getattr(self._model, "duplex", None)
+        if duplex is not None and hasattr(duplex, "generate_audio"):
+            duplex.generate_audio = self.config.generate_audio
+
         result = self._model.duplex_generate(
             decode_mode=self.config.decode_mode,
             temperature=self.config.temperature,
@@ -953,7 +957,7 @@ class DuplexView:
         
         # 转换音频
         audio_data = None
-        if result.get("audio_waveform") is not None:
+        if self.config.generate_audio and result.get("audio_waveform") is not None:
             waveform = result["audio_waveform"]
             if isinstance(waveform, torch.Tensor):
                 waveform = waveform.cpu().numpy()

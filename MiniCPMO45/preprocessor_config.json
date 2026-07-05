@@ -20,6 +20,7 @@
   "im_id_start": "<image_id>",
   "im_id_end": "</image_id>",
   "slice_mode": true,
+  "downsample_mode": "16x",
   "audio_pool_step": 5,
   "norm_mean": [
     0.5,
@@ -31,5 +32,5 @@
     0.5,
     0.5
   ],
-  "version": 4.5
+  "version": 4.6
 }

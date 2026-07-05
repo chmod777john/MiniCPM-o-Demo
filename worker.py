@@ -16,8 +16,10 @@ import json
 import time
 import asyncio
 import argparse
+import copy
 import logging
 import base64
+import os
 import threading
 from typing import Optional, List, Dict, Any
 
@@ -36,6 +38,38 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
 logger = logging.getLogger("worker")
+
+
+def _ws_debug_enabled() -> bool:
+    return os.environ.get("MCPMO_WS_DEBUG", "").lower() in {"1", "true", "yes", "on"}
+
+
+def _uvicorn_log_config(*, debug: bool) -> Dict[str, Any]:
+    config = copy.deepcopy(uvicorn.config.LOGGING_CONFIG)
+    fmt = "%(asctime)s [%(levelprefix)s] %(name)s: %(message)s"
+    config["formatters"]["default"]["fmt"] = fmt
+    config["formatters"]["access"]["fmt"] = (
+        '%(asctime)s [%(levelprefix)s] %(name)s: %(client_addr)s - "%(request_line)s" %(status_code)s'
+    )
+    if debug:
+        config["loggers"]["uvicorn.error"]["level"] = "DEBUG"
+        config["loggers"]["websockets"] = {"handlers": ["default"], "level": "DEBUG", "propagate": False}
+        config["loggers"]["websockets.client"] = {"handlers": ["default"], "level": "DEBUG", "propagate": False}
+        config["loggers"]["websockets.server"] = {"handlers": ["default"], "level": "DEBUG", "propagate": False}
+    return config
+
+
+def _enable_ws_debug_logging() -> bool:
+    enabled = _ws_debug_enabled()
+    if not enabled:
+        return False
+    formatter = logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+    for handler in logging.getLogger().handlers:
+        handler.setFormatter(formatter)
+    for name in ("websockets", "websockets.client", "websockets.server", "uvicorn.error"):
+        logging.getLogger(name).setLevel(logging.DEBUG)
+    logger.info("WebSocket protocol debug logging enabled")
+    return True
 
 # ============ 请求/响应模型 ============
 
@@ -353,6 +387,7 @@ async def clear_cache():
 
 def main():
     from config import get_config
+    ws_debug = _enable_ws_debug_logging()
     cfg = get_config()
 
     parser = argparse.ArgumentParser(description="MiniCPMO45 Worker")
@@ -386,7 +421,15 @@ def main():
     # Bump WS max payload from uvicorn's 16 MiB default to 128 MiB so that
     # base64-encoded video attachments (commonly 30-60 MiB after inflation)
     # can be received without the connection being torn down with code 1009.
-    uvicorn.run(app, host=args.host, port=port, ws_max_size=128 * 1024 * 1024)
+    uvicorn.run(
+        app,
+        host=args.host,
+        port=port,
+        ws="websockets" if ws_debug else "auto",
+        log_level="debug" if ws_debug else "info",
+        log_config=_uvicorn_log_config(debug=ws_debug),
+        ws_max_size=128 * 1024 * 1024,
+    )
 
 
 if __name__ == "__main__":

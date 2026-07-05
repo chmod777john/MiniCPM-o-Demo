@@ -64,6 +64,7 @@ class RemoteBackendSession:
         self._ws = await websockets.connect(
             _ws_url_for(self.base_url, self.ws_path),
             max_size=self.max_ws_size,
+            ping_interval=None,
         )
         await self._ws.send(json.dumps({
             "type": "session.init",

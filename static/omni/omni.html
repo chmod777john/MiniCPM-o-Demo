@@ -212,11 +212,11 @@
                     <input type="number" class="cg-input-sm" id="playbackDelay" value="200" min="0" max="2000" step="50">
                     <span style="font-size:10px;color:#888;">ms</span>
                 </div>
-                <div class="cg-row inline" data-tip="Max KV cache size — hard limit 8192 (max training context length)">
+                <div class="cg-row inline" data-tip="Client KV cache stop threshold">
                     <span class="cg-label" style="flex:none;">MaxKV</span>
-                    <input type="number" class="cg-input-sm" id="maxKvTokens" value="8192" min="512" max="8192" step="512">
+                    <input type="number" class="cg-input-sm" id="maxKvTokens" value="8192" min="512" max="32768" step="512">
                     <span style="font-size:10px;color:#888;">tok</span>
-                    <span style="font-size:9px;color:#b08050;">≤ 8192 (max training length)</span>
+                    <span style="font-size:9px;color:#b08050;">≤ 32768</span>
                 </div>
             </div>
         </details>

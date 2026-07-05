@@ -17,6 +17,7 @@ import re
 import json
 import asyncio
 import argparse
+import copy
 import logging
 import time
 from typing import Optional, List, Dict, Any
@@ -61,6 +62,38 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
 logger = logging.getLogger("gateway")
+
+
+def _ws_debug_enabled() -> bool:
+    return os.environ.get("MCPMO_WS_DEBUG", "").lower() in {"1", "true", "yes", "on"}
+
+
+def _uvicorn_log_config(*, debug: bool) -> Dict[str, Any]:
+    config = copy.deepcopy(uvicorn.config.LOGGING_CONFIG)
+    fmt = "%(asctime)s [%(levelprefix)s] %(name)s: %(message)s"
+    config["formatters"]["default"]["fmt"] = fmt
+    config["formatters"]["access"]["fmt"] = (
+        '%(asctime)s [%(levelprefix)s] %(name)s: %(client_addr)s - "%(request_line)s" %(status_code)s'
+    )
+    if debug:
+        config["loggers"]["uvicorn.error"]["level"] = "DEBUG"
+        config["loggers"]["websockets"] = {"handlers": ["default"], "level": "DEBUG", "propagate": False}
+        config["loggers"]["websockets.client"] = {"handlers": ["default"], "level": "DEBUG", "propagate": False}
+        config["loggers"]["websockets.server"] = {"handlers": ["default"], "level": "DEBUG", "propagate": False}
+    return config
+
+
+def _enable_ws_debug_logging() -> bool:
+    enabled = _ws_debug_enabled()
+    if not enabled:
+        return False
+    formatter = logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+    for handler in logging.getLogger().handlers:
+        handler.setFormatter(formatter)
+    for name in ("websockets", "websockets.client", "websockets.server", "uvicorn.error"):
+        logging.getLogger(name).setLevel(logging.DEBUG)
+    logger.info("WebSocket protocol debug logging enabled")
+    return True
 
 
 
@@ -467,7 +500,11 @@ async def _api_worker_passthrough_ws(
             recorder = None
 
         ws_url = f"ws://{worker.host}:{worker.port}{worker_path}?{identity_qs}"
-        worker_ws = await websockets.connect(ws_url, open_timeout=5, max_size=128 * 1024 * 1024)
+        worker_ws = await websockets.connect(
+            ws_url,
+            open_timeout=5,
+            max_size=128 * 1024 * 1024,
+        )
 
         def record_or_buffer(direction: str, frame: Dict[str, Any]) -> None:
             nonlocal recorder
@@ -1483,6 +1520,7 @@ async def admin():
 
 def main():
     from config import get_config
+    ws_debug = _enable_ws_debug_logging()
     cfg = get_config()
 
     parser = argparse.ArgumentParser(description="MiniCPMO45 Gateway")
@@ -1553,6 +1591,9 @@ def main():
             app,
             host=args.host,
             port=port,
+            ws="websockets" if ws_debug else "auto",
+            log_level="debug" if ws_debug else "info",
+            log_config=_uvicorn_log_config(debug=ws_debug),
             ws_max_size=128 * 1024 * 1024,
             **ssl_kwargs,
         )
@@ -1561,6 +1602,7 @@ def main():
             host=args.host,
             port=args.internal_port,
             log_level="info",
+            log_config=_uvicorn_log_config(debug=ws_debug),
         )
         public_server = uvicorn.Server(public_config)
         internal_server = uvicorn.Server(internal_config)

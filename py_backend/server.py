@@ -11,8 +11,10 @@ from __future__ import annotations
 import argparse
 import asyncio
 import base64
+import copy
 import json
 import logging
+import os
 import time
 import uuid
 from contextlib import asynccontextmanager, suppress
@@ -37,6 +39,39 @@ logger = logging.getLogger("backend_server")
 SERVER_CONFIG: Dict[str, Any] = {}
 _backend: Any = None
 _server_state: Optional["BackendServerState"] = None
+
+
+def _ws_debug_enabled() -> bool:
+    return os.environ.get("MCPMO_WS_DEBUG", "").lower() in {"1", "true", "yes", "on"}
+
+
+def _uvicorn_log_config(*, debug: bool) -> Dict[str, Any]:
+    import uvicorn
+
+    config = copy.deepcopy(uvicorn.config.LOGGING_CONFIG)
+    fmt = "%(asctime)s [%(levelprefix)s] %(name)s: %(message)s"
+    config["formatters"]["default"]["fmt"] = fmt
+    config["formatters"]["access"]["fmt"] = (
+        '%(asctime)s [%(levelprefix)s] %(name)s: %(client_addr)s - "%(request_line)s" %(status_code)s'
+    )
+    if debug:
+        config["loggers"]["uvicorn.error"]["level"] = "DEBUG"
+        config["loggers"]["websockets"] = {"handlers": ["default"], "level": "DEBUG", "propagate": False}
+        config["loggers"]["websockets.server"] = {"handlers": ["default"], "level": "DEBUG", "propagate": False}
+    return config
+
+
+def _enable_ws_debug_logging() -> bool:
+    enabled = _ws_debug_enabled()
+    if not enabled:
+        return False
+    formatter = logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+    for handler in logging.getLogger().handlers:
+        handler.setFormatter(formatter)
+    for name in ("websockets", "websockets.server", "uvicorn.error"):
+        logging.getLogger(name).setLevel(logging.DEBUG)
+    logger.info("WebSocket protocol debug logging enabled")
+    return True
 
 
 def _payload(message: Dict[str, Any]) -> Dict[str, Any]:
@@ -242,6 +277,9 @@ class BackendProtocolSession:
 
     async def _init_duplex(self, params: Dict[str, Any]) -> None:
         config = _first_dict(params.get("config"), params.get("duplex"))
+        if "use_tts" in params:
+            config = dict(config)
+            config["generate_audio"] = bool(params.get("use_tts"))
         if config:
             await asyncio.to_thread(self.backend.set_duplex_config, config)
 
@@ -393,6 +431,15 @@ class BackendProtocolSession:
             audio_base64 = base64.b64encode(waveform.astype(np.float32).tobytes()).decode("utf-8")
         else:
             audio_base64 = None
+
+        if audio_base64:
+            await self.send_output_delta(
+                "audio",
+                session_id=self.session_id,
+                response_id=response_id,
+                input_id=input_id,
+                audio=audio_base64,
+            )
 
         await self.send(
             "response.done",
@@ -632,6 +679,7 @@ def main() -> None:
     from config import get_config
     import uvicorn
 
+    ws_debug = _enable_ws_debug_logging()
     cfg = get_config()
     parser = argparse.ArgumentParser(description="MiniCPMO45 backend protocol server")
     parser.add_argument("--host", default="0.0.0.0")
@@ -662,7 +710,27 @@ def main() -> None:
         "attn_implementation": cfg.attn_implementation,
     })
 
-    uvicorn.run(app, host=args.host, port=args.port, ws_max_size=128 * 1024 * 1024)
+    uvicorn.run(
+        app,
+        host=args.host,
+        port=args.port,
+        ws="websockets" if ws_debug else "auto",
+        log_level="debug" if ws_debug else "info",
+        log_config=_uvicorn_log_config(debug=ws_debug),
+        # Temporary guard for the internal worker<->backend WebSocket.
+        # In video duplex, the worker can enqueue input.append frames faster than
+        # the backend consumes full model/TTS units. With uvicorn's legacy
+        # websockets server, incoming data messages sit in an internal max_queue;
+        # when that queue stays full, the protocol reader may not reach an
+        # already-sent PONG control frame before the default 20s timeout. Logs
+        # showed the worker replying to backend PING immediately while backend
+        # timed out after continuing to process queued input units. A longer
+        # keepalive window avoids false backend_error closes until inference
+        # speed/backpressure makes consumption keep up with input rate.
+        ws_ping_interval=360.0,
+        ws_ping_timeout=360.0,
+        ws_max_size=128 * 1024 * 1024,
+    )
 
 
 if __name__ == "__main__":
