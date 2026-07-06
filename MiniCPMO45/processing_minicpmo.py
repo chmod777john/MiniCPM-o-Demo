@@ -475,12 +475,7 @@ class MiniCPMVImageProcessor(BaseImageProcessor):
         )
 
 
-try:
-    AutoImageProcessor.register("MiniCPMVImageProcessor", MiniCPMVImageProcessor)
-except AttributeError:
-    # Transformers 5.13 register() expects a config class instead of the legacy
-    # string key. The preprocessor_config auto_map still resolves this processor.
-    pass
+AutoImageProcessor.register("MiniCPMVImageProcessor", MiniCPMVImageProcessor)
 
 
 def chunk_audio(audio: np.ndarray, max_duration_seconds: int = 30, sample_rate: int = 16000) -> List[np.ndarray]:

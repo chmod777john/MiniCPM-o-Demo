@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>MiniCPMO45 — Multimodal Inference Service</title>
+    <title>o5-no-fc — Multimodal Inference Service</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
 
@@ -293,7 +293,7 @@
 <body>
     <div class="header">
         <div class="header-left">
-            <h1>MiniCPM-o 4.5</h1>
+            <h1>o5-no-fc</h1>
             <div class="nav-links">
                 <a href="/" class="active">Home</a>
             </div>
@@ -350,35 +350,35 @@
         </div>
 
         <div class="intro-section">
-            <div class="intro-header">About MiniCPM-o 4.5</div>
+            <div class="intro-header">About o5-no-fc</div>
             <div class="intro-lead">
-                MiniCPM-o 4.5 is the latest and most capable model in the MiniCPM-o series. The model is built in an end-to-end fashion based on SigLip2, Whisper-medium, CosyVoice2, and Qwen3-8B with a total of 9B parameters. It exhibits a significant performance improvement, and introduces new features for full-duplex multimodal live streaming.
+                o5-no-fc is the latest and most capable model in the MiniCPM-o series. The model is built in an end-to-end fashion based on SigLip2, Whisper-medium, CosyVoice2, and Qwen3-8B with a total of 9B parameters. It exhibits a significant performance improvement, and introduces new features for full-duplex multimodal live streaming.
             </div>
             <div class="feature-grid">
                 <div class="feature-card">
                     <div class="feat-icon">🔥</div>
                     <div class="feat-title">Leading Visual Capability</div>
-                    <div class="feat-desc">MiniCPM-o 4.5 achieves an average score of 77.6 on OpenCompass, a comprehensive evaluation of 8 popular benchmarks. With only 9B parameters, it surpasses widely used proprietary models like GPT-4o, Gemini 2.0 Pro, and approaches Gemini 2.5 Flash for vision-language capabilities.</div>
+                    <div class="feat-desc">o5-no-fc achieves an average score of 77.6 on OpenCompass, a comprehensive evaluation of 8 popular benchmarks. With only 9B parameters, it surpasses widely used proprietary models like GPT-4o, Gemini 2.0 Pro, and approaches Gemini 2.5 Flash for vision-language capabilities.</div>
                 </div>
                 <div class="feature-card">
                     <div class="feat-icon">🎙</div>
                     <div class="feat-title">Strong Speech Capability</div>
-                    <div class="feat-desc">MiniCPM-o 4.5 supports bilingual real-time speech conversation with configurable voices in English and Chinese. It features more natural, expressive and stable speech conversation. The model also allows for fun features such as voice cloning and role play via a simple reference audio clip.</div>
+                    <div class="feat-desc">o5-no-fc supports bilingual real-time speech conversation with configurable voices in English and Chinese. It features more natural, expressive and stable speech conversation. The model also allows for fun features such as voice cloning and role play via a simple reference audio clip.</div>
                 </div>
                 <div class="feature-card">
                     <div class="feat-icon">🎬</div>
                     <div class="feat-title">Full-Duplex Multimodal Live Streaming</div>
-                    <div class="feat-desc">MiniCPM-o 4.5 can process real-time, continuous video and audio input streams simultaneously while generating concurrent text and speech output streams in an end-to-end fashion, without mutual blocking. This allows MiniCPM-o 4.5 to see, listen, and speak simultaneously.</div>
+                    <div class="feat-desc">o5-no-fc can process real-time, continuous video and audio input streams simultaneously while generating concurrent text and speech output streams in an end-to-end fashion, without mutual blocking. This allows o5-no-fc to see, listen, and speak simultaneously.</div>
                 </div>
                 <div class="feature-card">
                     <div class="feat-icon">💪</div>
                     <div class="feat-title">Strong OCR Capability &amp; Efficiency</div>
-                    <div class="feat-desc">MiniCPM-o 4.5 can process high-resolution images (up to 1.8 million pixels) and high-FPS videos (up to 10fps) in any aspect ratio efficiently. It achieves state-of-the-art performance for end-to-end English document parsing on OmniDocBench.</div>
+                    <div class="feat-desc">o5-no-fc can process high-resolution images (up to 1.8 million pixels) and high-FPS videos (up to 10fps) in any aspect ratio efficiently. It achieves state-of-the-art performance for end-to-end English document parsing on OmniDocBench.</div>
                 </div>
                 <div class="feature-card" style="grid-column: 1 / -1;">
                     <div class="feat-icon">💫</div>
                     <div class="feat-title">Easy Usage</div>
-                    <div class="feat-desc">MiniCPM-o 4.5 can be easily used in various ways: PyTorch inference with Nvidia GPU, llama.cpp and Ollama for efficient CPU inference on local devices, int4 and GGUF quantized models in 16 sizes, vLLM and SGLang for high-throughput inference, and more.</div>
+                    <div class="feat-desc">o5-no-fc can be easily used in various ways: PyTorch inference with Nvidia GPU, llama.cpp and Ollama for efficient CPU inference on local devices, int4 and GGUF quantized models in 16 sizes, vLLM and SGLang for high-throughput inference, and more.</div>
                 </div>
             </div>
         </div>
@@ -386,7 +386,7 @@
         <div class="arch-section">
             <div class="arch-title">Model Architecture</div>
             <div class="arch-figure">
-                <img src="/static/assets/minicpm-o-45-framework.png" alt="MiniCPM-o 4.5 Model Architecture" />
+                <img src="/static/assets/minicpm-o-45-framework.png" alt="o5-no-fc Model Architecture" />
             </div>
             <div class="arch-list">
                 <div class="arch-item">
@@ -432,7 +432,7 @@
                             <tr><td>LiveCC</td><td><span class="cmp-no">✗</span></td><td><span class="cmp-no">✗</span></td><td><span class="cmp-yes">✓</span></td><td><span class="cmp-no">✗</span></td><td><span class="cmp-no">✗</span></td><td><span class="cmp-no">✗</span></td><td><span class="cmp-no">✗</span></td><td><span class="cmp-no">✗</span></td><td><span class="cmp-no">✗</span></td></tr>
                             <tr><td>GPT-4o</td><td><span class="cmp-no">✗</span></td><td><span class="cmp-no">✗</span></td><td><span class="cmp-no">✗</span></td><td><span class="cmp-no">✗</span></td><td><span class="cmp-no">✗</span></td><td><span class="cmp-yes">✓</span></td><td><span class="cmp-no">✗</span></td><td><span class="cmp-yes">✓</span></td><td><span class="cmp-yes">✓</span></td></tr>
                             <tr><td>Gemini 2.5</td><td><span class="cmp-no">✗</span></td><td><span class="cmp-no">✗</span></td><td><span class="cmp-no">✗</span></td><td><span class="cmp-no">✗</span></td><td><span class="cmp-no">✗</span></td><td><span class="cmp-yes">✓</span></td><td><span class="cmp-no">✗</span></td><td><span class="cmp-yes">✓</span></td><td><span class="cmp-yes">✓</span></td></tr>
-                            <tr class="highlight-row"><td>MiniCPM-o 4.5</td><td><span class="cmp-yes">✓</span></td><td><span class="cmp-yes">✓</span></td><td><span class="cmp-yes">✓</span></td><td><span class="cmp-yes">✓</span></td><td><span class="cmp-yes">✓</span></td><td><span class="cmp-yes">✓</span></td><td><span class="cmp-yes">✓</span></td><td><span class="cmp-yes">✓</span></td><td><span class="cmp-yes">✓</span></td></tr>
+                            <tr class="highlight-row"><td>o5-no-fc</td><td><span class="cmp-yes">✓</span></td><td><span class="cmp-yes">✓</span></td><td><span class="cmp-yes">✓</span></td><td><span class="cmp-yes">✓</span></td><td><span class="cmp-yes">✓</span></td><td><span class="cmp-yes">✓</span></td><td><span class="cmp-yes">✓</span></td><td><span class="cmp-yes">✓</span></td><td><span class="cmp-yes">✓</span></td></tr>
                         </tbody>
                     </table>
                 </div>

@@ -16,14 +16,21 @@ from MiniCPMO45.modeling_minicpmo import MiniCPMO, MiniCPMODuplex
 from MiniCPMO45.processing_minicpmo import MiniCPMOProcessor
 
 
-MODEL_PATH = os.environ.get("MODEL_PATH", "/user/weihongliang/MiniCPM-o-4_6")
-PT_PATH = os.environ.get("PT_PATH", "/user/weihongliang/o5_weights/omni_sft_main_run_iter7000.pt")
+MODEL_PATH = os.environ.get("MODEL_PATH")
+PT_PATH = os.environ.get("PT_PATH")
 REF_WAV = os.environ.get("REF_WAV", "assets/ref_audio/ref_minicpm_signature.wav")
-OUT_DIR = Path(os.environ.get("OUT_DIR", "/user/weihongliang/o5_vendored_duplex_probe"))
+OUT_DIR = Path(os.environ.get("OUT_DIR", "o5_vendored_duplex_probe"))
 USER_TEXT = os.environ.get("USER_TEXT", "请详细介绍西安的历史文化、旅游景点、美食和城市特色。")
 USER_WAV = os.environ.get("USER_WAV")
 EDGE_TTS_VOICE = "zh-CN-XiaoxiaoNeural"
 TRAILING_SILENCE_SECONDS = 6
+ATTN_IMPLEMENTATION = os.environ.get("ATTN_IMPLEMENTATION", "sdpa")
+RUNTIME_INFO = {"attn_implementation": ATTN_IMPLEMENTATION}
+
+
+def write_runtime_info():
+    with open(OUT_DIR / "runtime_info.json", "w", encoding="utf-8") as f:
+        json.dump(RUNTIME_INFO, f, ensure_ascii=False, indent=2, sort_keys=True)
 
 
 def load_16k(path):
@@ -59,9 +66,28 @@ def load_pt_state_dict(path):
 
 def load_o5_model():
     config = AutoConfig.from_pretrained(MODEL_PATH, trust_remote_code=True)
-    config._attn_implementation = "sdpa"
+    config._attn_implementation = ATTN_IMPLEMENTATION
     config._name_or_path = MODEL_PATH
     config.name_or_path = MODEL_PATH
+    print("attn_implementation", config._attn_implementation, flush=True)
+
+    try:
+        from transformers.utils import is_flash_attn_2_available
+        from transformers.utils.import_utils import is_causal_conv1d_available, is_flash_linear_attention_available
+        from transformers.models.qwen3_5_moe import modeling_qwen3_5_moe as qwen_moe
+
+        RUNTIME_INFO["flash_attn_2_available"] = bool(is_flash_attn_2_available())
+        RUNTIME_INFO["flash_linear_attention_available"] = bool(is_flash_linear_attention_available())
+        RUNTIME_INFO["causal_conv1d_available"] = bool(is_causal_conv1d_available())
+        RUNTIME_INFO["qwen_moe_fast_path"] = bool(getattr(qwen_moe, "is_fast_path_available", False))
+        print("flash_attn_2_available", RUNTIME_INFO["flash_attn_2_available"], flush=True)
+        print("flash_linear_attention_available", RUNTIME_INFO["flash_linear_attention_available"], flush=True)
+        print("causal_conv1d_available", RUNTIME_INFO["causal_conv1d_available"], flush=True)
+        print("qwen_moe_fast_path", RUNTIME_INFO["qwen_moe_fast_path"], flush=True)
+    except Exception as exc:
+        RUNTIME_INFO["fast_path_probe_error"] = f"{type(exc).__name__}: {exc}"
+        print("fast_path_probe_error", type(exc).__name__, str(exc), flush=True)
+    write_runtime_info()
 
     with init_empty_weights():
         model = MiniCPMO(config)
@@ -81,9 +107,15 @@ def load_o5_model():
 
 
 def main():
+    if not MODEL_PATH or not PT_PATH:
+        raise SystemExit("MODEL_PATH and PT_PATH must be set")
+
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     for pattern in ("user_input_*", "duplex_chunk_*.wav", "duplex_output_*.wav"):
         for path in OUT_DIR.glob(pattern):
+            path.unlink()
+    for path in (OUT_DIR / "runtime_info.json", OUT_DIR / "timings.jsonl"):
+        if path.exists():
             path.unlink()
     torch.manual_seed(1)
 

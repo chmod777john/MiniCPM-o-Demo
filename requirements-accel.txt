@@ -1,0 +1,9 @@
+# Optional CUDA extension accelerators.
+#
+# Install these into the same .venv after requirements.txt when you want the
+# fastest runtime. pip will use matching prebuilt wheels when available;
+# otherwise these packages may build from source for the current
+# torch/CUDA/Python ABI.
+
+flash-attn==2.8.3
+causal-conv1d==1.6.1

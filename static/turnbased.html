@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>MiniCPMO45 Turn-based Chat</title>
+    <title>o5-no-fc Turn-based Chat</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         [data-tooltip] { position: relative; cursor: help; }
@@ -881,7 +881,7 @@
     <!-- ========== Header ========== -->
     <div class="header">
         <div style="display:flex;align-items:center;gap:16px;">
-            <h1>MiniCPM-o 4.5</h1>
+            <h1>o5-no-fc</h1>
             <div class="nav-links">
                 <a href="/" >Home</a>
                 <a href="/turnbased" class="active">Turn-based Chat</a>
@@ -892,7 +892,7 @@
 
     <!-- ========== 初始视图（ChatGPT 风格） ========== -->
     <div class="initial-view" id="initialView">
-        <div class="initial-title">MiniCPM-o 4.5</div>
+        <div class="initial-title">o5-no-fc</div>
         <div class="initial-subtitle" id="initialSubtitle">Turn-based Chat</div>
 
         <!-- Preset + System 配置 -->
@@ -3216,7 +3216,7 @@ import { t } from '/static/shared/i18n-module.js';
 initNav('turnbased');
 
 // ── Page title ──
-document.title = t.turnbasedChat + ' – MiniCPM-o 4.5';
+document.title = t.turnbasedChat + ' – o5-no-fc';
 
 // ── Header status & subtitle ──
 document.getElementById('serviceStatus').textContent = t.connecting;

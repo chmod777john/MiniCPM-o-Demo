@@ -1492,15 +1492,6 @@ class MiniCPMO(MiniCPMOPreTrainedModel):
         if answer is not None:
             answer = answer.split("<|tts_eos|>")[0]
 
-        if use_tts_template and generate_audio:
-            logger.info(
-                "[chat non-stream TTS] answer_chars=%s generated_tokens=%s tts_bound=%s spk_bound=%s",
-                len(answer) if isinstance(answer, str) else None,
-                int(generated_ids.shape[0]),
-                tts_bound,
-                spk_bound,
-            )
-
         if use_tts_template and generate_audio and output_audio_path:
             import soundfile as sf
 
@@ -1662,12 +1653,6 @@ class MiniCPMO(MiniCPMOPreTrainedModel):
                 device=self.tts.device,
             ),
         )
-        logger.info(
-            "[chat non-stream TTS] condition_tokens=%s audio_code_tokens=%s finished=%s",
-            int(tts_embeds.shape[0]),
-            int(outputs.new_ids.shape[1]) if outputs.new_ids is not None else None,
-            bool(outputs.finished),
-        )
 
         import io
 
@@ -1694,12 +1679,6 @@ class MiniCPMO(MiniCPMOPreTrainedModel):
         )
         # convert wav bytes back to tensor for caller compatibility
         waveform, sr = sf.read(io.BytesIO(wav_bytes))
-        logger.info(
-            "[chat non-stream TTS] waveform_samples=%s sample_rate=%s duration=%.2fs",
-            len(waveform),
-            sr,
-            len(waveform) / sr if sr else -1,
-        )
         return torch.tensor(waveform, dtype=torch.float32)
 
     @torch.inference_mode()
@@ -4620,7 +4599,6 @@ class MiniCPMTTS(PreTrainedModel):
                 num_hidden_layers=config.num_hidden_layers,
                 num_key_value_heads=config.num_key_value_heads,
                 max_position_embeddings=config.max_position_embeddings,
-                rope_theta=getattr(config, "rope_theta", 10000.0),
                 attn_implementation=config.attn_implementation,
             )
 
@@ -5382,3 +5360,5 @@ def gen_logits(num_code: int, top_p=0.7, top_k=20, repetition_penalty=1.0):
         logits_processors.append(CustomRepetitionPenaltyLogitsProcessorRepeat(repetition_penalty, num_code, 16))
 
     return logits_warpers, logits_processors
+
+

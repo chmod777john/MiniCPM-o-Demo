@@ -1,27 +1,34 @@
 
 # pip install -r requirements.txt
 
---extra-index-url https://download.pytorch.org/whl/cu128
+--extra-index-url https://download.pytorch.org/whl/cu126
 
 # Core ML
-torch==2.11.0+cu128
-torchvision==0.26.0+cu128
-torchaudio==2.11.0+cu128
-torchcodec==0.11.1+cu128
-transformers==5.13.0
-accelerate==1.12.0
-safetensors>=0.7.0
+setuptools==83.0.0
+torch==2.8.0+cu126
+torchvision==0.23.0+cu126
+torchaudio==2.8.0+cu126
+transformers==5.5.4
+accelerate==1.14.0
+safetensors==0.8.0
+triton==3.4.0
+
+# Qwen3.5-MoE runtime acceleration with pure-Python/Triton packaging.
+# Extra CUDA extension accelerators live in requirements-accel.txt.
+flash-linear-attention==0.5.0
+fla-core==0.5.0
 
 # MiniCPM-o 4.6 / o5
-# minicpmo-utils 1.0.6 metadata pins librosa==0.9.0, but o5 runtime is validated
-# with librosa>=0.10.2. install.sh installs minicpmo-utils separately with --no-deps.
+# minicpmo-utils 1.0.6 metadata pins librosa==0.9.0, but the demo/gateway
+# runtime is validated with newer librosa. install.sh installs minicpmo-utils
+# separately with --no-deps so this explicit constraint wins.
 pillow==10.4.0
 decord==0.6.0
 moviepy==2.1.2
-onnxruntime>=1.18.0
-onnx
-HyperPyYAML
-einops>=0.8.1
+onnxruntime==1.21.0
+onnx==1.22.0
+HyperPyYAML==1.2.3
+einops==0.8.1
 
 # Web Service
 fastapi>=0.128.0
@@ -38,14 +45,15 @@ Pygments>=2.18.0
 # 这些过去靠 minicpmo-utils[all] 传递依赖隐式提供,未显式声明;gateway 轻镜像不装
 # minicpmo-utils,故在此显式列出。librosa 必须 >=0.10.2 —— 0.9.x 在新 setuptools 下
 # 因缺 pkg_resources 导入即崩(见历史故障:preset 加载失败 → sys-prompt 入口消失)。
-PyYAML>=6.0
+PyYAML==6.0.3
 librosa>=0.10.2
-soundfile>=0.12.1
+soxr==1.1.0
+soundfile==0.12.1
 edge-tts>=7.2.0
 
 # Data / Schema
-pydantic>=2.11.0
-numpy>=2.2.0
+pydantic==2.13.4
+numpy==2.2.5
 
 # Utilities
 tqdm>=4.67.0
