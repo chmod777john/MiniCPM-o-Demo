@@ -32,34 +32,58 @@ PYTHON=python3.10 bash install.sh
 MAX_JOBS=16 bash install.sh --with-accel
 ```
 
-## 用 cctl 启动 demo 服务
+## 启动 demo 服务
 
-浏览器 demo 可以通过 service helper 启动：
+准备模型代码目录和 checkpoint：
 
 ```bash
 source .venv/bin/activate
-MODEL_PATH=/path/to/model-code-and-tokenizer \
-PT_PATH=/path/to/checkpoint.pt \
-PUBLIC_PORT=8445 \
-bash scripts/start_o5_cctl_service.sh
+export MODEL_PATH=/path/to/model-code-and-tokenizer
+export PT_PATH=/path/to/checkpoint.pt
 ```
 
-这个 helper 会启动本地 backend，启动 cctl GPU worker，把 worker 注册到 backend，并按配置暴露浏览器访问入口。模型路径、checkpoint、日志和生成文件应放在项目目录或明确分配的数据目录里。
-
-查看 cctl 任务：
+启动 backend。backend 负责加载模型和执行推理：
 
 ```bash
-cctl task list
+PYTHONPATH=. python -m py_backend.server \
+  --host 127.0.0.1 \
+  --port 22510 \
+  --model-path "$MODEL_PATH" \
+  --pt-path "$PT_PATH" \
+  --gpu-id 0
 ```
 
-查看某个任务日志：
+另开一个终端，启动 worker。worker 作为 gateway 和 backend 之间的运行时入口：
 
 ```bash
-cctl job logs tasks/<task-id>
+source .venv/bin/activate
+PYTHONPATH=. python worker.py \
+  --host 127.0.0.1 \
+  --port 22410 \
+  --gpu-id 0 \
+  --backend-server-url http://127.0.0.1:22510
 ```
 
-停止自己的任务：
+再开一个终端，启动 gateway。gateway 提供浏览器页面和 WebSocket 入口：
 
 ```bash
-cctl job stop tasks/<task-id>
+source .venv/bin/activate
+PYTHONPATH=. python gateway.py \
+  --host 0.0.0.0 \
+  --port 8009 \
+  --internal-port 8010 \
+  --https \
+  --ssl-certfile certs/cert.pem \
+  --ssl-keyfile certs/key.pem
 ```
+
+最后把 worker 注册到 gateway：
+
+```bash
+curl -X PUT \
+  -H 'content-type: application/json' \
+  --data '{"endpoint":"127.0.0.1:22410","gpu_group":"local-gpu-0","labels":{"model":"o5","runtime":"local"}}' \
+  http://127.0.0.1:8010/internal/workers/local-o5-worker
+```
+
+然后访问 gateway 地址，例如 `https://127.0.0.1:8009/`。浏览器麦克风和摄像头 API 通常要求 HTTPS；如果只做后端调试，也可以把 gateway 改为 `--http`。

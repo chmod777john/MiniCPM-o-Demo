@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-PROJECT_DIR="${PROJECT_DIR:-/user/weihongliang/MiniCPM-o-Demo-wt-o5-inference-refactor-2026-06-30}"
-MODEL_PATH="${MODEL_PATH:-/user/weihongliang/MiniCPM-o-4_6}"
-PT_PATH="${PT_PATH:-/backup/user/caohao/training/omni-sft-main-run/checkpoints/omni_sft_main_run_iter2000.pt}"
+PROJECT_DIR="${PROJECT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+MODEL_PATH="${MODEL_PATH:-}"
+PT_PATH="${PT_PATH:-}"
 VENV_DIR="${VENV_DIR:-${PROJECT_DIR}/.venv}"
 
 BACKEND_HOST="${BACKEND_HOST:-127.0.0.1}"
@@ -17,10 +17,10 @@ GPU_ID="${GPU_ID:-0}"
 
 WORKER_ID="${WORKER_ID:-o5-cctl-worker}"
 WORKER_GPU_GROUP="${WORKER_GPU_GROUP:-cctl-a100-${GPU_ID}}"
-LOG_DIR="${LOG_DIR:-/user/weihongliang/o5_cctl_logs}"
+LOG_DIR="${LOG_DIR:-${PROJECT_DIR}/run-logs/o5_cctl}"
 ENABLE_FRP="${ENABLE_FRP:-1}"
-FRPC_BIN="${FRPC_BIN:-/user/weihongliang/frp_0.65.0_linux_amd64/frpc}"
-FRPC_CONFIG="${FRPC_CONFIG:-/user/weihongliang/frp_0.65.0_linux_amd64/frpc_o5_cctl_8009_8444.toml}"
+FRPC_BIN="${FRPC_BIN:-frpc}"
+FRPC_CONFIG="${FRPC_CONFIG:-}"
 
 mkdir -p "${LOG_DIR}"
 cd "${PROJECT_DIR}"
@@ -37,12 +37,14 @@ if [ ! -x "${PYTHON}" ]; then
     echo "[start] missing python: ${PYTHON}" >&2
     exit 1
 fi
-if [ ! -d "${MODEL_PATH}" ]; then
+if [ -z "${MODEL_PATH}" ] || [ ! -d "${MODEL_PATH}" ]; then
     echo "[start] missing model dir: ${MODEL_PATH}" >&2
+    echo "[start] set MODEL_PATH=/path/to/model-code-and-tokenizer" >&2
     exit 1
 fi
-if [ ! -f "${PT_PATH}" ]; then
+if [ -z "${PT_PATH}" ] || [ ! -f "${PT_PATH}" ]; then
     echo "[start] missing pt file: ${PT_PATH}" >&2
+    echo "[start] set PT_PATH=/path/to/checkpoint.pt" >&2
     exit 1
 fi
 
@@ -124,6 +126,10 @@ curl -sk "https://127.0.0.1:${GATEWAY_PORT}/health" >/dev/null
 echo "[start] service ready"
 
 if [ "${ENABLE_FRP}" = "1" ]; then
+    if [ -z "${FRPC_CONFIG}" ]; then
+        echo "[start] ENABLE_FRP=1 requires FRPC_CONFIG=/path/to/frpc.toml" >&2
+        exit 1
+    fi
     if [ ! -x "${FRPC_BIN}" ]; then
         echo "[start] missing frpc: ${FRPC_BIN}" >&2
         exit 1
