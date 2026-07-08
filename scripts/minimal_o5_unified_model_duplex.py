@@ -212,6 +212,7 @@ def main():
             "n_tts_tokens": n_tts_tokens,
             "text": text,
             "prefill": prefill,
+            "profile_events": result.get("profile_events"),
             "compile_enabled": ENABLE_COMPILE,
             "compile_mode": COMPILE_MODE if ENABLE_COMPILE else None,
             "compile_cache_dir": os.environ.get("TORCHINDUCTOR_CACHE_DIR") if ENABLE_COMPILE else None,
