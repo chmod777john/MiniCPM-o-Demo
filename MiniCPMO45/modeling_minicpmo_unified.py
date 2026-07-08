@@ -2548,6 +2548,16 @@ class DuplexCapability(BaseMiniCPMODuplex):
         }
     )
 
+    def _profile_enabled(self) -> bool:
+        return os.environ.get("MINICPMO_PROFILE", "0") == "1"
+
+    def _profile_add(self, events: Optional[list], name: str, start: float, **meta) -> None:
+        if events is None:
+            return
+        item = {"name": name, "dur_s": time.time() - start}
+        item.update(meta)
+        events.append(item)
+
     @classmethod
     def from_existing_model(
         cls,
@@ -2710,13 +2720,14 @@ class DuplexCapability(BaseMiniCPMODuplex):
         cost_audio_process = 0.0
         cost_audio_embed = 0.0
         cost_audio_feed = 0.0
+        profile_events = [] if self._profile_enabled() else None
 
         def _make_result(success, reasons=""):
             reason = reasons
             if isinstance(reasons, list):
                 reason = "; ".join(reasons)
 
-            return {
+            result = {
                 "success": success,
                 "reason": reason,
                 "cost_vision_process": cost_vision_process,
@@ -2727,6 +2738,9 @@ class DuplexCapability(BaseMiniCPMODuplex):
                 "cost_audio_feed": cost_audio_feed,
                 "cost_all": time.time() - start_time,
             }
+            if profile_events is not None:
+                result["profile_events"] = profile_events
+            return result
 
         if self.is_session_stop_set():
             return _make_result(False)
@@ -2760,7 +2774,9 @@ class DuplexCapability(BaseMiniCPMODuplex):
         self._current_unit_prefill_tokens = []
 
         # Step 1: Feed <unit> token
+        t0 = time.time()
         self.decoder.feed(self.decoder.embed_token(self.unit_token_id))
+        self._profile_add(profile_events, "prefill.unit_token_feed", t0, tokens=1)
         self._current_unit_prefill_tokens.append(self.unit_token_id)
 
         # Step 2: process image
@@ -2808,14 +2824,17 @@ class DuplexCapability(BaseMiniCPMODuplex):
                     "tgt_sizes": [torch.tensor(all_tgt_sizes) if all_tgt_sizes else []],
                 }
 
-            cost_vision_process = time.time() - t0
+                cost_vision_process = time.time() - t0
+                self._profile_add(profile_events, "prefill.vision_process", t0, frames=len(frame_list))
 
-            t0 = time.time()
+                t0 = time.time()
             # Get vision embeddings for all images (each may have multiple slices)
             # vision_hidden_states is a list, one entry per input image
             # Each entry contains embeddings for [source_image, slice_1, slice_2, ...]
-            vision_hidden_states = self.model.get_vision_embedding(processed_frames)
-            cost_vision_embed = time.time() - t0
+                vision_hidden_states = self.model.get_vision_embedding(processed_frames)
+                cost_vision_embed = time.time() - t0
+                n_vision_slices = sum(len(x) for x in vision_hidden_states) if vision_hidden_states is not None else 0
+                self._profile_add(profile_events, "prefill.vision_embed", t0, frames=len(frame_list), slices=n_vision_slices)
 
             if vision_hidden_states is not None and len(vision_hidden_states) > 0:
                 t0 = time.time()
@@ -2960,11 +2979,14 @@ class DuplexCapability(BaseMiniCPMODuplex):
                 # For OMNI MODE, no pending logits needed here (wait for audio)
 
                 cost_vision_feed = time.time() - t0
+                self._profile_add(profile_events, "prefill.vision_feed", t0, operations=len(feed_operations), batched=bool(batch_vision_feed))
 
         # Step 3: process audio (if any)
         if has_audio:
             # accumulate audio to buffer
+            t0 = time.time()
             self.audio_buffer = np.concatenate([self.audio_buffer, audio_waveform])
+            self._profile_add(profile_events, "prefill.audio_buffer_append", t0, input_samples=len(audio_waveform), buffer_samples=len(self.audio_buffer))
 
             # calculate required audio length
             if self.audio_chunk_idx == 0:
@@ -3000,6 +3022,7 @@ class DuplexCapability(BaseMiniCPMODuplex):
 
             batch_feature = batch_feature.to(self.device)
             cost_audio_process = time.time() - t0
+            self._profile_add(profile_events, "prefill.audio_process", t0, chunk_samples=len(audio_chunk), feature_frames=int(batch_feature.audio_features.shape[-1]))
 
             t0 = time.time()
             embeds_nested = self.model.get_audio_embedding_streaming(
@@ -3010,10 +3033,12 @@ class DuplexCapability(BaseMiniCPMODuplex):
             )
             audio_embeds = torch.cat([t for g in embeds_nested for t in g], dim=0)
             cost_audio_embed = time.time() - t0
+            self._profile_add(profile_events, "prefill.audio_embed", t0, audio_tokens=int(audio_embeds.shape[0]))
 
             t0 = time.time()
             self.pending_logits, _ = self.decoder.feed(audio_embeds, return_logits=True)
             cost_audio_feed = time.time() - t0
+            self._profile_add(profile_events, "prefill.audio_llm_feed", t0, audio_tokens=int(audio_embeds.shape[0]))
 
             # Schema tracking: 用元组标记 audio embedding: ("audio", dim)
             embed_dim = audio_embeds.shape[0] if len(audio_embeds.shape) > 1 else 1
@@ -3054,9 +3079,10 @@ class DuplexCapability(BaseMiniCPMODuplex):
         cost_token2wav: float = 0.0,
         n_tokens: int = 0,
         n_tts_tokens: int = 0,
+        profile_events: Optional[list] = None,
     ) -> dict:
         """构造 streaming_generate 的标准返回 dict"""
-        return {
+        result = {
             "is_listen": is_listen,
             "text": text,
             "audio_waveform": audio_waveform if audio_waveform is not None else self._generate_silence_waveform(),
@@ -3070,6 +3096,9 @@ class DuplexCapability(BaseMiniCPMODuplex):
             "n_tokens": n_tokens,
             "n_tts_tokens": n_tts_tokens,
         }
+        if profile_events is not None:
+            result["profile_events"] = profile_events
+        return result
 
     @property
     def needs_finalize(self) -> bool:
@@ -3099,15 +3128,16 @@ class DuplexCapability(BaseMiniCPMODuplex):
         - 模式 B（同步）: generate → finalize → 返回结果
         """
         start_time = time.time()
+        profile_events = [] if self._profile_enabled() else None
 
         if self.is_session_stop_set():
             self._pending_finalize = None  # 无需 finalize
-            return self._make_generate_result(start_time, end_of_turn=True)
+            return self._make_generate_result(start_time, end_of_turn=True, profile_events=profile_events)
 
         # check if there are pending logits to process
         if not hasattr(self, "pending_logits") or self.pending_logits is None:
             self._pending_finalize = None  # 无需 finalize
-            return self._make_generate_result(start_time)
+            return self._make_generate_result(start_time, profile_events=profile_events)
 
         # use pending logits generated in streaming_prefill
         logits = self.pending_logits
@@ -3145,6 +3175,10 @@ class DuplexCapability(BaseMiniCPMODuplex):
             _tts_pad_suppressed = True
 
         llm_start_time = time.time()
+        llm_sample_s = 0.0
+        llm_sample_count = 0
+        llm_feed_s = 0.0
+        llm_feed_count = 0
         _token_trace = []  # [DEBUG] 记录每个 token 的详细信息
         _pending_terminator_id = None  # 延迟 feed 的终止符，和 </unit> 合并
         _chunk_has_tts_pad = False
@@ -3176,7 +3210,10 @@ class DuplexCapability(BaseMiniCPMODuplex):
                     text_repetition_window_size=text_repetition_window_size,
                     length_penalty=length_penalty,
                 )
-                _decode_ms = (time.time() - t_step) * 1000
+                _decode_dt = time.time() - t_step
+                llm_sample_s += _decode_dt
+                llm_sample_count += 1
+                _decode_ms = _decode_dt * 1000
 
                 # if current turn not ended, not allowed to listen (only check when not force_listen)
                 if last_id.item() == self.listen_token_id and (not self.current_turn_ended):
@@ -3226,7 +3263,10 @@ class DuplexCapability(BaseMiniCPMODuplex):
 
                 t_feed = time.time()
                 logits, hidden = self.decoder.feed(self.decoder.embed_token(last_id.item()), return_logits=True)
-                _feed_ms = (time.time() - t_feed) * 1000
+                _feed_dt = time.time() - t_feed
+                llm_feed_s += _feed_dt
+                llm_feed_count += 1
+                _feed_ms = _feed_dt * 1000
 
                 assert len(hidden.shape) == 3
                 assert hidden.shape[0] == 1
@@ -3278,12 +3318,24 @@ class DuplexCapability(BaseMiniCPMODuplex):
 
         llm_end_time = time.time()
         cost_llm = llm_end_time - llm_start_time
+        self._profile_add(
+            profile_events,
+            "generate.llm_decode",
+            llm_start_time,
+            tokens=len(total_ids_in_unit),
+            sample_s=llm_sample_s,
+            sample_count=llm_sample_count,
+            feed_s=llm_feed_s,
+            feed_count=llm_feed_count,
+            is_listen=bool(is_listen),
+        )
 
         if is_listen:
             self.total_hidden.append([])
             return self._make_generate_result(
                 start_time, cost_llm=cost_llm,
                 n_tokens=len(total_ids_in_unit),
+                profile_events=profile_events,
             )
 
         # 如果 unit 中出现了 tts_pad_id，传空列表给 TTS
@@ -3302,6 +3354,7 @@ class DuplexCapability(BaseMiniCPMODuplex):
                 start_time, is_listen=False, text=text,
                 end_of_turn=end_of_turn, cost_llm=cost_llm,
                 n_tokens=len(total_ids_in_unit),
+                profile_events=profile_events,
             )
 
         # TTS generate
@@ -3309,6 +3362,7 @@ class DuplexCapability(BaseMiniCPMODuplex):
         tts_prep_start_time = time.time()
         tts_condition = self._convert_results_to_tts_input(tts_hidden_in_unit)
         tts_prep_end_time = time.time()
+        self._profile_add(profile_events, "generate.tts_prepare", tts_prep_start_time, condition_tokens=int(tts_condition.shape[1]))
 
         max_token_per_chunk = 25 + 1
         min_token_per_chunk = 25 + 1
@@ -3338,6 +3392,7 @@ class DuplexCapability(BaseMiniCPMODuplex):
         )
 
         tts_end_time = time.time()
+        self._profile_add(profile_events, "generate.tts_decode", tts_start_time, condition_tokens=int(tts_condition.shape[1]), audio_tokens=int(new_tokens.numel()))
 
         # 更新 TTS 状态（注意：token2wav 的重置必须在音频生成之后，否则会丢失 buffer 中的 tokens）
         if end_of_turn:
@@ -3357,6 +3412,17 @@ class DuplexCapability(BaseMiniCPMODuplex):
         )
         _buf_after = len(self.token2wav_buffer)
         token2wav_end_time = time.time()
+        self._profile_add(
+            profile_events,
+            "generate.token2wav",
+            token2wav_start_time,
+            audio_tokens=int(new_tokens.numel()),
+            wav_samples=len(audio_waveform) if audio_waveform is not None else 0,
+            buffer_before=_buf_before,
+            buffer_after=_buf_after,
+            force_flush=bool(force_flush),
+            end_of_turn=bool(end_of_turn),
+        )
 
         # [DIAG] Token2Wav 诊断：buffer 状态 + 音频产出
         _wav_samples = len(audio_waveform) if audio_waveform is not None else 0
@@ -3382,6 +3448,7 @@ class DuplexCapability(BaseMiniCPMODuplex):
             cost_token2wav=token2wav_end_time - token2wav_start_time,
             n_tokens=len(total_ids_in_unit),
             n_tts_tokens=new_tokens.numel(),
+            profile_events=profile_events,
         )
 
     @torch.no_grad()
