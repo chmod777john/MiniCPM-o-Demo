@@ -64,6 +64,14 @@ class ModelConfig(BaseModel):
         ),
         pattern="^(auto|flash_attention_2|sdpa|eager)$",
     )
+    optimize: bool = Field(
+        default=False,
+        description=(
+            "是否开启 O5 推理加速(batched_mm MoE + TTS/LLM CUDA-graph + 视觉融合 + vocoder graph)。"
+            "默认 False = 原始行为逐字节不变。也可用环境变量 O5_OPTIMIZE=1 开启。"
+            "开启后会替代 torch.compile(二者互斥,自动跳过 compile)。详见 INTEGRATION.md。"
+        ),
+    )
 
 
 class AudioConfig(BaseModel):

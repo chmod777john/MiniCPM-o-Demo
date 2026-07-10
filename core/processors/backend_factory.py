@@ -17,6 +17,7 @@ def create_backend(config: Dict[str, Any]) -> Any:
         ref_audio_path=config.get("ref_audio_path"),
         duplex_pause_timeout=config.get("duplex_pause_timeout", 60.0),
         compile=config.get("compile", False),
+        optimize=config.get("optimize", False),
         chat_vocoder=config.get("chat_vocoder", "token2wav"),
         attn_implementation=config.get("attn_implementation", "auto"),
     )

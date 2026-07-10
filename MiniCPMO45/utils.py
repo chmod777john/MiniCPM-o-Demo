@@ -1469,7 +1469,13 @@ class StreamDecoder:
 
     def reset(self):
         self.context = ""
-        self.cache = None
+        _r = getattr(self, "_llm_runner", None)
+        if _r is not None:
+            _r.reset()   # inference_mode-safe (buffers are inference tensors; demo resets outside inference_mode)
+            self.cache = _r.cache
+        else:
+            self.cache = None
+        self._static_pos = 0
         self.generated_tokens = []
         self.generated_special_tokens = []
         self.embeds = None
@@ -1503,6 +1509,9 @@ class StreamDecoder:
     def get_cache_length(self) -> int:
         if self.cache is None:
             return 0
+        from transformers.cache_utils import StaticCache as _SC
+        if isinstance(self.cache, _SC):
+            return getattr(self, "_static_pos", 0)
         if isinstance(self.cache, DynamicCache):
             return _dc_seq_len(self.cache)
         # Tuple cache format
@@ -2257,23 +2266,89 @@ class StreamDecoder:
         L = embeds.size(0)
         device = embeds.device
 
+        from .opt_flags import OPT as _OPT
+        if bool(_OPT.get("llm_graph")):
+            if getattr(self, "_llm_runner", None) is None:
+                from .llm_graph import LLMGraphRunner
+                self._llm_runner = LLMGraphRunner(self.m.model, self.m.lm_head, max_cache_len=8192)
+                self._static_pos = 0
+                self.cache = self._llm_runner.cache
+            _r = self._llm_runner
+            _pos = self._static_pos
+            if _pos + L > _r.max_cache_len:
+                # Session exceeds the graph StaticCache ceiling. StaticLayer auto-advances its own write
+                # index (cumulative_length), so writing past max_cache_len device-asserts. Reset the session
+                # (context lost) to stay crash-safe. NOTE: the demo sliding_window does NOT help here -- it
+                # silently no-ops on a StaticCache (no .crop). For long sessions with llm_graph, options are:
+                # periodic session reset (bounds cache), raise max_cache_len (VRAM permitting), or disable
+                # llm_graph (DynamicCache path supports real cache trimming).
+                logger.warning("[llm_graph] session cache full (%d+%d > %d); resetting session (context lost). "
+                               "sliding_window does NOT trim a StaticCache; reset sessions or raise max_cache_len.",
+                               _pos, L, _r.max_cache_len)
+                _r.reset(); self._static_pos = 0; _pos = 0
+            if L == 1:
+                _h = _r.decode(embeds.unsqueeze(0), _pos)
+            else:
+                _h = _r.prefill(embeds.unsqueeze(0), _pos)
+            self._static_pos = _pos + L
+            self.cache = _r.cache
+            if return_logits:
+                return self.m.lm_head(_h[:, -1:])[:, -1], _h
+            return
+        if bool(_OPT.get("llm_static")):
+            from transformers.cache_utils import StaticCache
+            if self.cache is None or not isinstance(self.cache, StaticCache):
+                self.cache = StaticCache(config=self.m.config, max_cache_len=8192)
+                self._static_pos = 0
+            _pl = self._static_pos
+            _cp = torch.arange(_pl, _pl + L, device=device)
+            _pos = _cp.unsqueeze(0)
+            _mv = _pl + L
+            _am = torch.zeros(1, 8192, dtype=torch.long, device=device)
+            _am[:, :_mv] = 1
+            self._static_pos = _mv
+            out = self.m.model(inputs_embeds=embeds.unsqueeze(0), position_ids=_pos,
+                               cache_position=_cp, attention_mask=_am,
+                               past_key_values=self.cache, return_dict=True, output_hidden_states=True)
+            self.cache = out.past_key_values
+            if return_logits:
+                _h = out.hidden_states[-1]
+                return self.m.lm_head(_h[:, -1:])[:, -1], _h
+            return
+
         past_len = self.get_cache_length()
         pos_ids = torch.arange(past_len, past_len + L, device=device).unsqueeze(0)  # [1, L]
 
-        out = self.m(
-            inputs_embeds=embeds.unsqueeze(0),  # [1, L, H]
-            position_ids=pos_ids,
-            past_key_values=self.cache,
-            # use_cache = True,
-            return_dict=True,
-            output_hidden_states=True,
-            # attention_mask=attention_mask
-        )
-        self.cache = out.past_key_values
+        if _OPT.get("lmhead"):
+            # skip CausalLM internal full-vocab lm_head + our double recompute;
+            # run backbone, lm_head on LAST position only. Bit-identical logits + hidden.
+            out = self.m.model(
+                inputs_embeds=embeds.unsqueeze(0),  # [1, L, H]
+                position_ids=pos_ids,
+                past_key_values=self.cache,
+                return_dict=True,
+                output_hidden_states=True,
+            )
+            self.cache = out.past_key_values
+            if return_logits:
+                _h = out.hidden_states[-1]
+                logits = self.m.lm_head(_h[:, -1:])[:, -1]  # [1, vocab]
+                return logits, _h
+        else:
+            out = self.m(
+                inputs_embeds=embeds.unsqueeze(0),  # [1, L, H]
+                position_ids=pos_ids,
+                past_key_values=self.cache,
+                # use_cache = True,
+                return_dict=True,
+                output_hidden_states=True,
+                # attention_mask=attention_mask
+            )
+            self.cache = out.past_key_values
 
-        if return_logits:
-            logits = self.m.lm_head(out.hidden_states[-1])[:, -1]  # [1, vocab]
-            return logits, out.hidden_states[-1]
+            if return_logits:
+                logits = self.m.lm_head(out.hidden_states[-1])[:, -1]  # [1, vocab]
+                return logits, out.hidden_states[-1]
 
     @torch.no_grad()
     def decode(

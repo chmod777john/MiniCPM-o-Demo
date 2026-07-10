@@ -5108,6 +5108,22 @@ class MiniCPMTTS(PreTrainedModel):
             dtype=torch.long,
         )
 
+        from .opt_flags import OPT as _OPT
+        _tts_fast = bool(_OPT.get("tts_fast")) and (force_no_stop or min_new_tokens >= max_new_token)
+        _pos_buf = torch.zeros(1, 1, dtype=torch.long, device=self.device) if _tts_fast else None
+        _tts_static = bool(_OPT.get("tts_static"))
+        if _tts_static and past_key_values is None:
+            from transformers.cache_utils import StaticCache
+            past_key_values = StaticCache(config=self.model.config, max_cache_len=4096)
+        _tts_graph = bool(_OPT.get("tts_graph"))
+        if _tts_graph:
+            if getattr(self, "_graph_runner", None) is None:
+                from .tts_graph import TTSGraphRunner
+                self._graph_runner = TTSGraphRunner(self.model, max_cache_len=8192)
+            _runner = self._graph_runner
+            if past_key_values is None:
+                _runner.reset()
+
         for t in range(max_new_token):
             audio_bos = False
 
@@ -5124,27 +5140,45 @@ class MiniCPMTTS(PreTrainedModel):
                 # Generate the following audio tokens, it is applicable to all other cases, including second and the following calling of `generate`
                 inputs_embeds_ = self.emb_code[0](new_tokens[:, t - 1 : t, 0])
 
-                position_ids = torch.tensor(
-                    [text_start_pos + condition_length + t - 1],  # prefill the previous token
-                    dtype=torch.long,
-                    device=self.device,
-                ).unsqueeze(0)
+                if _tts_fast:
+                    _pos_buf.fill_(text_start_pos + condition_length + t - 1)
+                    position_ids = _pos_buf
+                else:
+                    position_ids = torch.tensor(
+                        [text_start_pos + condition_length + t - 1],  # prefill the previous token
+                        dtype=torch.long,
+                        device=self.device,
+                    ).unsqueeze(0)
 
-            outputs: BaseModelOutputWithPast = self.model(
-                position_ids=position_ids,
-                # cache_position=position_ids,
-                past_key_values=past_key_values,
-                inputs_embeds=inputs_embeds_,
-                use_cache=True,
-                output_attentions=False,
-                # return_dict=True,  # Add this to ensure returns dict with past_key_values
-            )
-
-            del position_ids
-            del inputs_embeds_
-
-            hidden_states = outputs.last_hidden_state
-            past_key_values = outputs.past_key_values
+            if _tts_graph:
+                if t == 0:
+                    hidden_states = _runner.prefill(inputs_embeds_, position_ids.reshape(-1))
+                else:
+                    hidden_states = _runner.decode(inputs_embeds_, text_start_pos + condition_length + t - 1)
+                past_key_values = _runner.cache
+                del position_ids
+                del inputs_embeds_
+            elif _tts_static:
+                _cache_pos = position_ids.reshape(-1)
+                if t == 0:
+                    _max_valid = text_start_pos + condition_length
+                    _attn_mask = torch.zeros(1, past_key_values.max_cache_len, dtype=torch.long, device=self.device)
+                    _attn_mask[:, :_max_valid] = 1
+                else:
+                    _attn_mask = None
+                outputs = self.model(position_ids=position_ids, cache_position=_cache_pos, attention_mask=_attn_mask,
+                                     past_key_values=past_key_values, inputs_embeds=inputs_embeds_, use_cache=True, output_attentions=False)
+                del position_ids
+                del inputs_embeds_
+                hidden_states = outputs.last_hidden_state
+                past_key_values = outputs.past_key_values
+            else:
+                outputs = self.model(position_ids=position_ids, past_key_values=past_key_values,
+                                     inputs_embeds=inputs_embeds_, use_cache=True, output_attentions=False)
+                del position_ids
+                del inputs_embeds_
+                hidden_states = outputs.last_hidden_state
+                past_key_values = outputs.past_key_values
 
             with P.cached():
                 logits = torch.empty(
@@ -5189,7 +5223,10 @@ class MiniCPMTTS(PreTrainedModel):
             scores = F.softmax(logits, dim=-1)
             del logits
 
-            idx_next = torch.multinomial(scores, num_samples=1).to(finish.device)
+            if bool(_OPT.get("tts_greedy")):
+                idx_next = scores.argmax(dim=-1, keepdim=True).to(finish.device)
+            else:
+                idx_next = torch.multinomial(scores, num_samples=1).to(finish.device)
             del scores
 
             idx_next = idx_next.view(-1, self.num_vq)
@@ -5200,12 +5237,12 @@ class MiniCPMTTS(PreTrainedModel):
             del finish_or
             new_tokens[:, t] = idx_next
 
-            if t == 0 and finish.any():
+            if t == 0 and (not _tts_fast) and finish.any():
                 break
 
             del idx_next
 
-            if finish.all():
+            if (not _tts_fast) and finish.all():
                 break
 
         # The latest generated token is not in the range returned this time. If it is an eos token, it is not returned. If it is a normal token, it is not returned.

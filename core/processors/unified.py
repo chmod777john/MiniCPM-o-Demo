@@ -1219,6 +1219,7 @@ class UnifiedProcessor(BaseProcessor):
         compile: bool = False,
         chat_vocoder: str = "token2wav",
         attn_implementation: str = "auto",
+        optimize: bool = False,
     ):
         """Initialize the unified processor.
 
@@ -1242,6 +1243,7 @@ class UnifiedProcessor(BaseProcessor):
         self.compile = compile
         self.chat_vocoder = chat_vocoder
         self.attn_implementation = attn_implementation
+        self.optimize = optimize
 
         # View instances (lazily created)
         self._chat_view: Optional[ChatView] = None
@@ -1461,8 +1463,20 @@ class UnifiedProcessor(BaseProcessor):
         init_time = time.time() - init_start
         logger.info(f"Unified mode initialization done in {init_time:.1f}s")
 
-        # torch.compile acceleration + warmup (optional)
-        if self.compile:
+        # ── O5 inference optimizations (default OFF) ─────────────────────────────
+        # Enable via config `model.optimize=true` OR env `O5_OPTIMIZE=1`. Hand-rolled CUDA graphs +
+        # host-sync removal; REPLACES torch.compile (mutually exclusive). See INTEGRATION.md.
+        import os as _os
+        _o5_opt = getattr(self, "optimize", False) or \
+            _os.environ.get("O5_OPTIMIZE", "").strip().lower() in ("1", "true", "yes", "on")
+        if _o5_opt:
+            from MiniCPMO45.o5_enable import enable_o5_optimizations
+            enable_o5_optimizations(self.model, logger=logger)
+        # ─────────────────────────────────────────────────────────────────────────
+
+        # torch.compile acceleration + warmup (optional; auto-skipped when optimize is on —
+        # the hand-rolled CUDA graphs replace torch.compile and the two must not be combined)
+        if self.compile and not getattr(self, "optimize", False):
             compile_start = time.time()
             # AWQ: skip llm.model (custom INT4 kernels incompatible with compile),
             # but still compile vpm / resampler / tts.model (all float, full benefit).

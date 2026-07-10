@@ -2824,17 +2824,18 @@ class DuplexCapability(BaseMiniCPMODuplex):
                     "tgt_sizes": [torch.tensor(all_tgt_sizes) if all_tgt_sizes else []],
                 }
 
-                cost_vision_process = time.time() - t0
-                self._profile_add(profile_events, "prefill.vision_process", t0, frames=len(frame_list))
+            cost_vision_process = time.time() - t0
+            self._profile_add(profile_events, "prefill.vision_process", t0, frames=len(frame_list))
 
-                t0 = time.time()
+            t0 = time.time()
             # Get vision embeddings for all images (each may have multiple slices)
             # vision_hidden_states is a list, one entry per input image
             # Each entry contains embeddings for [source_image, slice_1, slice_2, ...]
-                vision_hidden_states = self.model.get_vision_embedding(processed_frames)
-                cost_vision_embed = time.time() - t0
-                n_vision_slices = sum(len(x) for x in vision_hidden_states) if vision_hidden_states is not None else 0
-                self._profile_add(profile_events, "prefill.vision_embed", t0, frames=len(frame_list), slices=n_vision_slices)
+            vision_hidden_states = self.model.get_vision_embedding(processed_frames)
+            if os.environ.get('O5_VISION_SYNC'): torch.cuda.synchronize()
+            cost_vision_embed = time.time() - t0
+            n_vision_slices = sum(len(x) for x in vision_hidden_states) if vision_hidden_states is not None else 0
+            self._profile_add(profile_events, "prefill.vision_embed", t0, frames=len(frame_list), slices=n_vision_slices)
 
             if vision_hidden_states is not None and len(vision_hidden_states) > 0:
                 t0 = time.time()
@@ -2907,7 +2908,7 @@ class DuplexCapability(BaseMiniCPMODuplex):
                     feed_operations[-1] = (feed_operations[-1][0], True, feed_operations[-1][2])
 
                 # Execute feed operations
-                if batch_vision_feed and feed_operations:
+                if (batch_vision_feed or os.environ.get('O5_VISION_BATCH')) and feed_operations:
                     # Batch mode: concatenate all embeddings and feed at once
                     # This reduces LLM forward passes from N to 1
                     #
@@ -2940,8 +2941,12 @@ class DuplexCapability(BaseMiniCPMODuplex):
                         # VISION mode needs logits from the last token
                         self.pending_logits, _ = self.decoder.feed(all_embeds_to_feed, return_logits=True)
                     else:
-                        # OMNI mode: just feed, wait for audio to get logits
-                        self.decoder.feed(all_embeds_to_feed)
+                        # OMNI mode: fuse with the audio feed (one LLM forward) if enabled, else feed now
+                        from .opt_flags import OPT as _OPT
+                        if bool(_OPT.get("fuse_vision_audio")):
+                            self._fused_vision_embeds = all_embeds_to_feed
+                        else:
+                            self.decoder.feed(all_embeds_to_feed)
 
                     # Schema tracking: record all token IDs and embedding markers
                     for embed, is_last, token_id in feed_operations:
@@ -2978,6 +2983,7 @@ class DuplexCapability(BaseMiniCPMODuplex):
                             self._current_unit_prefill_tokens.append(("img", embed_dim))
                 # For OMNI MODE, no pending logits needed here (wait for audio)
 
+                if os.environ.get('O5_VISION_SYNC'): torch.cuda.synchronize()
                 cost_vision_feed = time.time() - t0
                 self._profile_add(profile_events, "prefill.vision_feed", t0, operations=len(feed_operations), batched=bool(batch_vision_feed))
 
@@ -3036,6 +3042,10 @@ class DuplexCapability(BaseMiniCPMODuplex):
             self._profile_add(profile_events, "prefill.audio_embed", t0, audio_tokens=int(audio_embeds.shape[0]))
 
             t0 = time.time()
+            _fv = getattr(self, "_fused_vision_embeds", None)
+            if _fv is not None:
+                audio_embeds = torch.cat([_fv, audio_embeds], dim=0)
+                self._fused_vision_embeds = None
             self.pending_logits, _ = self.decoder.feed(audio_embeds, return_logits=True)
             cost_audio_feed = time.time() - t0
             self._profile_add(profile_events, "prefill.audio_llm_feed", t0, audio_tokens=int(audio_embeds.shape[0]))
