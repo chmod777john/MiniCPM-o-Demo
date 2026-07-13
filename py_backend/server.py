@@ -631,6 +631,12 @@ async def lifespan(app: FastAPI):
     logger.info("Loading backend server backend: pytorch")
     _backend = create_backend(SERVER_CONFIG)
     await asyncio.to_thread(_backend.load_model)
+    mirror = _get_spmd_mirror(_backend)
+    if mirror is not None:
+        # Serving mirrors backend-level methods such as chat_complete and
+        # duplex_prefill. Point both ranks at their local backend wrapper;
+        # tensor-parallel work is still performed by the shared model inside it.
+        mirror.model = _backend
     _server_state = BackendServerState(_backend)
     _spmd_heartbeat_task = _start_spmd_heartbeat(_backend)
     logger.info("Backend server ready")
