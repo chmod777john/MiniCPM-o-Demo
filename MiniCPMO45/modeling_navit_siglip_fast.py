@@ -538,6 +538,9 @@ class SiglipFlashAttention2(SiglipAttention):
         h_k = key_states.view(bsz * len_k, -1, dim_head)
         h_v = value_states.view(bsz * len_k, -1, dim_head)
 
+        if cu_seqlens is not None and cu_seqlens.device != h_q.device:
+            cu_seqlens = cu_seqlens.to(h_q.device)
+
         attn_output = flash_attn_varlen_func(
             h_q,
             h_k,
@@ -1023,6 +1026,9 @@ class SiglipVisionTransformer(SiglipPreTrainedModel):
                 )
 
         hidden_states = self.embeddings(pixel_values=pixel_values, patch_attention_mask=patch_attention_mask, tgt_sizes=tgt_sizes)
+
+        if cu_seqlens is not None and cu_seqlens.device != hidden_states.device:
+            cu_seqlens = cu_seqlens.to(hidden_states.device)
 
         if not self._use_flash_attention_2:
             patch_attention_mask = patch_attention_mask.view(batch_size, -1)
