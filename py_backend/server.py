@@ -47,6 +47,13 @@ def _get_spmd_mirror(backend: Any) -> Any:
     return getattr(model, "_spmd_mirror", None)
 
 
+def _spmd_call(backend: Any, method: str, *args: Any, **kwargs: Any) -> Any:
+    mirror = _get_spmd_mirror(backend)
+    if mirror is not None and getattr(mirror, "is_driver", False):
+        return mirror.call(method, *args, **kwargs)
+    return getattr(backend, method)(*args, **kwargs)
+
+
 def _start_spmd_heartbeat(backend: Any) -> Optional[asyncio.Task]:
     """Keep SPMD worker ranks alive while the HTTP server is idle.
 
@@ -356,7 +363,9 @@ class BackendProtocolSession:
             if request.streaming:
                 model_msgs = convert_to_model_msgs(messages)
                 await asyncio.to_thread(
-                    self.backend.chat_prefill,
+                    _spmd_call,
+                    self.backend,
+                    "chat_prefill",
                     session_id=self.session_id,
                     msgs=model_msgs,
                     omni_mode=request.omni_mode,
@@ -365,7 +374,7 @@ class BackendProtocolSession:
                     enable_thinking=request.enable_thinking,
                 )
                 if request.generate_audio:
-                    await asyncio.to_thread(self.backend.chat_init_tts, request.tts_ref_audio)
+                    await asyncio.to_thread(_spmd_call, self.backend, "chat_init_tts", request.tts_ref_audio)
                 await self._stream_turn_based(request, response_id=response_id, input_id=input_id)
             else:
                 await self._non_stream_turn_based(
@@ -381,7 +390,9 @@ class BackendProtocolSession:
 
         def _run_generate() -> None:
             try:
-                for chunk in self.backend.chat_streaming_generate(
+                for chunk in _spmd_call(
+                    self.backend,
+                    "chat_streaming_generate",
                     session_id=self.session_id,
                     generate_audio=request.generate_audio,
                     max_new_tokens=request.max_new_tokens,
@@ -442,7 +453,9 @@ class BackendProtocolSession:
         input_id: Optional[str],
     ) -> None:
         result = await asyncio.to_thread(
-            self.backend.chat_complete,
+            _spmd_call,
+            self.backend,
+            "chat_complete",
             messages=messages,
             max_new_tokens=request.max_new_tokens,
             generate_audio=request.generate_audio,
@@ -502,13 +515,15 @@ class BackendProtocolSession:
 
             def _duplex_step() -> tuple[Any, float, Dict[str, Any], Dict[str, Any]]:
                 prefill_t0 = time.perf_counter()
-                prefill_result = self.backend.duplex_prefill(
+                prefill_result = _spmd_call(
+                    self.backend,
+                    "duplex_prefill",
                     audio_waveform=audio_waveform,
                     frame_list=decoded_frames.frame_list,
                     max_slice_nums=max_slice_nums,
                 )
                 prefill_ms = (time.perf_counter() - prefill_t0) * 1000
-                result = self.backend.duplex_generate(force_listen=force_listen)
+                result = _spmd_call(self.backend, "duplex_generate", force_listen=force_listen)
                 return result, prefill_ms, prefill_result, self._safe_metrics()
 
             result, prefill_ms, prefill_result, backend_metrics = await asyncio.to_thread(_duplex_step)
