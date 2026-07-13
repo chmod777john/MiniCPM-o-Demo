@@ -376,26 +376,33 @@ class ChatView(MiniCPMOProcessorMixin):
                 tts_ref_audio, _ = librosa.load(tts_config.ref_audio_path, sr=16000, mono=True)
                 logger.info(f"Chat TTS ref audio from tts_config.ref_audio_path: {tts_config.ref_audio_path}")
         
-        # 调用模型
+        return_prompt_flag = request.return_prompt if hasattr(request, 'return_prompt') else False
+        prompt = None
+
+        # Keep turn-based non-streaming chat on the same explicit prefill/generate
+        # path as TP2 serving and streaming chat. The legacy model.chat wrapper
+        # still carries o45 assumptions that break o5 TP2 shape handling.
         with torch.no_grad():
-            result = self._model.chat(
+            prompt = self.prefill(
+                session_id=f"chat_{int(start_time * 1000)}",
                 msgs=msgs,
-                sampling=do_sample,
-                max_new_tokens=max_new_tokens,
-                stream=False,
-                # TTS 参数
-                use_tts_template=use_tts_template,
-                generate_audio=generate_audio,
-                output_audio_path=output_audio_path,
-                tts_sampling_params=tts_sampling_params,
-                tts_ref_audio=tts_ref_audio,
-                # 高级参数
                 omni_mode=request.omni_mode if hasattr(request, 'omni_mode') else False,
-                enable_thinking=request.enable_thinking if hasattr(request, 'enable_thinking') else False,
-                return_prompt=request.return_prompt if hasattr(request, 'return_prompt') else False,
-                # 图像参数
                 max_slice_nums=request.image.max_slice_nums if hasattr(request, 'image') and request.image else None,
                 use_image_id=request.image.use_image_id if hasattr(request, 'image') and request.image else False,
+                use_tts_template=use_tts_template,
+                enable_thinking=request.enable_thinking if hasattr(request, 'enable_thinking') else False,
+            )
+            result = self.generate(
+                session_id=self._session_id,
+                max_new_tokens=max_new_tokens,
+                do_sample=do_sample,
+                generate_audio=generate_audio,
+                use_tts_template=use_tts_template,
+                enable_thinking=request.enable_thinking if hasattr(request, 'enable_thinking') else False,
+                tts_ref_audio=tts_ref_audio,
+                tts_sampling_params=tts_sampling_params,
+                output_audio_path=output_audio_path,
+                length_penalty=request.generation.length_penalty if hasattr(request, 'generation') and request.generation else 1.1,
             )
         
         # 处理返回值
@@ -404,10 +411,7 @@ class ChatView(MiniCPMOProcessorMixin):
         #   - 有音频: (answer, waveform_np)
         #   - return_prompt + 无音频: (answer, prompt)
         #   - return_prompt + 有音频: (answer, prompt, waveform_np)
-        return_prompt_flag = request.return_prompt if hasattr(request, 'return_prompt') else False
-        
         text_content = None
-        prompt = None
         waveform = None
         
         if isinstance(result, tuple):
