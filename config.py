@@ -53,6 +53,24 @@ class ModelConfig(BaseModel):
         default=None,
         description="额外权重路径（.pt 文件，可选）。为 null 时不加载额外权重。",
     )
+    deployment_mode: str = Field(
+        default="single_eager",
+        description=(
+            "部署模式（core.deploy 可插拔框架）。"
+            "single_eager（默认）= 单卡 eager；"
+            "single_opt = 单卡 CUDA-graph 优化引擎；"
+            "tp2 = 双卡张量并行（需 torchrun 2-rank 启动）。"
+            "新模式在 core/deploy/modes.py 注册即可。"
+        ),
+    )
+    backbone_dir: Optional[str] = Field(
+        default=None,
+        description="tp2 模式：抽取出的 HF 格式骨干目录（from_pretrained(tp_plan) 分片加载）。",
+    )
+    llm_cache_len: int = Field(
+        default=8192,
+        description="single_opt/tp2 图化 decode 的定宽 StaticCache 宽度（tp2 可调大到 32K+）。",
+    )
     attn_implementation: str = Field(
         default="auto",
         description=(
@@ -63,14 +81,6 @@ class ModelConfig(BaseModel):
             "'eager' = 朴素实现（仅 debug 用）。"
         ),
         pattern="^(auto|flash_attention_2|sdpa|eager)$",
-    )
-    optimize: bool = Field(
-        default=False,
-        description=(
-            "是否开启 O5 推理加速(batched_mm MoE + TTS/LLM CUDA-graph + 视觉融合 + vocoder graph)。"
-            "默认 False = 原始行为逐字节不变。也可用环境变量 O5_OPTIMIZE=1 开启。"
-            "开启后会替代 torch.compile(二者互斥,自动跳过 compile)。详见 INTEGRATION.md。"
-        ),
     )
 
 

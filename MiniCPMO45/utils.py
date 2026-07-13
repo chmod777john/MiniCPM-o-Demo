@@ -15,6 +15,7 @@
 # limitations under the License.
 
 import logging
+import os
 from dataclasses import dataclass
 from typing import Any
 from typing import Dict
@@ -2270,7 +2271,7 @@ class StreamDecoder:
         if bool(_OPT.get("llm_graph")):
             if getattr(self, "_llm_runner", None) is None:
                 from .llm_graph import LLMGraphRunner
-                self._llm_runner = LLMGraphRunner(self.m.model, self.m.lm_head, max_cache_len=8192)
+                self._llm_runner = LLMGraphRunner(self.m.model, self.m.lm_head, max_cache_len=int(os.environ.get("O5_LLM_CACHE", "8192")))
                 self._static_pos = 0
                 self.cache = self._llm_runner.cache
             _r = self._llm_runner

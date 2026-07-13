@@ -1219,7 +1219,6 @@ class UnifiedProcessor(BaseProcessor):
         compile: bool = False,
         chat_vocoder: str = "token2wav",
         attn_implementation: str = "auto",
-        optimize: bool = False,
     ):
         """Initialize the unified processor.
 
@@ -1243,7 +1242,6 @@ class UnifiedProcessor(BaseProcessor):
         self.compile = compile
         self.chat_vocoder = chat_vocoder
         self.attn_implementation = attn_implementation
-        self.optimize = optimize
 
         # View instances (lazily created)
         self._chat_view: Optional[ChatView] = None
@@ -1372,6 +1370,41 @@ class UnifiedProcessor(BaseProcessor):
             logger.info(f"Extra weights: {self.pt_path}")
         start = time.time()
 
+        # ── Deployment-mode framework dispatch (core.deploy) ──────────────────
+        # O5_DEPLOY_MODE selects a pluggable deployment mode (single_eager / single_opt / tp2 / …).
+        # Default single_eager = the original path below, byte-for-byte unchanged. Non-default modes
+        # build the ready model (construct + place + init_unified + engine enable) via the framework.
+        import os as _os
+        _dep_mode = _os.environ.get("O5_DEPLOY_MODE", "single_eager")
+        if _dep_mode != "single_eager":
+            import core.deploy as _deploy
+            _cfg = {
+                "model_path": self.model_path, "pt_path": self.pt_path,
+                "backbone_dir": _os.environ.get("O5_BACKBONE_DIR", ""),
+                "chat_vocoder": self.chat_vocoder,
+                "attn_implementation": self._resolve_attn_implementation(),
+                "llm_cache_len": int(_os.environ.get("O5_LLM_CACHE", "8192")),
+                "preload_both_tts": self.preload_both_tts,
+                "duplex_config": {
+                    "generate_audio": self.duplex_config.generate_audio,
+                    "ls_mode": self.duplex_config.ls_mode,
+                    "max_new_speak_tokens_per_chunk": self.duplex_config.max_new_speak_tokens_per_chunk,
+                    "temperature": self.duplex_config.temperature,
+                    "top_k": self.duplex_config.top_k, "top_p": self.duplex_config.top_p,
+                    "force_listen_count": self.duplex_config.force_listen_count,
+                },
+            }
+            _br = _deploy.get_mode(_dep_mode).build(_cfg)
+            self.model = _br.model
+            self._deploy = _br
+            self._chat_view = ChatView(self.model, self.ref_audio_path)
+            self._half_duplex_view = HalfDuplexView(self.model, self.ref_audio_path)
+            self._duplex_view = DuplexView(self.model, self.ref_audio_path, self.duplex_config)
+            logger.info("[deploy] built via framework: mode=%s world=%d rank=%d engine=%s",
+                        _dep_mode, _br.world_size, _br.rank, _br.engine)
+            return
+        # ──────────────────────────────────────────────────────────────────────
+
         from MiniCPMO45.modeling_minicpmo_unified import MiniCPMO, ProcessorMode as ModelProcessorMode
         from transformers import AutoConfig
 
@@ -1463,20 +1496,8 @@ class UnifiedProcessor(BaseProcessor):
         init_time = time.time() - init_start
         logger.info(f"Unified mode initialization done in {init_time:.1f}s")
 
-        # ── O5 inference optimizations (default OFF) ─────────────────────────────
-        # Enable via config `model.optimize=true` OR env `O5_OPTIMIZE=1`. Hand-rolled CUDA graphs +
-        # host-sync removal; REPLACES torch.compile (mutually exclusive). See INTEGRATION.md.
-        import os as _os
-        _o5_opt = getattr(self, "optimize", False) or \
-            _os.environ.get("O5_OPTIMIZE", "").strip().lower() in ("1", "true", "yes", "on")
-        if _o5_opt:
-            from MiniCPMO45.o5_enable import enable_o5_optimizations
-            enable_o5_optimizations(self.model, logger=logger)
-        # ─────────────────────────────────────────────────────────────────────────
-
-        # torch.compile acceleration + warmup (optional; auto-skipped when optimize is on —
-        # the hand-rolled CUDA graphs replace torch.compile and the two must not be combined)
-        if self.compile and not getattr(self, "optimize", False):
+        # torch.compile acceleration + warmup (optional)
+        if self.compile:
             compile_start = time.time()
             # AWQ: skip llm.model (custom INT4 kernels incompatible with compile),
             # but still compile vpm / resampler / tts.model (all float, full benefit).
