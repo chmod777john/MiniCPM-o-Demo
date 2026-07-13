@@ -780,6 +780,7 @@ def main() -> None:
         _m = getattr(getattr(_be, "processor", None), "model", None)
         _mir = getattr(_m, "_spmd_mirror", None)
         if _mir is not None:
+            _mir.model = _be
             logger.info("[spmd] rank %s: entering worker_loop (no HTTP)", _os.environ.get("RANK"))
             _mir.worker_loop()
         return
