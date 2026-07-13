@@ -1,0 +1,1 @@
+{\"model\": {\"model_path\": \"/path/to/MiniCPM-o-4_6\", \"pt_path\": \"/path/to/weights.pt\", \"deployment_mode\": \"tp2\", \"backbone_dir\": \"/path/to/o5_backbone_hf\", \"llm_cache_len\": 32768}}
