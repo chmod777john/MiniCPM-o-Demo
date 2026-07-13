@@ -30,6 +30,11 @@ class SpmdMirror:
         self.world_size = world_size
         import threading
         self._call_lock = threading.Lock()
+        self._control_group = None
+        if world_size > 1:
+            import torch.distributed as dist
+            self._control_group = dist.new_group(backend="gloo")
+
     def _bcast(self, obj):
         import torch.distributed as dist
         box = [obj]
@@ -37,7 +42,7 @@ class SpmdMirror:
         # broadcast on the default CPU path avoids torch 2.8 CUDA object-tensor
         # SymInt failures; actual model tensors still use CUDA collectives in
         # the mirrored model methods themselves.
-        dist.broadcast_object_list(box, src=0)
+        dist.broadcast_object_list(box, src=0, group=self._control_group)
         return box[0]
 
     # ── driver side ──
