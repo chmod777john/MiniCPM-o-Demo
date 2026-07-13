@@ -661,7 +661,7 @@ class TTSStreamingGenerator:
         self.token_window_size = model.token_window_size  # token-level window for sliding_window/reindex (default 300)
 
         # RoPE config (for reindex mode)
-        self.rope_theta = model.model.config.rope_theta
+        self.rope_theta = float(getattr(model.model.config, "rope_theta", 10000.0))
         self.head_dim = model.model.config.hidden_size // model.model.config.num_attention_heads
 
         # Logits processors
