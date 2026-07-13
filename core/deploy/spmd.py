@@ -19,6 +19,7 @@ through mirror.call(). Idle gaps need a heartbeat call (mirror.call("noop")) so 
 lockstep when no client request is pending.
 """
 from __future__ import annotations
+import inspect
 from typing import Any
 
 
@@ -58,7 +59,18 @@ class SpmdMirror:
                 self._bcast((method, args, kwargs))
             if method == "noop":
                 return None
-            return getattr(self.model, method)(*args, **kwargs)
+            result = getattr(self.model, method)(*args, **kwargs)
+            if inspect.isgenerator(result):
+                return self._locked_generator(result)
+            return result
+
+    def _locked_generator(self, generator):
+        while True:
+            with self._call_lock:
+                try:
+                    yield next(generator)
+                except StopIteration:
+                    return
 
     def shutdown(self):
         if self.is_driver and self.world_size > 1:
@@ -74,4 +86,7 @@ class SpmdMirror:
                 return
             if method == "noop":
                 continue
-            getattr(self.model, method)(*args, **kwargs)
+            result = getattr(self.model, method)(*args, **kwargs)
+            if inspect.isgenerator(result):
+                for _ in result:
+                    pass
