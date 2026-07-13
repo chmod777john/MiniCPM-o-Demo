@@ -1,3 +1,5 @@
+> ⚠️ 本文档已过时(单卡 O5_OPTIMIZE 时期)。多部署模式框架(single_eager/single_opt/tp2)+ 双卡部署请看 core/deploy/DEPLOYMENT.md。O5_OPTIMIZE 已被 deployment_mode=single_opt 取代。
+
 # O5 推理加速 —— 对接说明（INTEGRATION）
 
 一句话:MiniCPM-O5 全双工推理的一组**纯推理期、默认关闭、可一键开启**的加速。开启后 demo 每个 1s unit 都 <1s(语音 0.50s / 全模态 0.61s),对接**只需翻一个开关**;不开 = 原始行为逐字节不变。

@@ -11,8 +11,7 @@ export O5_DEPLOY_MODE=tp2
 export O5_BACKBONE_DIR=\${O5_BACKBONE_DIR:?set to the extracted HF backbone dir}
 export O5_LLM_CACHE=\${O5_LLM_CACHE:-32768}
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
-# NOTE: the backend server entrypoint must, for SPMD, run the gateway I/O on the driver rank
-# (core.deploy BuildResult.is_driver) and broadcast each duplex request input to all ranks via
-# BuildResult.broadcast_input BEFORE running the unit (so both ranks run identical collectives).
+# server.main() already handles SPMD: rank 0 serves HTTP, non-driver ranks run worker_loop()
+# (core/deploy/spmd.py) mirroring the driver s model calls. Validated live end-to-end.
 exec torchrun --nproc_per_node=2 --nnodes=1 --master_addr=127.0.0.1 --master_port=29500 \
      -m py_backend.server \"\$@\"

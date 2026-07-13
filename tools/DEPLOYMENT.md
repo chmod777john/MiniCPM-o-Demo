@@ -1,64 +1,113 @@
-# MiniCPM-O5 多部署模式框架(core.deploy)
+# MiniCPM-O5 部署对接说明（多模式框架 + 双卡）
 
-一个**可插拔的部署模式框架**:同一套 demo 代码,通过配置切换单卡 / 单卡优化 / 双卡张量并行,并可扩展未来模式(EP、4 卡、量化…)。
+**给对接同学:** 本分支在原 demo 上加了一个**可插拔部署模式框架**,一个配置字段切换 单卡eager / 单卡优化 / 双卡张量并行(TP),并留了扩展位。不改配置 = **原始单卡 eager 行为逐字节不变**。
 
-## 1. 为什么
+> 本文取代旧的 `INTEGRATION.md`(那份只讲被本框架取代的 `O5_OPTIMIZE` 开关)。
 
-- 生产 server 之前**没有启用任何推理优化**(单卡也跑 eager);优化只存在于 benchmark 脚本和实验 probe 里。
-- 32K 上下文单卡装不下,需要双卡张量并行(TP)。
-- 未来还会有更多部署形态。需要一个统一、可扩展的框架,而不是每种形态改一遍加载/serving。
+---
 
-## 2. 架构
+## 0. TL;DR(三种模式怎么起)
 
-```
-config.model.deployment_mode  ──►  backend_factory (设 O5_DEPLOY_MODE 等 env)
-                                        └► UnifiedProcessor._load_model
-                                              └► core.deploy.get_mode(mode).build(cfg) ──► BuildResult(model, world_size, is_driver, engine, broadcast_input)
-```
-
-- `core/deploy/base.py` —— `DeploymentMode`(name/world_size/requires_spmd/build)、`BuildResult`。
-- `core/deploy/registry.py` —— `register_mode / get_mode / list_modes`。
-- `core/deploy/modes.py` —— 三个内置模式的构造器 + 共享 helper(手术式加载、引擎启用、token 广播)。
-
-**加新模式** = 在 `modes.py` 写一个 `build(cfg, rank, world) -> BuildResult` 并 `register_mode(...)`,serving 栈其余不动。
-
-## 3. 内置模式
-
-| mode | 卡 | 引擎 | 启动 |
+| 目标 | `config.model.deployment_mode` | 起法 | 前置 |
 |---|---|---|---|
-| `single_eager` | 1 | 无(原始 eager,默认,行为不变) | `python -m py_backend.server` |
-| `single_opt` | 1 | batched_mm + tts/llm/vocoder CUDA-graph + 融合视觉 | 同上 |
-| `tp2` | 2 | 上述 + 骨干张量并行 + token 广播同步 | `core/deploy/launch_tp2.sh`(torchrun 2-rank) |
+| 原始单卡(默认,行为不变) | `single_eager` | 现有起法不变 | 无 |
+| 单卡 + 推理优化(<1s) | `single_opt` | 现有起法不变 | 无 |
+| **双卡 TP(32K 上下文,更快)** | `tp2` | `bash core/deploy/launch_tp2.sh` | **先抽取骨干(§2)** |
 
-配置(`config.json`):
+改 `config.json`(或环境变量 `O5_DEPLOY_MODE`)即切换。
+
+---
+
+## 1. 实测(可信 benchmark:含 finalize、显式同步、warmup 丢弃、p95/p99/超1s、跨卡 max)
+
+omni-speak(最紧场景):
+
+| 模式 | 卡 | p50 | p99 | max | 超1s | 上下文 |
+|---|---|---|---|---|---|---|
+| single_opt | 1 | 687ms | 855 | 861 | 0/80 | 8K |
+| **tp2** | 2 | **585ms** | 715 | **747** | **0/120** | **32K** |
+
+四场景(voice/omni × listen/speak)双卡全部 <1s。
+
+---
+
+## 2. tp2 前置:抽取骨干(一次性,~65GB)
+
+TP 用 `from_pretrained(tp_plan="auto")` 边加载边分片,需要把 `.pt` 里的 `llm.*` 权重抽成 HF 格式:
+
+```bash
+cd <demo_root>
+export PYTHONPATH=$PWD WORKTREE=$PWD
+export MODEL_PATH=/path/to/MiniCPM-o-4_6
+export PT_PATH=/path/to/omni_sft2_main_run_iter1200.pt
+export BACKBONE_DIR=/path/to/o5_backbone_hf     # 产出目录(~65GB)
+python tools/o5deploy/extract_backbone.py
+```
+产出 `BACKBONE_DIR/`(config.json + sharded safetensors + index)。填进 `config.model.backbone_dir`。
+
+---
+
+## 3. 配置
+
+`config.json`(参考 `core/deploy/config.example.tp2.json`):
 ```json
-{ "model": { "model_path": "...", "pt_path": "...",
-             "deployment_mode": "tp2", "backbone_dir": "/path/o5_backbone_hf", "llm_cache_len": 32768 } }
+{ "model": {
+    "model_path": "/path/to/MiniCPM-o-4_6",
+    "pt_path": "/path/to/weights.pt",
+    "deployment_mode": "tp2",                 // single_eager | single_opt | tp2
+    "backbone_dir": "/path/to/o5_backbone_hf", // tp2 必填
+    "llm_cache_len": 32768                      // tp2 上下文上限(single_opt 默认 8192)
+} }
 ```
-或用环境变量 `O5_DEPLOY_MODE / O5_BACKBONE_DIR / O5_LLM_CACHE` 覆盖。
+或用环境变量覆盖:`O5_DEPLOY_MODE=tp2 O5_BACKBONE_DIR=... O5_LLM_CACHE=32768`。
 
-## 4. tp2 前置:抽取骨干
+---
 
-TP 用 `from_pretrained(tp_plan="auto")` 边加载边分片,需要 HF 格式的骨干:
-```
-python tools/extract_backbone.py   # .pt 里 llm.* -> HF safetensors 到 O5_BACKBONE_DIR(~65GB,一次性)
-```
+## 4. 起服务
 
-## 5. 实测(可信 benchmark,含 finalize、严谨同步、warmup 丢弃、跨 rank max、p95/p99/超1s)
+- **single_eager / single_opt(单进程,起法不变):**
+  ```bash
+  python -m py_backend.server --model-path $MODEL_PATH --pt-path $PT_PATH --port 22500
+  ```
+- **tp2(双卡 SPMD,torchrun 2 进程):**
+  ```bash
+  O5_BACKBONE_DIR=/path/to/o5_backbone_hf bash core/deploy/launch_tp2.sh \
+      --model-path $MODEL_PATH --pt-path $PT_PATH --port 22500
+  ```
+  rank0 起 HTTP(对外 `/backend` WebSocket),rank1 自动进 `worker_loop`(不起 HTTP,镜像 rank0 的模型计算)。gateway / 客户端只连 rank0,**协议不变**。
 
-omni-speak(最紧场景,120 units,32K 上下文能力):
+---
 
-| mode | p50 | p95 | p99 | max | 超1s |
-|---|---|---|---|---|---|
-| single_opt (1 卡) | 687ms | 752 | 855 | 861 | 0/80 |
-| **tp2 (2 卡)** | **585ms** | 632 | 715 | **747** | **0/120** |
+## 5. 验证(两个,都已在本分支端到端跑过)
 
-双卡 decode per_tok 15.2ms(单卡 28.6ms@32K / 部署单卡 18.5ms@8K),权重读减半 → 更快 + 装得下 32K。全部 <1s。
+- **可信 benchmark**(比 demo 自带 `benchmark.py` 可信,后者见 §7):
+  ```bash
+  # tp2:  torchrun --nproc_per_node=2 tools/o5deploy/deploybench.py  (MODE=tp2 FORCE=speak)
+  # single_opt: python tools/o5deploy/deploybench.py  (MODE=single_opt)
+  ```
+  产出 p50/p95/p99/超1s，engine 字段记录实际测的引擎。
+- **live 网络冒烟**:起 tp2 server 后,`python tools/o5deploy/live_client.py`(连真实 `/backend` WS,推音视频,收 listen/text/audio delta)。本分支实测:双卡端到端出真实对话(文本+TTS),0 超 1s。
 
-## 6. benchmark 正确性(重要)
+---
 
-demo 自带的 `model.benchmark()` 经审计**不可信**(14 个 bug):零 `cuda.synchronize`(prefill GPU 工作漏进 generate 计时)、漏计 finalize、无 warmup、只报 avg/min/max(无尾部)、测的引擎生产没开、从不采样长上下文。**请用框架 benchmark `tools/deploybench.py`**(修掉全部问题:双 rank 显式 sync、finalize 计入 unit_total、warmup 丢弃、p50/p95/p99/超1s、跨 rank max、部署引擎)。
+## 6. 必读注意事项
 
-## 7. 剩余(live gateway SPMD serving)
+- **双卡 = 单会话吃两张卡** → 固定卡数下并发会话减半。tp2 是为「单会话大上下文 + 低延迟」,不是提吞吐。追求吞吐用 single_opt + 多副本。
+- **数值等价**:所有优化/TP 是 argmax-preserving 浮点重排(决策逐 unit 一致,采样输出分布无差异)。换权重后建议重跑一次 teacher-forced 等价 gate。
+- **回滚**:`deployment_mode=single_eager`(默认)= 原始单卡 eager,逐字节不变。
+- **扩展**:加新模式(EP/4卡/量化)= 在 `core/deploy/modes.py` 写一个 `build(cfg)->BuildResult` 并 `register_mode(...)`,serving 栈其余不动。
+- **原 `O5_OPTIMIZE` 开关已被本框架取代** —— 用 `deployment_mode=single_opt` 代替。
 
-框架已能在 tp2 下**构建模型 + 跑完整 duplex**(benchmark 证明)。live 对外服务还差最后一个 hook:`py_backend/server.py` 的 duplex 请求循环要用 `BuildResult.is_driver` 分流(rank0 收 gateway 请求)+ 每个 unit 前 `BuildResult.broadcast_input(audio_chunk)` 把输入广播给 rank1(保证两卡跑相同 collective)。launcher `launch_tp2.sh` 已就位;这一步需一次 live 2-GPU serving 冒烟测。
+---
+
+## 7. demo 自带 `benchmark.py` 不可信(重要)
+
+审计发现 14 个 bug:**零 `cuda.synchronize`**(异步下 prefill GPU 工作漏进 generate 计时,per-module 分解是假象)、**漏计 finalize**(每 unit 必跑 ~100ms)、**无 warmup**(首 unit 吃图捕获尖峰)、**只报 avg/min/max 无尾部**、**测的优化引擎生产没开**、从不采样长上下文。**验时延/达标请用 `tools/o5deploy/deploybench.py`,别用 `benchmark.py`。**
+
+---
+
+## 8. 代码位置
+
+- 框架:`core/deploy/{base,registry,modes,spmd}.py`;接线:`core/processors/{unified,backend_factory}.py`、`py_backend/server.py`、`config.py`。
+- 工具:`tools/o5deploy/{extract_backbone,deploybench,live_client,test_backend_spmd,test_spmd_serving,bench_2card,grid_2card}.py`。
+- 启动:`core/deploy/launch_tp2.sh`。
