@@ -30,13 +30,14 @@ class SpmdMirror:
         self.world_size = world_size
         import threading
         self._call_lock = threading.Lock()
-        import torch
-        self._device = torch.device(f"cuda:{rank}")
-
     def _bcast(self, obj):
         import torch.distributed as dist
         box = [obj]
-        dist.broadcast_object_list(box, src=0, device=self._device)
+        # Broadcast only small Python call descriptors here. Keeping object
+        # broadcast on the default CPU path avoids torch 2.8 CUDA object-tensor
+        # SymInt failures; actual model tensors still use CUDA collectives in
+        # the mirrored model methods themselves.
+        dist.broadcast_object_list(box, src=0)
         return box[0]
 
     # ── driver side ──
