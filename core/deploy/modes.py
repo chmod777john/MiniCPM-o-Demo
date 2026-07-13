@@ -160,8 +160,10 @@ def build_tp2(cfg, rank=0, world_size=2) -> BuildResult:
     _init_unified(model, cfg)
     eng = _enable_engine(model, tp=True, cfg=cfg); eng["mode"] = "tp2"
 
+    from .spmd import SpmdMirror
+    model._spmd_mirror = SpmdMirror(model, is_driver=(rank == 0), rank=rank, world_size=world_size)
+
     def broadcast_input(obj):
-        # rank0 -> all ranks input sync (audio chunk + control) so every rank runs the same unit
         box = [obj]; dist.broadcast_object_list(box, src=0); return box[0]
 
     return BuildResult(model=model, world_size=world_size, rank=rank, is_driver=(rank == 0),

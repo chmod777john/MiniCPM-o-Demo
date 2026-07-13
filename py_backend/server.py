@@ -708,7 +708,22 @@ def main() -> None:
         "compile": cfg.compile,
         "chat_vocoder": cfg.chat_vocoder,
         "attn_implementation": cfg.attn_implementation,
+        "deployment_mode": getattr(cfg.model, "deployment_mode", "single_eager"),
+        "backbone_dir": getattr(cfg.model, "backbone_dir", None),
+        "llm_cache_len": getattr(cfg.model, "llm_cache_len", 8192),
     })
+
+    # SPMD (multi-rank) deployment: non-driver ranks build the model (participating in the
+    # build-time collectives) then mirror the driver forever; they never start the HTTP server.
+    import os as _os
+    if int(_os.environ.get("RANK", "0")) != 0:
+        _be = create_backend(SERVER_CONFIG); _be.load_model()
+        _m = getattr(getattr(_be, "processor", None), "model", None)
+        _mir = getattr(_m, "_spmd_mirror", None)
+        if _mir is not None:
+            logger.info("[spmd] rank %s: entering worker_loop (no HTTP)", _os.environ.get("RANK"))
+            _mir.worker_loop()
+        return
 
     uvicorn.run(
         app,

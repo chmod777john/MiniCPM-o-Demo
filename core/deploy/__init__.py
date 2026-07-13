@@ -12,6 +12,7 @@ Shipped modes (see modes.py):
 """
 from .base import DeploymentMode, BuildResult
 from .registry import register_mode, get_mode, list_modes
+from .spmd import SpmdMirror
 from . import modes as _modes  # noqa: F401  (registers the shipped modes on import)
 
-__all__ = ["DeploymentMode", "BuildResult", "register_mode", "get_mode", "list_modes"]
+__all__ = ["DeploymentMode", "BuildResult", "register_mode", "get_mode", "list_modes", "SpmdMirror"]
