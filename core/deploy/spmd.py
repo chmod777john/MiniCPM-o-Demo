@@ -28,6 +28,8 @@ class SpmdMirror:
         self.is_driver = is_driver
         self.rank = rank
         self.world_size = world_size
+        import threading
+        self._call_lock = threading.Lock()
         import torch
         self._device = torch.device(f"cuda:{rank}")
 
@@ -41,11 +43,16 @@ class SpmdMirror:
     def call(self, method: str, *args, **kwargs):
         """Driver: broadcast (method,args) to workers, then run locally and return the result."""
         assert self.is_driver, "call() is driver-only"
-        if self.world_size > 1:
-            self._bcast((method, args, kwargs))
-        if method == "noop":
-            return None
-        return getattr(self.model, method)(*args, **kwargs)
+        # Rank 1 executes mirrored calls strictly in broadcast order. The serving
+        # path may issue real duplex calls from request threads while the SPMD
+        # heartbeat issues noop calls from a background thread; serialize them so
+        # NCCL collectives cannot be interleaved in different orders across ranks.
+        with self._call_lock:
+            if self.world_size > 1:
+                self._bcast((method, args, kwargs))
+            if method == "noop":
+                return None
+            return getattr(self.model, method)(*args, **kwargs)
 
     def shutdown(self):
         if self.is_driver and self.world_size > 1:

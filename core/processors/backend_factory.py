@@ -11,10 +11,12 @@ def create_backend(config: Dict[str, Any]) -> Any:
     import os as _os
     # Drive the deployment-mode framework (core.deploy) from config; UnifiedProcessor._load_model
     # reads these env vars. Default single_eager keeps the original single-card eager path.
-    _dm = config.get("deployment_mode") or "single_eager"
+    _dm = _os.environ.get("O5_DEPLOY_MODE") or config.get("deployment_mode") or "single_eager"
     _os.environ["O5_DEPLOY_MODE"] = _dm
-    if config.get("backbone_dir"): _os.environ["O5_BACKBONE_DIR"] = str(config["backbone_dir"])
-    if config.get("llm_cache_len"): _os.environ["O5_LLM_CACHE"] = str(config["llm_cache_len"])
+    if not _os.environ.get("O5_BACKBONE_DIR") and config.get("backbone_dir"):
+        _os.environ["O5_BACKBONE_DIR"] = str(config["backbone_dir"])
+    if not _os.environ.get("O5_LLM_CACHE") and config.get("llm_cache_len"):
+        _os.environ["O5_LLM_CACHE"] = str(config["llm_cache_len"])
 
     from core.processors.pytorch_backend import PyTorchBackend
 

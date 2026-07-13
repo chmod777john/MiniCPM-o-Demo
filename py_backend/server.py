@@ -39,6 +39,38 @@ logger = logging.getLogger("backend_server")
 SERVER_CONFIG: Dict[str, Any] = {}
 _backend: Any = None
 _server_state: Optional["BackendServerState"] = None
+_spmd_heartbeat_task: Optional[asyncio.Task] = None
+
+
+def _get_spmd_mirror(backend: Any) -> Any:
+    model = getattr(getattr(backend, "processor", None), "model", None)
+    return getattr(model, "_spmd_mirror", None)
+
+
+def _start_spmd_heartbeat(backend: Any) -> Optional[asyncio.Task]:
+    """Keep SPMD worker ranks alive while the HTTP server is idle.
+
+    In tp2 mode rank1 blocks in SpmdMirror.worker_loop(), waiting for rank0 to
+    broadcast the next mirrored model call. A long idle gap would otherwise hit
+    the process-group timeout and tear down the whole torchrun job.
+    """
+    mirror = _get_spmd_mirror(backend)
+    if mirror is None or not getattr(mirror, "is_driver", False):
+        return None
+
+    import os as _os
+    interval_s = float(_os.environ.get("O5_SPMD_HEARTBEAT_INTERVAL", "30"))
+    if interval_s <= 0:
+        logger.info("[spmd] heartbeat disabled")
+        return None
+
+    async def _loop() -> None:
+        logger.info("[spmd] heartbeat started interval=%.1fs", interval_s)
+        while True:
+            await asyncio.sleep(interval_s)
+            await asyncio.to_thread(mirror.call, "noop")
+
+    return asyncio.create_task(_loop())
 
 
 def _ws_debug_enabled() -> bool:
@@ -579,16 +611,22 @@ class BackendProtocolSession:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _backend, _server_state
+    global _backend, _server_state, _spmd_heartbeat_task
     logging.basicConfig(level=logging.INFO)
     logger.info("Loading backend server backend: pytorch")
     _backend = create_backend(SERVER_CONFIG)
     await asyncio.to_thread(_backend.load_model)
     _server_state = BackendServerState(_backend)
+    _spmd_heartbeat_task = _start_spmd_heartbeat(_backend)
     logger.info("Backend server ready")
     try:
         yield
     finally:
+        if _spmd_heartbeat_task is not None:
+            _spmd_heartbeat_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await _spmd_heartbeat_task
+            _spmd_heartbeat_task = None
         for session in list((_server_state.sessions if _server_state else {}).values()):
             with suppress(Exception):
                 await session.close(reason="server_shutdown")
