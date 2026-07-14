@@ -518,6 +518,43 @@ modeling_qwen3_5_moe.py:232, in torch_causal_conv1d_update
 2. 若 experts microbench 仍明显慢，优先考虑 fused top8 expert kernel。
 3. 若 experts microbench 很快但整模型慢，说明主要是 40 层模型的 launch/gap，需要 CUDA Graph 或服务引擎级 decode graph。
 4. Transformers 内置 `deepgemm` / `sonicmoe` 路线当前不适合 A100：代码里要求 SM90+ 或 SM100，A100 是 SM80。
+
+## 第四批实验：单层 experts microbench
+
+任务：
+
+```text
+cctl task: 143561
+result dir: /user/weihongliang/o5_moe_experts_microbench_20260714_182008
+script: scripts/bench_qwen35_moe_experts.py
+```
+
+这个实验只抽一层 `layer.mlp.experts`，输入是 batch=1、top8 experts，排除整模型其它部分。
+
+no compile：
+
+| implementation | mean |
+| --- | ---: |
+| HF `batched_mm` experts | 0.188 ms |
+| profiling script `simple_bmm` | 0.163 ms |
+| 逐 expert `F.linear` loop | 0.776 ms |
+
+局部 `torch.compile`：
+
+| implementation | mean |
+| --- | ---: |
+| HF `batched_mm` experts | 0.213 ms |
+| profiling script `simple_bmm` | 0.197 ms |
+| 逐 expert `F.linear` loop | 0.877 ms |
+
+结论：
+
+1. 单层 experts 子模块并不慢。即使用 `0.188 ms/layer * 40 layers` 粗略估计，也只有约 `7.5 ms/token`。
+2. 整模型当前约 `50.9 ms/token`，说明主要剩余开销不是单层 expert GEMM 本身，而是整层 forward 中 attention、linear attention/recurrent state、routing、norm、lm_head、cache 更新以及大量小 kernel launch 的累计。
+3. 单独优化 experts Python 路径只能拿到小收益，和第三批 `batch=1 experts patch` 的 3.6% 收益一致。
+4. 局部 `torch.compile` 在这个 microbench 上也是负收益，不应该作为当前默认优化。
+
+因此，要继续接近 `<20 ms/token`，更合理的下一步是整模型 decode graph / CUDA Graph / 专用 serving engine，而不是继续手写一个小的 experts wrapper。
 4. 下一步应围绕 `batched_mm` 做 top-op profile，并考虑在 demo 推理代码中为 A100/batch=1 decode 默认选择 `batched_mm`。
 
 ## batched_mm top-op profile
