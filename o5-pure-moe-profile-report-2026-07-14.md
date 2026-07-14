@@ -498,6 +498,26 @@ modeling_qwen3_5_moe.py:232, in torch_causal_conv1d_update
 4. 真正值得投入的是：
    - Qwen3.5 recurrent/cache 静态化后再试 CUDA Graph；
    - 或者写/接入 fused MoE expert kernel，减少 top8 expert decode 的 gather + bmm + elementwise kernel 数。
+
+## 当前优化边界
+
+截至本轮，已经验证过的低风险手段：
+
+| 手段 | 结果 | 判断 |
+| --- | ---: | --- |
+| `grouped_mm -> batched_mm` | 约 139.8 -> 74.5 ms/token | 大收益，应该保留 |
+| 关闭 decode attention mask | 约 55.37 -> 53.56 ms/token | 小收益 |
+| `LOGITS_TO_KEEP=1` | 约 53.56 -> 52.81 ms/token | 小收益，主要利好 prefill |
+| batch=1 experts patch | 约 52.81 -> 50.89 ms/token | 小收益，不足以接近目标 |
+| 直接 `torch.compile(model.model)` | 约 64.94 ms/token | 负收益，动态图/cache 导致 recompile |
+| 通用 `StaticCache` | 失败 | Qwen3.5 linear attention recurrent state 不兼容 |
+
+因此，`<20 ms/token` 目标不能靠现有开关自然达到。接下来需要从更底层入手：
+
+1. 单独 microbench 一层 MoE experts，确认 experts 子模块自身的可优化空间。
+2. 若 experts microbench 仍明显慢，优先考虑 fused top8 expert kernel。
+3. 若 experts microbench 很快但整模型慢，说明主要是 40 层模型的 launch/gap，需要 CUDA Graph 或服务引擎级 decode graph。
+4. Transformers 内置 `deepgemm` / `sonicmoe` 路线当前不适合 A100：代码里要求 SM90+ 或 SM100，A100 是 SM80。
 4. 下一步应围绕 `batched_mm` 做 top-op profile，并考虑在 demo 推理代码中为 A100/batch=1 decode 默认选择 `batched_mm`。
 
 ## batched_mm top-op profile
