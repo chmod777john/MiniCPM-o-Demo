@@ -892,7 +892,7 @@ class DuplexView:
             ref_audio = self._load_ref_audio(ref_audio_path)
         
         # 调用透传方法
-        prompt = self._mcall("duplex_prepare",
+        prompt = self._model.duplex_prepare(
             prefix_system_prompt=prefix_system_prompt,
             suffix_system_prompt=suffix_system_prompt,
             ref_audio=ref_audio,
@@ -925,21 +925,13 @@ class DuplexView:
         if audio_path and audio_waveform is None:
             audio_waveform, _ = librosa.load(audio_path, sr=16000, mono=True)
         
-        result = self._mcall("duplex_prefill",
+        result = self._model.duplex_prefill(
             audio_waveform=audio_waveform,
             frame_list=frame_list,
             max_slice_nums=max_slice_nums,
         )
         
         return result
-    
-    def _mcall(self, _name, **kw):
-        """SPMD: on the driver rank route the model call through the mirror so worker ranks
-        replay it in lockstep; single-rank modes call the model directly."""
-        _mir = getattr(self._model, "_spmd_mirror", None)
-        if _mir is not None and _mir.is_driver:
-            return _mir.call(_name, **kw)
-        return getattr(self._model, _name)(**kw)
 
     def generate(self, force_listen: bool = False) -> DuplexGenerateResult:
         """生成响应
@@ -954,7 +946,7 @@ class DuplexView:
         if duplex is not None and hasattr(duplex, "generate_audio"):
             duplex.generate_audio = self.config.generate_audio
 
-        result = self._mcall("duplex_generate",
+        result = self._model.duplex_generate(
             decode_mode=self.config.decode_mode,
             temperature=self.config.temperature,
             top_k=self.config.top_k,
@@ -997,7 +989,7 @@ class DuplexView:
         必须在 generate() 之后、下一次 prefill() 之前调用。
         可异步调度：先返回结果给前端，再在后台执行 finalize。
         """
-        self._mcall("duplex_finalize")
+        self._model.duplex_finalize()
 
     def set_break(self) -> None:
         """设置打断信号"""

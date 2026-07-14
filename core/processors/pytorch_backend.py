@@ -7,6 +7,7 @@ import base64
 import gc
 import io
 import logging
+import types
 import time
 from typing import Any, Dict, Iterator, List, Optional
 
@@ -22,6 +23,24 @@ from core.schemas.duplex import DuplexConfig, DuplexGenerateResult
 from core.schemas.streaming import StreamingChunk, StreamingRequest, StreamingResponse
 
 logger = logging.getLogger("pytorch_backend")
+
+
+class _SpmdBackendTarget:
+    """Dispatch target used by SpmdMirror.
+
+    Driver-facing backend methods may be wrapped to enter mirror.call(). The
+    mirror itself must invoke the original implementation to avoid recursion.
+    Worker ranks use the same target, where methods are unwrapped.
+    """
+
+    def __init__(self, backend: "PyTorchBackend"):
+        self._backend = backend
+
+    def __getattr__(self, name: str) -> Any:
+        original = getattr(self._backend, f"_spmd_original_{name}", None)
+        if original is not None:
+            return original
+        return getattr(self._backend, name)
 
 
 class PyTorchBackend:
@@ -52,6 +71,8 @@ class PyTorchBackend:
 
         self.status = "loading"
         self.processor = None
+        self.spmd_is_driver = False
+        self.spmd_is_worker = False
 
         # Duplex 暂停超时监控 task
         self._duplex_timeout_task: Optional[asyncio.Task] = None
@@ -78,8 +99,68 @@ class PyTorchBackend:
         self.status = "ready"
         logger.info(f"[GPU {self.gpu_id}] Model loaded successfully")
 
+        self._install_spmd_method_wrappers()
+
         # 检查模型各组件的 device 分布
         self._log_device_map()
+
+    def _get_spmd_mirror(self) -> Any:
+        model = getattr(self.processor, "model", None)
+        return getattr(model, "_spmd_mirror", None)
+
+    def _install_spmd_method_wrappers(self) -> None:
+        """Hide SPMD mirroring behind the backend public API.
+
+        The server and processors should keep calling normal backend methods.
+        In TP2 mode rank0 broadcasts selected public calls to worker ranks, then
+        invokes the original local implementation; single-rank modes are no-ops.
+        """
+        mirror = self._get_spmd_mirror()
+        if mirror is None:
+            return
+
+        mirror.model = _SpmdBackendTarget(self)
+        self.spmd_is_driver = bool(getattr(mirror, "is_driver", False))
+        self.spmd_is_worker = not self.spmd_is_driver
+        if not getattr(mirror, "is_driver", False):
+            return
+        if getattr(self, "_spmd_wrapped", False):
+            return
+
+        mirror_methods = (
+            "chat_complete",
+            "chat_prefill",
+            "chat_init_tts",
+            "chat_prepare",
+            "chat_streaming_generate",
+            "chat_non_streaming_generate",
+            "duplex_prepare",
+            "duplex_prefill",
+            "duplex_generate",
+            "duplex_finalize",
+            "duplex_stop",
+            "duplex_cleanup",
+        )
+
+        def _wrap(name: str) -> None:
+            original = getattr(self, name, None)
+            if original is None:
+                return
+
+            def wrapped(_self: "PyTorchBackend", *args: Any, **kwargs: Any) -> Any:
+                return mirror.call(name, *args, **kwargs)
+
+            setattr(self, f"_spmd_original_{name}", original)
+            setattr(self, name, types.MethodType(wrapped, self))
+
+        for method_name in mirror_methods:
+            _wrap(method_name)
+        self._spmd_wrapped = True
+
+    def call_spmd_noop(self) -> None:
+        mirror = self._get_spmd_mirror()
+        if mirror is not None and getattr(mirror, "is_driver", False):
+            mirror.call("noop")
 
     def _log_device_map(self) -> None:
         """打印模型各关键组件的 device，用于确认是否全部在 GPU 上"""
