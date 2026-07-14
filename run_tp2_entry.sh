@@ -15,7 +15,7 @@ export BACKEND_PORT=22510
 export WORKER_PORT=22410
 export LOG_DIR=$PWD/run-logs/tp2_service_$(date +%Y%m%d_%H%M%S)
 export FRPC_BIN=/user/weihongliang/frp_0.65.0_linux_amd64/frpc
-export FRPC_CONFIG=/user/weihongliang/frp_0.65.0_linux_amd64/frpc_o5_tp2_8009_8445.toml
+export FRPC_CONFIG=/user/weihongliang/frp_0.65.0_linux_amd64/frpc_o5_tp2_encap_8009_8446.toml
 export ENABLE_FRP=1
 
 bash scripts/start_o5_tp2_cctl_service.sh
