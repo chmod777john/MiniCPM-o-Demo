@@ -555,6 +555,53 @@ no compile：
 4. 局部 `torch.compile` 在这个 microbench 上也是负收益，不应该作为当前默认优化。
 
 因此，要继续接近 `<20 ms/token`，更合理的下一步是整模型 decode graph / CUDA Graph / 专用 serving engine，而不是继续手写一个小的 experts wrapper。
+
+## 第五批实验：模块级 timing 复查
+
+任务：
+
+```text
+cctl task: 143562
+result dir: /user/weihongliang/o5_pure_moe_module_timing_20260714_182444
+```
+
+配置：
+
+```text
+experts_implementation=batched_mm
+MODULE_TIMING=1
+PROFILE=0
+DECODE_ATTENTION_MASK=0
+LOGITS_TO_KEEP=1
+DECODE_STEPS=16
+```
+
+注意：module hook 会显著增加 wall time，所以这组只看相对分布，不看绝对 decode latency。
+
+decode phase 累计：
+
+| module kind | total | count | mean |
+| --- | ---: | ---: | ---: |
+| `mlp` | 464.4 ms | 640 | 0.726 ms |
+| `mlp.experts` | 156.2 ms | 640 | 0.244 ms |
+| `self_attn` | 110.4 ms | 160 | 0.690 ms |
+| `post_attention_layernorm` | 89.5 ms | 640 | 0.140 ms |
+| `mlp.gate` | 88.4 ms | 640 | 0.138 ms |
+| `input_layernorm` | 85.7 ms | 640 | 0.134 ms |
+| `mlp.shared_expert` | 83.6 ms | 640 | 0.131 ms |
+| `mlp.shared_expert_gate` | 34.4 ms | 640 | 0.054 ms |
+
+这里 `mlp` 包含 `mlp.experts`、`mlp.gate`、`mlp.shared_expert` 等子模块，不能相加。这个结果支持第四批 microbench 的判断：experts 是重要部分，但不是唯一瓶颈；shared expert、router gate、norm、attention/linear attention 以及它们带来的小 kernel launch 也在累计消耗。
+
+prefill phase 仍然主要由 `mlp.experts` 主导：
+
+```text
+mlp total: 148.1 ms
+mlp.experts: 142.3 ms
+self_attn: 2.6 ms
+```
+
+所以 prefill 和 decode 的优化侧重点不同：prefill 更像 MoE expert 吞吐问题；batch=1 decode 更像大量层级小 kernel 和调度空洞问题。
 4. 下一步应围绕 `batched_mm` 做 top-op profile，并考虑在 demo 推理代码中为 A100/batch=1 decode 默认选择 `batched_mm`。
 
 ## batched_mm top-op profile
