@@ -10,6 +10,7 @@ export BACKBONE_DIR=/user/weihongliang/wangkaiqi/o5_backbone_hf
 export O5_DEPLOY_MODE=tp2_llm
 export O5_ATTN_IMPLEMENTATION=sdpa
 export O5_LLM_CACHE=32768
+export O5_LLM_GRAPH=0
 export O5_SPMD_HEARTBEAT_INTERVAL=30
 export GATEWAY_PORT=8009
 export GATEWAY_INTERNAL_PORT=8010
