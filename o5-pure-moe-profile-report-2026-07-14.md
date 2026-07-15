@@ -683,6 +683,89 @@ decode 里 40 层大致是：
 1. 让 FLA / causal-conv fast path 真正启用，再重测 `linear_attn`；
 2. 做整模型 decode CUDA Graph，优先减少 25k+ kernel 的 launch/gap；
 3. 如果换 H100，再试 `deepgemm` / `sonicmoe` 这类 SM90+ backend。
+
+## 第七批实验：已有 accel venv 的 linear-attn fast path
+
+任务：
+
+```text
+cctl task: 143799
+result dir: /user/weihongliang/o5_pure_moe_accel_nvtx_20260715_044159
+```
+
+环境：
+
+```text
+venv: .venv-accel
+torch: 2.8.0+cu126
+transformers: 5.5.4
+causal_conv1d: 1.6.1
+fla: 0.5.0
+flash_attn: 2.8.3
+```
+
+这套环境没有出现 high-cu128 里的 fallback warning，说明 Qwen3.5 linear attention fast path 应该已启用。为了避开 torch 2.8 在 A100 上 `grouped_mm` 不可用的问题，本实验仍使用：
+
+```text
+experts_implementation=batched_mm
+DECODE_ATTENTION_MASK=0
+LOGITS_TO_KEEP=1
+```
+
+### clean timing 对比
+
+high-cu128 fallback 环境当前最好 clean baseline：
+
+```text
+decode mean: 52.81 ms/token
+```
+
+`.venv-accel` fast path 环境：
+
+```text
+decode mean: 60.82 ms/token
+decode throughput: 16.44 token/s
+prefill: 0.163 s
+```
+
+结论：这套 accel 环境反而更慢。
+
+### nsys + NVTX 对比
+
+`.venv-accel`：
+
+```text
+decode_loop: 709.04 ms / 8 token
+decode_loop kernels: 25568
+decode_loop kernel total: 127.17 ms
+decode_loop stream gap total: 581.71 ms
+```
+
+high-cu128 fallback：
+
+```text
+decode_loop: 699.53 ms / 8 token
+decode_loop kernels: 25328
+decode_loop kernel total: 125.68 ms
+decode_loop stream gap total: 573.71 ms
+```
+
+模块分布对比：
+
+| module | high-cu128 fallback | `.venv-accel` fast path |
+| --- | ---: | ---: |
+| `mlp` | 238.74 ms | 257.88 ms |
+| `linear_attn` | 224.76 ms | 214.32 ms |
+| `mlp.experts` | 92.70 ms | 118.63 ms |
+| `self_attn` | 73.55 ms | 74.88 ms |
+
+fast path 让 `linear_attn` 只下降约 10.4 ms / 8 token，但 MLP / experts 更慢，整体没有收益。
+
+### 第七批结论
+
+1. 已有 `.venv-accel` 不是更优运行环境。
+2. `linear_attn` fast path 本身可能有小收益，但被 torch/transformers 版本和 MoE experts 实现差异抵消。
+3. 不能直接把“装齐 FLA / causal-conv”当作优化结论；需要在 high-cu128 这套更快的环境中单独补齐 causal-conv/flash-attn 后再测，或者继续走 CUDA Graph / fused path。
 4. 下一步应围绕 `batched_mm` 做 top-op profile，并考虑在 demo 推理代码中为 A100/batch=1 decode 默认选择 `batched_mm`。
 
 ## batched_mm top-op profile
