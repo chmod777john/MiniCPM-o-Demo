@@ -20,6 +20,10 @@ _CACHE_SENTINEL = {"__tp2_cache__": True}
 logger = logging.getLogger("deploy.llm_wrapper")
 
 
+def _trace(message: str) -> None:
+    print(message, flush=True)
+
+
 class DistributedTPLLM(torch.nn.Module):
     """Transparent wrapper for a tensor-parallel HuggingFace CausalLM.
 
@@ -73,9 +77,11 @@ class DistributedTPLLM(torch.nn.Module):
     def worker_loop(self) -> None:
         assert self.sync_calls and not self.is_driver, "worker_loop() is worker-rank only"
         logger.info("[tp2-llm] rank=%s entering LLM worker_loop", self.rank)
+        _trace(f"[tp2-llm] rank={self.rank} entering LLM worker_loop")
         while True:
             method, payload = self._broadcast_object(None)
             logger.info("[tp2-llm] rank=%s recv method=%s", self.rank, method)
+            _trace(f"[tp2-llm] rank={self.rank} recv method={method}")
             if method == "__shutdown__":
                 return
             if method == "noop":
@@ -92,23 +98,31 @@ class DistributedTPLLM(torch.nn.Module):
                 self._broadcast_object((method, None))
                 return None
             logger.info("[tp2-llm] rank=%s driver begin method=%s", self.rank, method)
+            _trace(f"[tp2-llm] rank={self.rank} driver begin method={method}")
             payload = self._make_payload(args, kwargs)
+            _trace(f"[tp2-llm] rank={self.rank} driver bcast object method={method}")
             self._broadcast_object((method, payload))
+            _trace(f"[tp2-llm] rank={self.rank} driver bcast tensors method={method}")
             self._broadcast_payload_tensors(payload, (args, kwargs))
+            _trace(f"[tp2-llm] rank={self.rank} driver run local method={method}")
             output = self._run_local(method, args, kwargs)
             logger.info("[tp2-llm] rank=%s driver end method=%s", self.rank, method)
+            _trace(f"[tp2-llm] rank={self.rank} driver end method={method}")
             return output
 
     def _run_local(self, method: str, args: tuple[Any, ...], kwargs: dict[str, Any]) -> Any:
         if method == "forward":
+            _trace(f"[tp2-llm] rank={self.rank} local forward begin")
             output = self.inner(*args, **kwargs)
         elif method == "generate":
+            _trace(f"[tp2-llm] rank={self.rank} local generate begin")
             output = self.inner.generate(*args, **kwargs)
         else:
             raise AttributeError(method)
         self._remember_cache(output)
         if not self.is_driver:
             logger.info("[tp2-llm] rank=%s worker end method=%s", self.rank, method)
+            _trace(f"[tp2-llm] rank={self.rank} worker end method={method}")
         return output
 
     def _remember_cache(self, output: Any) -> None:
@@ -185,6 +199,12 @@ class DistributedTPLLM(torch.nn.Module):
             tensor = source
             if not torch.is_tensor(tensor):
                 raise TypeError("TP2 LLM tensor payload lost its source tensor")
+            if not tensor.is_contiguous():
+                tensor = tensor.contiguous()
+            _trace(
+                f"[tp2-llm] rank={self.rank} bcast tensor "
+                f"shape={tuple(tensor.shape)} dtype={tensor.dtype} device={tensor.device}"
+            )
             dist.broadcast(tensor, src=0)
             return
         if encoded == _CACHE_SENTINEL:
