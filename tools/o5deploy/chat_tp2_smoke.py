@@ -57,7 +57,8 @@ def main():
         enable_thinking=False,
         max_inp_length=8192,
     )
-    dist.barrier()
+    if worker_loop is None:
+        dist.barrier()
     if is_driver:
         print("PREFILL_OK", len(prompt), flush=True)
         print("GENERATE_START", flush=True)
@@ -69,7 +70,8 @@ def main():
         use_tts_template=False,
         enable_thinking=False,
     )
-    dist.barrier()
+    if worker_loop is None:
+        dist.barrier()
     if is_driver:
         text = result[0] if isinstance(result, tuple) else result
         print("GENERATE_OK", repr(text)[:1000], flush=True)
