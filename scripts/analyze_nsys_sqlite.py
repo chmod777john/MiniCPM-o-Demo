@@ -31,6 +31,39 @@ def summarize_us(values):
     }
 
 
+def interval_summary(rows):
+    values = [(end - start) / 1e3 for start, end in rows if end is not None and end >= start]
+    return summarize_us(values)
+
+
+def kernel_summary_for_range(cur, start, end):
+    rows = list(
+        cur.execute(
+            """
+            select k.start,k.end
+            from CUPTI_ACTIVITY_KIND_KERNEL k
+            where k.start < ? and k.end > ?
+            order by k.start
+            """,
+            (end, start),
+        )
+    )
+    if not rows:
+        return {"count": 0, "kernel_total_ms": 0.0, "span_ms": 0.0, "gap_total_ms": 0.0}
+    kernel_total = sum(e - s for s, e in rows) / 1e6
+    span = (max(e for _s, e in rows) - min(s for s, _e in rows)) / 1e6
+    gaps = [rows[i][0] - rows[i - 1][1] for i in range(1, len(rows)) if rows[i][0] > rows[i - 1][1]]
+    return {
+        "count": len(rows),
+        "kernel_total_ms": kernel_total,
+        "span_ms": span,
+        "gap_total_ms": sum(gaps) / 1e6,
+        "gap_p50_us": statistics.median(gaps) / 1e3 if gaps else 0.0,
+        "gap_p90_us": pct(gaps, 0.90) / 1e3 if gaps else 0.0,
+        "gap_max_ms": max(gaps) / 1e6 if gaps else 0.0,
+    }
+
+
 def main():
     if len(sys.argv) != 2:
         raise SystemExit("usage: analyze_nsys_sqlite.py path/to/report.sqlite")
@@ -49,6 +82,9 @@ def main():
         "launch_correlation": {},
         "memcpy": [],
         "memset": {},
+        "nvtx_ranges": [],
+        "nvtx_by_name": [],
+        "decode_loop": {},
     }
 
     for table in (
@@ -152,6 +188,44 @@ def main():
     row = cur.execute("select count(*),sum(end-start)/1e6,avg(end-start)/1e3,sum(bytes) from CUPTI_ACTIVITY_KIND_MEMSET").fetchone()
     if row:
         result["memset"] = {"calls": row[0], "total_ms": row[1], "avg_us": row[2], "bytes": row[3]}
+
+    nvtx_rows = list(
+        cur.execute(
+            """
+            select coalesce(text, s.value, printf('textId:%d', textId)) name, n.start, n.end
+            from NVTX_EVENTS n
+            left join StringIds s on s.id = n.textId
+            where n.end is not null
+            order by n.start
+            """
+        )
+    )
+    for name, start, end in nvtx_rows[:5000]:
+        result["nvtx_ranges"].append(
+            {
+                "name": name,
+                "start": start,
+                "end": end,
+                "duration_ms": (end - start) / 1e6,
+                "kernels": kernel_summary_for_range(cur, start, end),
+            }
+        )
+
+    by_name = defaultdict(list)
+    for name, start, end in nvtx_rows:
+        by_name[name].append((start, end))
+    for name, rows in sorted(by_name.items(), key=lambda item: -sum(end - start for start, end in item[1])):
+        data = interval_summary(rows)
+        result["nvtx_by_name"].append({"name": name, **data})
+
+    decode_rows = by_name.get("decode_loop", [])
+    if decode_rows:
+        start = min(s for s, _e in decode_rows)
+        end = max(e for _s, e in decode_rows)
+        result["decode_loop"] = {
+            "duration_ms": (end - start) / 1e6,
+            "kernels": kernel_summary_for_range(cur, start, end),
+        }
 
     print(json.dumps(result, indent=2, ensure_ascii=False))
 

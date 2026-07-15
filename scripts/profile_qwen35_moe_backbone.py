@@ -44,6 +44,7 @@ COMPILE_DYNAMIC = os.environ.get("COMPILE_DYNAMIC", "1").lower() in {"1", "true"
 DECODE_ATTENTION_MASK = os.environ.get("DECODE_ATTENTION_MASK", "1").lower() in {"1", "true", "yes", "on"}
 CUDA_PROFILER_RANGE = os.environ.get("CUDA_PROFILER_RANGE", "0").lower() in {"1", "true", "yes", "on"}
 NVTX_RANGES = os.environ.get("NVTX_RANGES", "1").lower() in {"1", "true", "yes", "on"}
+NVTX_MODULES = os.environ.get("NVTX_MODULES", "0").lower() in {"1", "true", "yes", "on"}
 SYNC_EACH_DECODE = os.environ.get("SYNC_EACH_DECODE", "1").lower() in {"1", "true", "yes", "on"}
 LOGITS_TO_KEEP = int(os.environ.get("LOGITS_TO_KEEP", "1"))
 PATCH_B1_EXPERTS = os.environ.get("PATCH_B1_EXPERTS", "0").lower() in {"1", "true", "yes", "on"}
@@ -107,6 +108,8 @@ def load_model():
     model.to("cuda")
     if PATCH_B1_EXPERTS:
         patch_batch1_experts(model)
+    if NVTX_MODULES:
+        patch_nvtx_modules(model)
     return model
 
 
@@ -141,6 +144,30 @@ def patch_batch1_experts(model):
             continue
         experts.__base_forward = experts.forward
         experts.forward = batch1_experts_forward.__get__(experts, experts.__class__)
+
+
+def wrap_forward_with_nvtx(module, label):
+    if module is None or hasattr(module, "__nvtx_original_forward"):
+        return
+    module.__nvtx_original_forward = module.forward
+
+    def wrapped_forward(*args, **kwargs):
+        with nvtx_range(label):
+            return module.__nvtx_original_forward(*args, **kwargs)
+
+    module.forward = wrapped_forward
+
+
+def patch_nvtx_modules(model):
+    for layer_idx, layer in enumerate(model.model.layers):
+        wrap_forward_with_nvtx(layer, f"layer.{layer_idx:02d}")
+        for name in ("self_attn", "linear_attn", "input_layernorm", "post_attention_layernorm"):
+            wrap_forward_with_nvtx(getattr(layer, name, None), f"layer.{layer_idx:02d}.{name}")
+        mlp = getattr(layer, "mlp", None)
+        wrap_forward_with_nvtx(mlp, f"layer.{layer_idx:02d}.mlp")
+        if mlp is not None:
+            for name in ("gate", "experts", "shared_expert", "shared_expert_gate"):
+                wrap_forward_with_nvtx(getattr(mlp, name, None), f"layer.{layer_idx:02d}.mlp.{name}")
 
 
 def maybe_compile_model(model):
@@ -465,6 +492,7 @@ def main():
         "use_static_cache": USE_STATIC_CACHE,
         "cuda_profiler_range": CUDA_PROFILER_RANGE,
         "nvtx_ranges": NVTX_RANGES,
+        "nvtx_modules": NVTX_MODULES,
         "sync_each_decode": SYNC_EACH_DECODE,
         "load_s": load_s,
         "cuda_max_mem_gib": torch.cuda.max_memory_allocated() / 1024**3,
