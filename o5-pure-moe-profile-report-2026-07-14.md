@@ -901,6 +901,30 @@ cudaMemsetAsync: 0.24 ms / 32 calls
 2. 把 argmax / token copy 尽量纳入 graph，或者至少避免 CPU 同步；
 3. 用更合适的 Nsight Compute / CUDA graph node profiling 方式看 graph 内部真实 kernel；
 4. 工程化 graph decoder，确认真实服务路径是否还能保持 14-15 ms/token。
+
+## 第十一批实验：graph loop 逐步同步 vs 统一同步
+
+任务：
+
+```text
+cctl task: 144051
+result dir: /user/weihongliang/o5_decode_graph_loop_async_20260715_063926
+```
+
+对比：
+
+```text
+SYNC_EACH_STEP=1: 14.09 ms/token
+SYNC_EACH_STEP=0: 13.97 ms/token
+```
+
+两者输出文本一致，说明之前每步 `cudaDeviceSynchronize` 并不是 14ms 中的主要剩余开销。当前 14ms/token 已经更接近 graph 内实际计算，而不是测量同步造成的假慢。
+
+这也更新了后续判断：
+
+1. 单纯把同步从逐 token 改成批量同步，收益很小；
+2. 图外 argmax/copy 也不是主要瓶颈；
+3. 继续降到 10ms/token 以内，需要看 graph 内部算子本身，例如 linear attention、MLP/shared expert、norm/elementwise，而不是只优化 Python 调度。
 4. 下一步应围绕 `batched_mm` 做 top-op profile，并考虑在 demo 推理代码中为 A100/batch=1 decode 默认选择 `batched_mm`。
 
 ## batched_mm top-op profile
