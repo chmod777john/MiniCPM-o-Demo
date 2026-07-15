@@ -38,6 +38,12 @@ def main():
     rank = br.rank
     is_driver = br.is_driver
 
+    worker_loop = getattr(model, "_spmd_worker_loop", None)
+    if worker_loop is not None and not is_driver:
+        worker_loop()
+        sys.stdout.flush()
+        os._exit(0)
+
     model.set_mode(ProcessorMode.CHAT)
     msgs = [{"role": "user", "content": os.environ.get("PROMPT", "请简单介绍一下你自己") }]
     if is_driver:
@@ -67,6 +73,9 @@ def main():
     if is_driver:
         text = result[0] if isinstance(result, tuple) else result
         print("GENERATE_OK", repr(text)[:1000], flush=True)
+        shutdown = getattr(model, "_spmd_shutdown", None)
+        if shutdown is not None:
+            shutdown()
 
 
 if __name__ == "__main__":

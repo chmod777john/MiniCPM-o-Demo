@@ -9,6 +9,7 @@ than in chat/duplex/TTS call sites.
 from __future__ import annotations
 
 import inspect
+import logging
 import threading
 from typing import Any
 
@@ -16,6 +17,7 @@ import torch
 
 
 _CACHE_SENTINEL = {"__tp2_cache__": True}
+logger = logging.getLogger("deploy.llm_wrapper")
 
 
 class DistributedTPLLM(torch.nn.Module):
@@ -70,8 +72,10 @@ class DistributedTPLLM(torch.nn.Module):
 
     def worker_loop(self) -> None:
         assert self.sync_calls and not self.is_driver, "worker_loop() is worker-rank only"
+        logger.info("[tp2-llm] rank=%s entering LLM worker_loop", self.rank)
         while True:
             method, payload = self._broadcast_object(None)
+            logger.info("[tp2-llm] rank=%s recv method=%s", self.rank, method)
             if method == "__shutdown__":
                 return
             if method == "noop":
@@ -87,10 +91,13 @@ class DistributedTPLLM(torch.nn.Module):
             if method == "noop":
                 self._broadcast_object((method, None))
                 return None
+            logger.info("[tp2-llm] rank=%s driver begin method=%s", self.rank, method)
             payload = self._make_payload(args, kwargs)
             self._broadcast_object((method, payload))
             self._broadcast_payload_tensors(payload, (args, kwargs))
-            return self._run_local(method, args, kwargs)
+            output = self._run_local(method, args, kwargs)
+            logger.info("[tp2-llm] rank=%s driver end method=%s", self.rank, method)
+            return output
 
     def _run_local(self, method: str, args: tuple[Any, ...], kwargs: dict[str, Any]) -> Any:
         if method == "forward":
@@ -100,6 +107,8 @@ class DistributedTPLLM(torch.nn.Module):
         else:
             raise AttributeError(method)
         self._remember_cache(output)
+        if not self.is_driver:
+            logger.info("[tp2-llm] rank=%s worker end method=%s", self.rank, method)
         return output
 
     def _remember_cache(self, output: Any) -> None:
