@@ -766,6 +766,44 @@ fast path 让 `linear_attn` 只下降约 10.4 ms / 8 token，但 MLP / experts �
 1. 已有 `.venv-accel` 不是更优运行环境。
 2. `linear_attn` fast path 本身可能有小收益，但被 torch/transformers 版本和 MoE experts 实现差异抵消。
 3. 不能直接把“装齐 FLA / causal-conv”当作优化结论；需要在 high-cu128 这套更快的环境中单独补齐 causal-conv/flash-attn 后再测，或者继续走 CUDA Graph / fused path。
+
+## 第八批实验：naive CUDA Graph decode probe
+
+任务：
+
+```text
+cctl task: 143800
+result dir: /user/weihongliang/o5_decode_graph_probe_20260715_044619
+script: scripts/try_qwen35_decode_graph.py
+```
+
+环境：
+
+```text
+venv: .venv-high-cu128
+torch: 2.11.0+cu128
+transformers: 5.13.0
+experts_implementation: batched_mm
+```
+
+结果：
+
+```text
+graph_capture: ok
+eager warm decode after first step: ~55 ms/token
+graph replay mean: 14.00 ms/token
+```
+
+这是目前最重要的结果：CUDA Graph 能把单步 replay 降到 `<20 ms/token`，说明之前 nsys 看到的 launch/gap 确实是核心瓶颈。
+
+限制：这个 probe 只是捕获“同一个 decode step 输入/同一个 cache state”的重放，没有实现真实连续生成循环：
+
+1. 没有在 graph 外更新 `graph_token` 为上一步输出 token；
+2. 没有验证 replay 后 recurrent/KV state 是否可以作为下一步生成的合法状态持续推进；
+3. 没有处理 argmax/sampling、结束条件、不同 session、不同 prompt 长度；
+4. 没有接入 MiniCPM-o 外层或 duplex。
+
+因此它不是可直接使用的推理实现，但已经证明方向成立。下一步应该做“可推进 graph decode loop”：固定输入 buffer，capture 一步 decode，replay 后把输出 token copy 回输入 buffer，并确认连续多 token 输出和 eager 一致或至少合法。
 4. 下一步应围绕 `batched_mm` 做 top-op profile，并考虑在 demo 推理代码中为 A100/batch=1 decode 默认选择 `batched_mm`。
 
 ## batched_mm top-op profile
