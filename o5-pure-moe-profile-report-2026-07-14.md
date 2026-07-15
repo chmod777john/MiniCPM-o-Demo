@@ -1024,3 +1024,107 @@ attention_mask rank mismatch. expected 2, actual 4
 ```
 
 当前判断：直接 compile 整个 `model.model` 不适合作为主线。decode 路径里 cache state 和 attention mask 形状变化会导致重编译/graph break。下一步优先减少 decode 输入动态性，例如避免每 token 重建 full attention_mask，或改用静态 cache/mask 后再考虑 CUDA graph / compile。
+
+## 第十二批实验：CUDA Graph node 级 nsys
+
+任务：
+
+```text
+cctl task: 144053
+result dir: /user/weihongliang/o5_decode_graph_loop_nsys_node_20260715_064913
+script: scripts/try_qwen35_decode_graph_loop.py
+nsys: --cuda-graph-trace=node
+```
+
+这次打开 `--cuda-graph-trace=node`，可以看到 graph replay 内部节点。8 token 的统计：
+
+```text
+CUPTI kernels: 25864
+kernel total: 115.88 ms
+kernel span: 141.63 ms
+```
+
+按 8 token 粗略折算，graph 内核执行约 `14.5 ms/token`，与脚本测得的 `13.97-15.00 ms/token` 基本一致。这说明 CUDA Graph 后剩下的时间主要是实际 GPU kernel 工作，不是 Python launch 或逐步同步造成的假慢。
+
+Top kernel：
+
+| kernel 类别 | calls | total |
+| --- | ---: | ---: |
+| `vectorized_gather_kernel` | 640 | 15.49 ms |
+| BF16 GEMM 64x64 | 328 | 12.61 ms |
+| cuBLAS GEMV | 1760 | 12.58 ms |
+| BF16 GEMM 128x64 | 320 | 10.20 ms |
+| `direct_copy` | 2336 | 7.91 ms |
+| BF16 GEMM 64x64 另一组 | 240 | 3.90 ms |
+| elementwise mul | 1280 | 3.88 ms |
+| CUTLASS 16x16 GEMM | 320 | 3.86 ms |
+| copy/cast elementwise | 1280 | 3.57 ms |
+| topk gather | 320 | 2.64 ms |
+
+当前解释：
+
+1. graph 之后主要瓶颈已经落到 MoE 路由、专家权重 gather、小 GEMM/GEMV、copy/elementwise 上；
+2. linear attention recurrent kernel 和 depthwise conv 不是当前最大头；
+3. 单纯减少 Python 调度已经不够，后续要么换更融合的 MoE kernel，要么在 H100/更新后端上验证 SonicMoE/DeepGEMM 这类实现。
+
+## 第十三批实验：graph 后端对比
+
+任务：
+
+```text
+cctl task: 144054
+result dir: /user/weihongliang/o5_graph_backend_compare_20260715_065505
+script: scripts/try_qwen35_decode_graph_loop.py
+```
+
+结果：
+
+| experts implementation | batch1 patch | graph 状态 | graph decode |
+| --- | --- | --- | ---: |
+| `batched_mm` | false | ok | 13.98 ms/token |
+| `batched_mm` | true | ok | 13.99 ms/token |
+| `eager` | false | capture failed | - |
+| `eager` | true | ok | 14.43 ms/token |
+
+结论：
+
+1. A100 上 graph decode 目前仍以 `batched_mm` 最好；
+2. 之前尝试的 batch=1 experts patch 在 graph 化之后没有收益；
+3. eager 不是更好的主线，未 patch 时甚至无法完成 graph capture，patch 后也慢于 batched_mm。
+
+## 第十四批实验：full-step graph capture
+
+任务：
+
+```text
+cctl task: 144052
+result dir: /user/weihongliang/o5_decode_graph_fullstep_20260715_064632
+script: scripts/try_qwen35_decode_graph_fullstep.py
+```
+
+目标是把 decode forward、argmax、token 写回、position/cache index 维护尽量放进同一个 CUDA Graph。结果失败：
+
+```text
+graph_fullstep: failed
+error_type: AcceleratorError
+error: cudaErrorStreamCaptureInvalidated
+```
+
+失败发生前普通 eager warm decode 约 `57 ms/token`。当前判断：full-step capture 里仍包含不适合 capture 的动态索引或 buffer 写入路径。这个方向不是完全不可行，但收益上限不大，因为第十一批实验已经证明 graph 外 argmax/copy 不是主要瓶颈。短期不应把它作为最高优先级。
+
+## 当前优化判断
+
+截至 commit `5d63fa4`，A100 单卡 pure Qwen3.5 MoE backbone 的最好结果是：
+
+```text
+experts_implementation: batched_mm
+CUDA Graph decode loop: 13.97-14.00 ms/token
+```
+
+这已经达到最初 `decode < 20 ms/token` 的实验目标。继续下降的主要路径不是继续改 Python wrapper，而是：
+
+1. 在 H100/SM90 上验证 `sonicmoe` / `deepgemm` / 新 fused MoE backend；
+2. 或者自研更融合的 MoE decode kernel，减少 expert weight gather、copy、topk/gather、scatter/add 等碎片；
+3. 工程化 CUDA Graph 生命周期，让服务端真实 decode 路径能复用当前实验里的 graph loop。
+
+从 node trace 粗略估算，单独消除显性 `vectorized_gather_kernel` 的理论上限约 `15.49ms / 8 = 1.94 ms/token`。如果 fused MoE 同时减少 gather、copy、elementwise 和小 GEMM/GEMV 调度，A100 等价收益可能在 `3-5 ms/token` 量级；H100 上需要实测，可能还会受 Tensor Core、内存带宽、后端实现和 kernel 可用性影响。
