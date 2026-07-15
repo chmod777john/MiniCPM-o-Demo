@@ -165,7 +165,21 @@ else:
 等流程里维护第二套调用路径。差异应集中在 `self.llm` 的构造和
 `DistributedTPLLM` 内部。
 
-如果这一层暂时做不到，退一步可以封装在 backend/model public API 层：
+本项目当前还必须尊重 Kaiqi 优化分支已经存在的 `LLMGraphRunner` 边界。
+`LLMGraphRunner` 在 `MiniCPMO45.utils.StreamDecoder.feed()` 中创建和推进，
+维护 `_static_pos`、StaticCache、graph input buffer 和 attention mask buffer。
+因此：
+
+```text
+O5_LLM_GRAPH=0: 可以继续探索 LLM-boundary sync。
+O5_LLM_GRAPH=1: TP2 同步必须包住 StreamDecoder.feed 所在的 model/backend step，
+                 让每个 rank 都完整推进本地 graph/cache 状态。
+```
+
+这里不是要重构或隐藏 `LLMGraphRunner`。`LLMGraphRunner` 是既有加速能力，
+TP2 当前目标是适配它的状态边界，而不是把它下沉到 `self.llm.model`。
+
+如果 LLM 层暂时做不到覆盖 graph 路径，退一步可以封装在 backend/model public API 层：
 
 ```text
 chat_complete
@@ -202,9 +216,26 @@ TTS 状态机
 业务 API schema
 ```
 
-## 当前分支的泄漏点
+## 当前分支的边界选择
 
-当前 TP2 分支相对于 `single_opt` 已经基本把大块新增放在 `core/deploy` 和 `tools/o5deploy`，但仍有几个泄漏点：
+当前 TP2 分支相对于 `single_opt` 已经基本把大块新增放在 `core/deploy` 和 `tools/o5deploy`。
+边界选择分两档：
+
+```text
+O5_LLM_GRAPH=0
+  使用 DistributedTPLLM，在 self.llm / self.llm.model 边界同步 forward/generate 调用。
+
+O5_LLM_GRAPH=1
+  使用 outer SpmdMirror，镜像 backend/model public calls。
+  这是为了保留 Kaiqi 的 LLMGraphRunner 位置，确保 rank0/rank1 都执行完整
+  StreamDecoder.feed()，从而同步推进 graph/cache/static_pos/mask 状态。
+```
+
+这不是简单退回 `tp2-encapsulation`。`DistributedTPLLM` 仍然固化了 LLM contract，
+并服务于无 graph 路径和后续更细边界探索；但生产 graph 路径当前以正确性为先，
+把 TP2 放在 `LLMGraphRunner` 的外层。
+
+仍需关注的泄漏点：
 
 1. `core/processors/unified.py` 里有 `_mcall()`，并且 `duplex_prepare/prefill/generate/finalize` 显式通过 mirror 调用。
 2. 单工 chat 路径也被调整为更靠近 `prepare + generate`，以便 serving mirror。
@@ -215,8 +246,9 @@ TTS 状态机
 
 当前 `wt/o5-tp2-llm-wrapper-2026-07-15` 进一步把 TP2 backbone 显式包成
 `core.deploy.llm_wrapper.DistributedTPLLM`。它目前是行为代理，目的是先把
-LLM contract 固化为代码边界；backend public API mirror 仍保留，用来保证
-rank1 和 rank0 进入相同的高层调用序列。
+LLM contract 固化为代码边界。`O5_LLM_GRAPH=1` 时，backend public API mirror
+仍保留且是有意选择，用来保证 rank1 和 rank0 进入相同的 `StreamDecoder.feed()`
+调用序列。
 
 真正把 mirror 下沉到 LLM 层时，rank0 不能只广播“调用了 forward”这个事件。
 还必须把 `inputs_embeds`、`position_ids`、`attention_mask`、`cache_position`
@@ -265,6 +297,7 @@ M MiniCPMO45/utils.py
 3. 把 rank1 worker 入口集中到 `DeploymentRuntime.run_worker_loop()`。
 4. 明确 `single_opt` base：所有 batched_mm、LLM graph、TTS graph、vocoder graph、fuse feed、lmhead 优化都属于 base，不应作为 TP2 diff 重新出现。
 5. 将 TP2 特有能力限制为：TP backbone 加载、distributed runtime、token broadcast、32K StaticCache 配置。
+6. 当前阶段不重构 `LLMGraphRunner`。优化工作聚焦于：TP2 如何按 graph/no-graph 两档选择正确同步边界，并把这个选择集中在 `core/deploy`。
 
 ## 本次迭代
 
@@ -306,9 +339,22 @@ duplex smoke:       通过，1s 静音 force_listen 返回 listen
 4. 当前已用 CPU/gloo 小型分布式脚本验证两次 forward 的 tensor 同步和 worker
    cache 递进；真实 O5 端到端还需要 GPU 验证。
 
-这使代码具备目标形态的落点，但 `tp2_llm` 仍是实验模式。若真实模型里有
-`generate()` 内部额外调用 `_expand_inputs_for_generation`、采样、或 cache 更新路径
-未完全等价，需要继续补齐 wrapper contract。
+这使代码具备目标形态的落点，但真实 O5 graph 路径暴露了一个重要边界：
+`LLMGraphRunner` 的状态在 `StreamDecoder.feed()`，不在裸 `self.llm.model` 内。
+因此 `tp2_llm` 当前按 `O5_LLM_GRAPH` 分档：
+
+```text
+O5_LLM_GRAPH=0
+  rank1 进入 DistributedTPLLM.worker_loop()，同步 LLM-boundary 调用。
+
+O5_LLM_GRAPH=1
+  rank1 进入 SpmdMirror.worker_loop()，镜像 backend/model public calls；
+  token_broadcast=True；每个 rank 本地 capture/replay LLMGraphRunner。
+```
+
+验证过的可用组合：`.venv-accel + O5_ATTN_IMPLEMENTATION=auto -> flash_attention_2 +
+O5_LLM_GRAPH=1 + O5_LLM_CACHE=32768`，audio/video realtime probe 均通过，
+日志显示 LLM/TTS graph capture OK。
 
 ## 验收标准
 
@@ -319,3 +365,6 @@ duplex smoke:       通过，1s 静音 force_listen 返回 listen
 5. 所有 public backend/model API 在 single_opt 和 tp2 下语义一致。
 6. rank0/rank1 出错时能一起退出，不会单边挂死。
 7. 32K cache、token broadcast、SPMD descriptor 只存在于 deploy/runtime 层。
+8. `O5_LLM_GRAPH=1` 时，TP2 同步边界必须覆盖 `LLMGraphRunner` 所在的
+   `StreamDecoder.feed()` 调用序列；不要求本阶段把 `LLMGraphRunner` 下沉到
+   `self.llm.model`。
