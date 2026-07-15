@@ -846,6 +846,61 @@ graph_loop_mean: 13.97 ms/token
 5. 还没有验证长序列后 cache/recurrent state 的边界行为。
 
 但优化方向已经明确：如果要把 o5 decode 压到 20ms/token 内，应该优先把这个 graph loop 工程化，而不是继续做小的 experts wrapper。
+
+## 第十批实验：graph replay nsys
+
+任务：
+
+```text
+cctl task: 144050
+result dir: /user/weihongliang/o5_decode_graph_loop_nsys_20260715_063348
+script: scripts/try_qwen35_decode_graph_loop.py
+```
+
+配置：
+
+```text
+CUDA_PROFILER_RANGE=1
+NVTX_RANGES=1
+STEPS=32
+```
+
+结果：
+
+```text
+graph_loop_mean: 15.00 ms/token   # nsys 下略慢于非 nsys 的 13.97
+graph_replay_loop: 486.35 ms / 32 token
+```
+
+nsys 的 CUDA kernel 表只看到 graph 外部的 argmax kernel：
+
+```text
+ArgMax reduce kernel: 0.367 ms / 32 calls
+```
+
+CUDA runtime：
+
+```text
+cudaGraphLaunch: 29.65 ms / 32 calls, avg 0.93 ms
+cudaDeviceSynchronize: 449.70 ms / 65 calls
+cudaMemcpyAsync: 0.54 ms / 64 calls
+cudaLaunchKernel: 0.40 ms / 32 calls   # argmax
+cudaMemsetAsync: 0.24 ms / 32 calls
+```
+
+解释：Nsight Systems 默认不会把 CUDA Graph 内部节点像 eager kernel 那样完整展开到 `CUPTI_ACTIVITY_KIND_KERNEL` 统计里，所以这里不能直接用 top kernel 判断 graph 内部算子瓶颈。但它能说明 graph 外部开销：
+
+1. 每步 graph launch 本身约 `0.93 ms`；
+2. 图外 argmax kernel 很小，约 `0.011 ms/token`；
+3. 当前测时脚本每步 `sync_time()` 都有 `cudaDeviceSynchronize`，这在服务里可以避免逐 token 强同步；
+4. 如果服务端异步 pipeline 做得好，真实可用延迟可能更接近 graph replay 本身，而不是被每步 Python synchronize 放大。
+
+下一步可优化点：
+
+1. 不在每个 token 后 `cudaDeviceSynchronize`，改为 CUDA event 或异步队列测时；
+2. 把 argmax / token copy 尽量纳入 graph，或者至少避免 CPU 同步；
+3. 用更合适的 Nsight Compute / CUDA graph node profiling 方式看 graph 内部真实 kernel；
+4. 工程化 graph decoder，确认真实服务路径是否还能保持 14-15 ms/token。
 4. 下一步应围绕 `batched_mm` 做 top-op profile，并考虑在 demo 推理代码中为 A100/batch=1 decode 默认选择 `batched_mm`。
 
 ## batched_mm top-op profile
