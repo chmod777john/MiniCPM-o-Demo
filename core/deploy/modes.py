@@ -21,6 +21,10 @@ _DEFAULT_DUP = {
 }
 
 
+def _experts_impl() -> str:
+    return os.environ.get("O5_EXPERTS_IMPLEMENTATION", "batched_mm")
+
+
 # ─────────────────────────── shared helpers ───────────────────────────
 def _mk_config(cfg: Dict[str, Any]):
     from transformers import AutoConfig
@@ -54,7 +58,7 @@ def _surgery_tp(
 ):
     """2-card TP: MiniCPMO with non-llm weights (mmap) + TP-sharded backbone via from_pretrained."""
     from accelerate import init_empty_weights
-    from transformers import AutoModelForCausalLM
+    from transformers import AutoConfig, AutoModelForCausalLM
     from .llm_wrapper import DistributedTPLLM
     from MiniCPMO45.modeling_minicpmo_unified import MiniCPMO
     from MiniCPMO45.processing_minicpmo import MiniCPMOProcessor
@@ -65,11 +69,19 @@ def _surgery_tp(
                           strict=False, assign=True); del sd
     model.llm = None
     model.to(device=device, dtype=torch.bfloat16)
-    tp = AutoModelForCausalLM.from_pretrained(cfg["backbone_dir"], tp_plan="auto", dtype=torch.bfloat16)
+    tp_cfg = AutoConfig.from_pretrained(cfg["backbone_dir"], trust_remote_code=True)
+    tp_cfg._attn_implementation = cfg.get("attn_implementation", "sdpa")
+    tp = AutoModelForCausalLM.from_pretrained(
+        cfg["backbone_dir"],
+        config=tp_cfg,
+        tp_plan="auto",
+        dtype=torch.bfloat16,
+    )
+    experts_impl = _experts_impl()
     for m in tp.modules():
         c = getattr(m, "config", None)
         if c is not None and hasattr(c, "_experts_implementation"):
-            c._experts_implementation = "batched_mm"
+            c._experts_implementation = experts_impl
     model.llm = DistributedTPLLM(
         tp,
         is_driver=(rank == 0),
@@ -86,23 +98,25 @@ def _enable_engine(model, *, tp: bool, cfg: Dict[str, Any], token_broadcast: boo
     tp=True additionally installs the token-broadcast SPMD sync on the decoder."""
     from MiniCPMO45.opt_flags import OPT
     # deployed MoE on both paths
+    experts_impl = _experts_impl()
     seen = set()
     for m in model.modules():
         c = getattr(m, "config", None)
         if c is not None and hasattr(c, "_experts_implementation") and id(c) not in seen:
-            c._experts_implementation = "batched_mm"; seen.add(id(c))
+            c._experts_implementation = experts_impl; seen.add(id(c))
     for k in list(OPT):
         OPT[k] = False
+    llm_graph = os.environ.get("O5_LLM_GRAPH", "1") not in {"0", "false", "False"}
     OPT.update({"tts_fast": True, "lmhead": True, "tts_graph": True,
-                "fuse_vision_audio": True, "llm_graph": True})
+                "fuse_vision_audio": True, "llm_graph": llm_graph})
     for m in model.tts.model.modules():
         c = getattr(m, "config", None)
         if c is not None and hasattr(c, "_attn_implementation"):
             c._attn_implementation = "eager"
     os.environ["O5_VISION_BATCH"] = "1"
     os.environ["O5_LLM_CACHE"] = str(cfg.get("llm_cache_len", 8192))
-    eng = {"experts": "batched_mm", "tts_fast": True, "lmhead": True, "tts_graph": True,
-           "fuse_vision_audio": True, "llm_graph": True, "llm_cache": cfg.get("llm_cache_len", 8192)}
+    eng = {"experts": experts_impl, "tts_fast": True, "lmhead": True, "tts_graph": True,
+           "fuse_vision_audio": True, "llm_graph": llm_graph, "llm_cache": cfg.get("llm_cache_len", 8192)}
     if tp and token_broadcast:
         _install_token_broadcast(model)
         eng["tp"] = 2; eng["token_broadcast"] = True
@@ -167,10 +181,15 @@ def build_single_opt(cfg, rank=0, world_size=1) -> BuildResult:
 def build_tp2(cfg, rank=0, world_size=2) -> BuildResult:
     import torch.distributed as dist
     from datetime import timedelta
-    if not dist.is_initialized():
-        dist.init_process_group("nccl", timeout=timedelta(seconds=int(cfg.get("nccl_timeout_s", 120))))
-    rank = dist.get_rank(); world_size = dist.get_world_size()
+    rank = int(os.environ.get("LOCAL_RANK", os.environ.get("RANK", rank)))
     torch.cuda.set_device(rank)
+    if not dist.is_initialized():
+        dist.init_process_group(
+            "nccl",
+            timeout=timedelta(seconds=int(cfg.get("nccl_timeout_s", 120))),
+            device_id=torch.device(f"cuda:{rank}"),
+        )
+    rank = dist.get_rank(); world_size = dist.get_world_size()
     dev = f"cuda:{rank}"
     model = _surgery_tp(cfg, dev, rank=rank, world_size=world_size)
     _init_unified(model, cfg)
@@ -191,10 +210,15 @@ def build_tp2(cfg, rank=0, world_size=2) -> BuildResult:
 def build_tp2_llm(cfg, rank=0, world_size=2) -> BuildResult:
     import torch.distributed as dist
     from datetime import timedelta
-    if not dist.is_initialized():
-        dist.init_process_group("nccl", timeout=timedelta(seconds=int(cfg.get("nccl_timeout_s", 120))))
-    rank = dist.get_rank(); world_size = dist.get_world_size()
+    rank = int(os.environ.get("LOCAL_RANK", os.environ.get("RANK", rank)))
     torch.cuda.set_device(rank)
+    if not dist.is_initialized():
+        dist.init_process_group(
+            "nccl",
+            timeout=timedelta(seconds=int(cfg.get("nccl_timeout_s", 120))),
+            device_id=torch.device(f"cuda:{rank}"),
+        )
+    rank = dist.get_rank(); world_size = dist.get_world_size()
     dev = f"cuda:{rank}"
     model = _surgery_tp(cfg, dev, rank=rank, world_size=world_size, sync_llm_calls=True)
     _init_unified(model, cfg)

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import inspect
 import logging
+import os
 import threading
 from typing import Any
 
@@ -21,7 +22,48 @@ logger = logging.getLogger("deploy.llm_wrapper")
 
 
 def _trace(message: str) -> None:
-    print(message, flush=True)
+    if os.environ.get("O5_TP2_LLM_TRACE", "0") == "1":
+        print(message, flush=True)
+
+
+def _describe_value(value: Any) -> str:
+    if torch.is_tensor(value):
+        return f"Tensor(shape={tuple(value.shape)}, dtype={value.dtype}, device={value.device})"
+    if value is None:
+        return "None"
+    if isinstance(value, (bool, int, float, str)):
+        return repr(value)
+    cls = type(value).__name__
+    max_cache_len = getattr(value, "max_cache_len", None)
+    if max_cache_len is not None:
+        return f"{cls}(max_cache_len={max_cache_len})"
+    try:
+        seq_len = value.get_seq_length()
+    except Exception:
+        seq_len = None
+    if seq_len is not None:
+        return f"{cls}(seq_len={seq_len})"
+    return cls
+
+
+def _describe_call(args: tuple[Any, ...], kwargs: dict[str, Any]) -> str:
+    parts: list[str] = []
+    if args:
+        parts.append("args=" + ",".join(_describe_value(v) for v in args[:3]))
+    for key in (
+        "input_ids",
+        "inputs_embeds",
+        "attention_mask",
+        "position_ids",
+        "cache_position",
+        "past_key_values",
+        "use_cache",
+        "return_dict",
+        "output_hidden_states",
+    ):
+        if key in kwargs:
+            parts.append(f"{key}={_describe_value(kwargs[key])}")
+    return "; ".join(parts) if parts else "no-args"
 
 
 class DistributedTPLLM(torch.nn.Module):
@@ -51,6 +93,7 @@ class DistributedTPLLM(torch.nn.Module):
         self._call_lock = threading.Lock()
         self._control_group = None
         self._worker_past_key_values = None
+        self._model_proxy = None
         if self.sync_calls:
             import torch.distributed as dist
 
@@ -111,19 +154,31 @@ class DistributedTPLLM(torch.nn.Module):
             return output
 
     def _run_local(self, method: str, args: tuple[Any, ...], kwargs: dict[str, Any]) -> Any:
-        if method == "forward":
-            _trace(f"[tp2-llm] rank={self.rank} local forward begin")
-            output = self.inner(*args, **kwargs)
-        elif method == "generate":
-            _trace(f"[tp2-llm] rank={self.rank} local generate begin")
-            output = self.inner.generate(*args, **kwargs)
-        else:
-            raise AttributeError(method)
+        kwargs = self._normalize_kwargs(kwargs)
+        with torch.inference_mode():
+            if method == "forward":
+                _trace(f"[tp2-llm] rank={self.rank} local forward begin {_describe_call(args, kwargs)}")
+                output = self.inner(*args, **kwargs)
+            elif method == "model":
+                _trace(f"[tp2-llm] rank={self.rank} local model begin {_describe_call(args, kwargs)}")
+                output = self.inner.model(*args, **kwargs)
+            elif method == "generate":
+                _trace(f"[tp2-llm] rank={self.rank} local generate begin {_describe_call(args, kwargs)}")
+                output = self.inner.generate(*args, **kwargs)
+            else:
+                raise AttributeError(method)
         self._remember_cache(output)
         if not self.is_driver:
             logger.info("[tp2-llm] rank=%s worker end method=%s", self.rank, method)
             _trace(f"[tp2-llm] rank={self.rank} worker end method={method}")
         return output
+
+    def _normalize_kwargs(self, kwargs: dict[str, Any]) -> dict[str, Any]:
+        attention_mask = kwargs.get("attention_mask")
+        if torch.is_tensor(attention_mask) and attention_mask.dtype is torch.bool:
+            kwargs = dict(kwargs)
+            kwargs["attention_mask"] = attention_mask.to(dtype=torch.long)
+        return kwargs
 
     def _remember_cache(self, output: Any) -> None:
         cache = None
@@ -255,11 +310,20 @@ class DistributedTPLLM(torch.nn.Module):
 
     @property
     def model(self) -> Any:
-        return self.inner.model
+        if not self.sync_calls:
+            return self.inner.model
+        if self._model_proxy is None or self._model_proxy.inner is not self.inner.model:
+            self._model_proxy = _DistributedTPSubmodule(
+                self,
+                self.inner.model,
+                name="model",
+            )
+        return self._model_proxy
 
     @model.setter
     def model(self, value: Any) -> None:
         self.inner.model = value
+        self._model_proxy = None
 
     @property
     def lm_head(self) -> Any:
@@ -295,3 +359,33 @@ def unwrap_llm(llm: Any) -> Any:
     """Return the underlying HF model when a deployment wrapper is present."""
 
     return getattr(llm, "inner", llm)
+
+
+class _DistributedTPSubmodule(torch.nn.Module):
+    """Proxy for LLM submodules that must still enter TP2 synchronization.
+
+    Some optimized code paths call ``llm.model(...)`` directly to skip the full
+    CausalLM lm_head.  In TP2 LLM-boundary mode, exposing the raw inner submodule
+    lets only rank 0 enter tensor-parallel collectives while rank 1 waits in the
+    LLM worker loop.  This proxy keeps that optimized public shape while routing
+    the call through the same synchronized control path.
+    """
+
+    def __init__(self, owner: DistributedTPLLM, inner: torch.nn.Module, *, name: str):
+        super().__init__()
+        object.__setattr__(self, "_owner", owner)
+        self.inner = inner
+        self.name = name
+
+    def forward(self, *args: Any, **kwargs: Any) -> Any:
+        owner = self._owner
+        if owner.sync_calls and owner.is_driver:
+            return owner._driver_call(self.name, args, kwargs)
+        return self.inner(*args, **kwargs)
+
+    def __getattr__(self, attr: str) -> Any:
+        try:
+            return super().__getattr__(attr)
+        except AttributeError:
+            inner = super().__getattr__("inner")
+            return getattr(inner, attr)

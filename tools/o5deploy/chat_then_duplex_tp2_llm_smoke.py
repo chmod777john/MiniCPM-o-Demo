@@ -73,7 +73,7 @@ def main():
     print("DUPLEX_PREFILL_START", flush=True)
     model.duplex_prefill(audio_waveform=audio, frame_list=None)
     print("DUPLEX_PREFILL_OK", flush=True)
-    result = model.duplex_generate(force_listen=True)
+    result = model.duplex_generate(force_listen_override=True)
     print("DUPLEX_GENERATE_OK", result, flush=True)
     model.duplex_finalize()
 
