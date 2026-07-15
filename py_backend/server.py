@@ -739,7 +739,7 @@ def main() -> None:
         "duplex_pause_timeout": args.duplex_pause_timeout or cfg.duplex_pause_timeout,
         "compile": cfg.compile,
         "chat_vocoder": cfg.chat_vocoder,
-        "attn_implementation": cfg.attn_implementation,
+        "attn_implementation": _os.environ.get("O5_ATTN_IMPLEMENTATION", cfg.attn_implementation),
         "deployment_mode": getattr(cfg.model, "deployment_mode", "single_eager"),
         "backbone_dir": getattr(cfg.model, "backbone_dir", None),
         "llm_cache_len": getattr(cfg.model, "llm_cache_len", 8192),

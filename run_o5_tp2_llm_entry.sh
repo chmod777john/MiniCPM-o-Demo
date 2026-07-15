@@ -8,6 +8,7 @@ export MODEL_PATH=/user/weihongliang/MiniCPM-o-4_6
 export PT_PATH=/user/weihongliang/o5_weights/omni_sft2_main_run_iter1200.pt
 export BACKBONE_DIR=/user/weihongliang/wangkaiqi/o5_backbone_hf
 export O5_DEPLOY_MODE=tp2_llm
+export O5_ATTN_IMPLEMENTATION=sdpa
 export O5_LLM_CACHE=32768
 export O5_SPMD_HEARTBEAT_INTERVAL=30
 export GATEWAY_PORT=8009
