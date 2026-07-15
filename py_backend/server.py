@@ -751,6 +751,11 @@ def main() -> None:
     if int(_os.environ.get("RANK", "0")) != 0:
         _be = create_backend(SERVER_CONFIG); _be.load_model()
         _m = getattr(getattr(_be, "processor", None), "model", None)
+        _worker_loop = getattr(_m, "_spmd_worker_loop", None)
+        if _worker_loop is not None:
+            logger.info("[spmd] rank %s: entering model worker_loop (no HTTP)", _os.environ.get("RANK"))
+            _worker_loop()
+            return
         _mir = getattr(_m, "_spmd_mirror", None)
         if _mir is not None:
             logger.info("[spmd] rank %s: entering worker_loop (no HTTP)", _os.environ.get("RANK"))

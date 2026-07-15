@@ -4,7 +4,20 @@
 
 ## 目标
 
-理想状态下，业务层仍然只看到一个普通 backend/model：
+理想状态下，业务层仍然只看到一个普通 backend/model，更底层的
+`MiniCPMO` 也仍然只看到一个普通 HuggingFace 风格 LLM 对象：
+
+```text
+MiniCPMO / chat / streaming / duplex
+        |
+        v
+self.llm  # LLM-compatible object
+        |
+        +-- single_opt: local Qwen3_5MoeForCausalLM
+        +-- tp2:        DistributedTPLLM
+```
+
+业务层继续调用普通 backend API：
 
 ```python
 backend = create_backend(config)
@@ -123,6 +136,35 @@ outputs = self.llm(
 )
 ```
 
+这里的目标不是只包住 `forward`。`self.llm` 必须作为一个完整的
+LLM-compatible object 暴露当前 MiniCPMO 实际依赖的 contract：
+
+```text
+forward / __call__
+generate
+config / generation_config
+model / model.embed_tokens
+lm_head
+get_input_embeddings / set_input_embeddings
+get_output_embeddings / set_output_embeddings
+parameters / eval / train / to / cuda / bfloat16 等 nn.Module lifecycle
+past_key_values / cache_position / position_ids 的 forward 语义
+必要的属性透传
+```
+
+也就是说，上层不应该写：
+
+```python
+if deployment_mode == "tp2":
+    ...
+else:
+    ...
+```
+
+也不应该为了 TP2 在 `chat`、`streaming_generate`、`duplex_generate`
+等流程里维护第二套调用路径。差异应集中在 `self.llm` 的构造和
+`DistributedTPLLM` 内部。
+
 如果这一层暂时做不到，退一步可以封装在 backend/model public API 层：
 
 ```text
@@ -171,6 +213,17 @@ TTS 状态机
 
 这些改法能跑通，但说明 TP2 runtime 仍然泄漏到了 processor/server 层。
 
+当前 `wt/o5-tp2-llm-wrapper-2026-07-15` 进一步把 TP2 backbone 显式包成
+`core.deploy.llm_wrapper.DistributedTPLLM`。它目前是行为代理，目的是先把
+LLM contract 固化为代码边界；backend public API mirror 仍保留，用来保证
+rank1 和 rank0 进入相同的高层调用序列。
+
+真正把 mirror 下沉到 LLM 层时，rank0 不能只广播“调用了 forward”这个事件。
+还必须把 `inputs_embeds`、`position_ids`、`attention_mask`、`cache_position`
+等本次 LLM 调用输入同步到 worker rank，并保证每个 rank 维护自己的
+KV cache / StaticCache 状态。否则 worker rank 没有音频、视觉、TTS 前序逻辑
+产生的中间张量，无法独立进入等价的 tensor-parallel forward。
+
 ## 理想文件差异
 
 相对于 `single_opt`，理想 TP2 增量应主要是：
@@ -215,7 +268,7 @@ M MiniCPMO45/utils.py
 
 ## 本次迭代
 
-本次先完成一层 backend public API 封装，不触碰更底层的 LLM forward 封装：
+上一轮先完成一层 backend public API 封装，不触碰更底层的 LLM forward 封装：
 
 1. `PyTorchBackend.load_model()` 在发现模型带 `_spmd_mirror` 后，自动包装需要跨 rank 同步的 backend public methods。
 2. `DuplexView` 不再显式 `_mcall()`，恢复为普通 `self._model.duplex_*()` 调用。
@@ -231,6 +284,31 @@ duplex smoke:       通过，1s 静音 force_listen 返回 listen
 ```
 
 一个重要修正是 `chat_prefill` 也必须进入 backend wrapper。streaming chat 是 `chat_prefill -> chat_streaming_generate` 两段调用；如果只 mirror generate，rank0/rank1 会进入不同的 collective 序列，最终触发 NCCL timeout。
+
+本轮开始建立 LLM-compatible wrapper：
+
+1. 新增 `core/deploy/llm_wrapper.py`。
+2. TP2 builder 不再把 raw HF TP backbone 直接挂到 `model.llm`，而是挂
+   `DistributedTPLLM(tp)`。
+3. `DistributedTPLLM` 透传当前 MiniCPMO 依赖的 LLM contract，包括
+   `forward`、`generate`、embedding/head、`config`、`generation_config`、
+   `.model`、`.lm_head`、`device/dtype` 和必要属性。
+4. 这一步保持行为不变，不移除 backend mirror；它为后续把 SPMD 同步从
+   backend public API 下沉到 LLM wrapper 提供明确落点。
+
+随后新增实验模式 `tp2_llm`：
+
+1. `tp2` 仍是当前可用路径：rank1 镜像 backend/model public method。
+2. `tp2_llm` 改为 rank1 进入 `DistributedTPLLM.worker_loop()`，rank0 每次
+   `self.llm.forward()` / `self.llm.generate()` 广播调用描述和输入 tensor。
+3. worker rank 不再运行 audio/vision/TTS 外层流程，而是在 LLM wrapper 内维护
+   自己的 `past_key_values`。
+4. 当前已用 CPU/gloo 小型分布式脚本验证两次 forward 的 tensor 同步和 worker
+   cache 递进；真实 O5 端到端还需要 GPU 验证。
+
+这使代码具备目标形态的落点，但 `tp2_llm` 仍是实验模式。若真实模型里有
+`generate()` 内部额外调用 `_expand_inputs_for_generation`、采样、或 cache 更新路径
+未完全等价，需要继续补齐 wrapper contract。
 
 ## 验收标准
 

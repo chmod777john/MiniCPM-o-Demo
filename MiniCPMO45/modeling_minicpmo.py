@@ -237,7 +237,8 @@ class MiniCPMO(MiniCPMOPreTrainedModel):
         self.terminators = ["<|im_end|>", "<|endoftext|>", "<|tts_eos|>"]
 
         self.think_str = ""
-        if self.llm.__class__.__name__ in {"Qwen3_5ForCausalLM", "Qwen3_5MoeForCausalLM"}:
+        llm_class_name = getattr(getattr(self.llm, "inner", self.llm), "__class__").__name__
+        if llm_class_name in {"Qwen3_5ForCausalLM", "Qwen3_5MoeForCausalLM"}:
             self.think_str = "<think>\\n\\n</think>\\n\\n"
 
         # for streaming
@@ -5397,5 +5398,4 @@ def gen_logits(num_code: int, top_p=0.7, top_k=20, repetition_penalty=1.0):
         logits_processors.append(CustomRepetitionPenaltyLogitsProcessorRepeat(repetition_penalty, num_code, 16))
 
     return logits_warpers, logits_processors
-
 

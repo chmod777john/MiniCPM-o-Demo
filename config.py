@@ -59,7 +59,8 @@ class ModelConfig(BaseModel):
             "部署模式（core.deploy 可插拔框架）。"
             "single_eager（默认）= 单卡 eager；"
             "single_opt = 单卡 CUDA-graph 优化引擎；"
-            "tp2 = 双卡张量并行（需 torchrun 2-rank 启动）。"
+            "tp2 = 双卡张量并行（需 torchrun 2-rank 启动）；"
+            "tp2_llm = 实验性双卡张量并行，rank 同步下沉到 LLM wrapper。"
             "新模式在 core/deploy/modes.py 注册即可。"
         ),
     )

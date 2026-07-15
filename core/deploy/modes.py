@@ -44,10 +44,18 @@ def _load_full(cfg: Dict[str, Any], device: str):
     return model
 
 
-def _surgery_tp(cfg: Dict[str, Any], device: str):
+def _surgery_tp(
+    cfg: Dict[str, Any],
+    device: str,
+    *,
+    rank: int = 0,
+    world_size: int = 1,
+    sync_llm_calls: bool = False,
+):
     """2-card TP: MiniCPMO with non-llm weights (mmap) + TP-sharded backbone via from_pretrained."""
     from accelerate import init_empty_weights
     from transformers import AutoModelForCausalLM
+    from .llm_wrapper import DistributedTPLLM
     from MiniCPMO45.modeling_minicpmo_unified import MiniCPMO
     from MiniCPMO45.processing_minicpmo import MiniCPMOProcessor
     with init_empty_weights():
@@ -62,12 +70,18 @@ def _surgery_tp(cfg: Dict[str, Any], device: str):
         c = getattr(m, "config", None)
         if c is not None and hasattr(c, "_experts_implementation"):
             c._experts_implementation = "batched_mm"
-    model.llm = tp
+    model.llm = DistributedTPLLM(
+        tp,
+        is_driver=(rank == 0),
+        rank=rank,
+        world_size=world_size,
+        sync_calls=sync_llm_calls,
+    )
     model.processor = MiniCPMOProcessor.from_pretrained(cfg["model_path"], trust_remote_code=True)
     return model
 
 
-def _enable_engine(model, *, tp: bool, cfg: Dict[str, Any]):
+def _enable_engine(model, *, tp: bool, cfg: Dict[str, Any], token_broadcast: bool = True):
     """Enable the deployed CUDA-graph optimization engine. Returns an engine-info dict.
     tp=True additionally installs the token-broadcast SPMD sync on the decoder."""
     from MiniCPMO45.opt_flags import OPT
@@ -89,9 +103,11 @@ def _enable_engine(model, *, tp: bool, cfg: Dict[str, Any]):
     os.environ["O5_LLM_CACHE"] = str(cfg.get("llm_cache_len", 8192))
     eng = {"experts": "batched_mm", "tts_fast": True, "lmhead": True, "tts_graph": True,
            "fuse_vision_audio": True, "llm_graph": True, "llm_cache": cfg.get("llm_cache_len", 8192)}
-    if tp:
+    if tp and token_broadcast:
         _install_token_broadcast(model)
         eng["tp"] = 2; eng["token_broadcast"] = True
+    elif tp:
+        eng["tp"] = 2; eng["token_broadcast"] = False
     return eng
 
 
@@ -156,12 +172,14 @@ def build_tp2(cfg, rank=0, world_size=2) -> BuildResult:
     rank = dist.get_rank(); world_size = dist.get_world_size()
     torch.cuda.set_device(rank)
     dev = f"cuda:{rank}"
-    model = _surgery_tp(cfg, dev)
+    model = _surgery_tp(cfg, dev, rank=rank, world_size=world_size)
     _init_unified(model, cfg)
     eng = _enable_engine(model, tp=True, cfg=cfg); eng["mode"] = "tp2"
 
     from .spmd import SpmdMirror
     model._spmd_mirror = SpmdMirror(model, is_driver=(rank == 0), rank=rank, world_size=world_size)
+    if hasattr(model.llm, "mirror"):
+        model.llm.mirror = model._spmd_mirror
 
     def broadcast_input(obj):
         box = [obj]; dist.broadcast_object_list(box, src=0); return box[0]
@@ -170,9 +188,28 @@ def build_tp2(cfg, rank=0, world_size=2) -> BuildResult:
                        engine=eng, broadcast_input=broadcast_input)
 
 
+def build_tp2_llm(cfg, rank=0, world_size=2) -> BuildResult:
+    import torch.distributed as dist
+    from datetime import timedelta
+    if not dist.is_initialized():
+        dist.init_process_group("nccl", timeout=timedelta(seconds=int(cfg.get("nccl_timeout_s", 120))))
+    rank = dist.get_rank(); world_size = dist.get_world_size()
+    torch.cuda.set_device(rank)
+    dev = f"cuda:{rank}"
+    model = _surgery_tp(cfg, dev, rank=rank, world_size=world_size, sync_llm_calls=True)
+    _init_unified(model, cfg)
+    eng = _enable_engine(model, tp=True, cfg=cfg, token_broadcast=False); eng["mode"] = "tp2_llm"
+    model._spmd_worker_loop = model.llm.worker_loop
+    model._spmd_shutdown = model.llm.shutdown_worker
+    model._spmd_noop = model.llm.noop
+    return BuildResult(model=model, world_size=world_size, rank=rank, is_driver=(rank == 0), engine=eng)
+
+
 register_mode(DeploymentMode("single_eager", 1, False, build_single_eager,
                              "1 GPU, trusted eager path (production default)."))
 register_mode(DeploymentMode("single_opt", 1, False, build_single_opt,
                              "1 GPU, CUDA-graph optimization engine (batched_mm + tts/llm/vocoder graphs)."))
 register_mode(DeploymentMode("tp2", 2, True, build_tp2,
                              "2 GPU tensor-parallel backbone (SPMD/torchrun) + graphs + token broadcast."))
+register_mode(DeploymentMode("tp2_llm", 2, True, build_tp2_llm,
+                             "Experimental 2 GPU TP mode with synchronization at the LLM object boundary."))

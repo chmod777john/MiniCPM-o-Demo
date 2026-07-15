@@ -3,7 +3,8 @@
 
 Runs inside torchrun with both ranks executing the same chat prefill/generate
 calls. This isolates TP2 chat model behavior from gateway/worker WebSocket
-serving and from SpmdMirror scheduling.
+serving and from SpmdMirror scheduling. Set MODE=tp2_llm to exercise the
+experimental LLM-boundary synchronization path.
 """
 import json
 import os
@@ -31,7 +32,8 @@ def main():
     }
     torch.manual_seed(1234)
     np.random.seed(1234)
-    br = deploy.get_mode("tp2").build(cfg)
+    mode_name = os.environ.get("MODE", "tp2")
+    br = deploy.get_mode(mode_name).build(cfg)
     model = br.model
     rank = br.rank
     is_driver = br.is_driver
@@ -39,7 +41,7 @@ def main():
     model.set_mode(ProcessorMode.CHAT)
     msgs = [{"role": "user", "content": os.environ.get("PROMPT", "请简单介绍一下你自己") }]
     if is_driver:
-        print("BUILD", json.dumps(br.engine, ensure_ascii=False), flush=True)
+        print("BUILD", mode_name, json.dumps(br.engine, ensure_ascii=False), flush=True)
         print("PREFILL_START", flush=True)
     prompt = model.non_streaming_prefill(
         session_id="tp2_chat_smoke",

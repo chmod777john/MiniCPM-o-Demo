@@ -108,6 +108,10 @@ class PyTorchBackend:
         model = getattr(self.processor, "model", None)
         return getattr(model, "_spmd_mirror", None)
 
+    def _get_spmd_noop(self) -> Any:
+        model = getattr(self.processor, "model", None)
+        return getattr(model, "_spmd_noop", None)
+
     def _install_spmd_method_wrappers(self) -> None:
         """Hide SPMD mirroring behind the backend public API.
 
@@ -158,6 +162,10 @@ class PyTorchBackend:
         self._spmd_wrapped = True
 
     def call_spmd_noop(self) -> None:
+        noop = self._get_spmd_noop()
+        if noop is not None:
+            noop()
+            return
         mirror = self._get_spmd_mirror()
         if mirror is not None and getattr(mirror, "is_driver", False):
             mirror.call("noop")
