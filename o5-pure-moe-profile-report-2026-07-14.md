@@ -602,6 +602,87 @@ self_attn: 2.6 ms
 ```
 
 所以 prefill 和 decode 的优化侧重点不同：prefill 更像 MoE expert 吞吐问题；batch=1 decode 更像大量层级小 kernel 和调度空洞问题。
+
+## 第六批实验：nsys + NVTX 模块分段
+
+任务：
+
+```text
+cctl task: 143798
+result dir: /user/weihongliang/o5_pure_moe_nsys_nvtx_modules_20260715_043214
+script: scripts/profile_qwen35_moe_backbone.py
+analysis: scripts/analyze_nsys_sqlite.py
+```
+
+配置：
+
+```text
+experts_implementation=batched_mm
+PROFILE=0
+MODULE_TIMING=0
+NVTX_MODULES=1
+DECODE_ATTENTION_MASK=0
+LOGITS_TO_KEEP=1
+DECODE_STEPS=8
+CUDA_PROFILER_RANGE=1
+```
+
+nsys 会引入额外开销，所以这组不代表真实 clean latency。实际 run 内记录：
+
+```text
+decode mean: 87.30 ms/token
+decode_loop: 699.53 ms / 8 token
+decode_loop kernels: 25328
+decode_loop kernel total: 125.68 ms
+decode_loop stream gap total: 573.71 ms
+```
+
+这再次说明：wall time 主要不是单个 kernel 算得慢，而是大量 kernel launch / kernel gap。
+
+### decode_loop 内模块分布
+
+只统计 `decode_loop` 内的 NVTX range：
+
+| range type | total | count | mean |
+| --- | ---: | ---: | ---: |
+| layer total | 678.31 ms | 320 | 2.120 ms |
+| `mlp` | 238.74 ms | 320 | 0.746 ms |
+| `linear_attn` | 224.76 ms | 240 | 0.937 ms |
+| `mlp.experts` | 92.70 ms | 320 | 0.290 ms |
+| `self_attn` | 73.55 ms | 80 | 0.919 ms |
+| `post_attention_layernorm` | 54.97 ms | 320 | 0.172 ms |
+| `input_layernorm` | 54.18 ms | 320 | 0.169 ms |
+| `mlp.gate` | 51.91 ms | 320 | 0.162 ms |
+| `mlp.shared_expert` | 43.52 ms | 320 | 0.136 ms |
+| `mlp.shared_expert_gate` | 13.05 ms | 320 | 0.041 ms |
+
+这里 `layer total` 包含子模块；`mlp` 包含 `experts`、`gate`、`shared_expert` 等，不能横向相加。它的意义是显示大块分布。
+
+### 层类型结构
+
+decode 里 40 层大致是：
+
+```text
+30 层 linear_attn
+10 层 self_attn
+```
+
+每个 token 每层平均约 `2.1 ms`（在 nsys 开销下），linear-attn 层里 `linear_attn` 本身约 `0.93 ms`，MLP 约 `0.75 ms`。self-attn 层里 `self_attn` 本身约 `0.92 ms`，MLP 约 `0.74 ms`。
+
+### 关键判断更新
+
+之前关注 MoE experts 是对的，但现在更明确：decode 的大头不是单独 `mlp.experts`，而是：
+
+1. `linear_attn` / recurrent state 路径；
+2. MLP 整体，包括 router gate、experts、shared expert；
+3. norm 和大量 elementwise/copy/gather 小 kernel；
+4. kernel launch / stream gap。
+
+因此，下一步比“继续改 experts wrapper”更有价值的是：
+
+1. 让 FLA / causal-conv fast path 真正启用，再重测 `linear_attn`；
+2. 做整模型 decode CUDA Graph，优先减少 25k+ kernel 的 launch/gap；
+3. 如果换 H100，再试 `deepgemm` / `sonicmoe` 这类 SM90+ backend。
 4. 下一步应围绕 `batched_mm` 做 top-op profile，并考虑在 demo 推理代码中为 A100/batch=1 decode 默认选择 `batched_mm`。
 
 ## batched_mm top-op profile
