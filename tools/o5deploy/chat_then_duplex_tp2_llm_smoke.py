@@ -61,12 +61,14 @@ def main():
     ref = __import__("minimal_o5_unified_model_duplex").load_16k(
         os.path.join(WORKTREE, "assets/ref_audio/ref_minicpm_signature.wav")
     )
+    print("DUPLEX_PREPARE_START", flush=True)
     model.duplex_prepare(
         prefix_system_prompt="<|im_start|>system\nStreaming Omni Conversation.\n<|audio_start|>",
         suffix_system_prompt="<|audio_end|><|im_end|>",
         ref_audio=ref,
         prompt_wav_path=os.path.join(WORKTREE, "assets/ref_audio/ref_minicpm_signature.wav"),
     )
+    print("DUPLEX_PREPARE_OK", flush=True)
     audio = np.zeros(16000, dtype=np.float32)
     print("DUPLEX_PREFILL_START", flush=True)
     model.duplex_prefill(audio_waveform=audio, frame_list=None)
