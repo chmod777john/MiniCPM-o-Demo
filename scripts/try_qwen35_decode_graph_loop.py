@@ -17,6 +17,8 @@ PROMPT = os.environ.get("PROMPT", "请用中文简要介绍西安的历史、地
 PROMPT_REPEAT = int(os.environ.get("PROMPT_REPEAT", "4"))
 STEPS = int(os.environ.get("STEPS", "32"))
 EXPERTS_IMPLEMENTATION = os.environ.get("EXPERTS_IMPLEMENTATION", "batched_mm")
+CUDA_PROFILER_RANGE = os.environ.get("CUDA_PROFILER_RANGE", "0").lower() in {"1", "true", "yes", "on"}
+NVTX_RANGES = os.environ.get("NVTX_RANGES", "1").lower() in {"1", "true", "yes", "on"}
 DTYPE = torch.bfloat16
 
 
@@ -26,6 +28,19 @@ def sync_time(fn):
     out = fn()
     torch.cuda.synchronize()
     return out, time.perf_counter() - start
+
+
+class nvtx_range:
+    def __init__(self, name):
+        self.name = name
+
+    def __enter__(self):
+        if NVTX_RANGES and torch.cuda.is_available():
+            torch.cuda.nvtx.range_push(self.name)
+
+    def __exit__(self, exc_type, exc, tb):
+        if NVTX_RANGES and torch.cuda.is_available():
+            torch.cuda.nvtx.range_pop()
 
 
 @torch.inference_mode()
@@ -72,6 +87,8 @@ def main():
         "cuda": torch.version.cuda,
         "transformers": __import__("transformers").__version__,
         "experts_implementation": EXPERTS_IMPLEMENTATION,
+        "cuda_profiler_range": CUDA_PROFILER_RANGE,
+        "nvtx_ranges": NVTX_RANGES,
         "eager_warm_decode_ms": eager_times,
         "eager_warm_generated": eager_generated,
     }
@@ -91,13 +108,21 @@ def main():
 
         replay_times = []
         generated = []
-        for _ in range(STEPS):
-            _unused, dt = sync_time(graph.replay)
-            replay_times.append(dt * 1000)
-            out = holder["out"]
-            next_token = out.logits[:, -1:, :].argmax(dim=-1)
-            generated.append(int(graph_token.item()))
-            graph_token.copy_(next_token)
+        if CUDA_PROFILER_RANGE:
+            torch.cuda.synchronize()
+            torch.cuda.cudart().cudaProfilerStart()
+        with nvtx_range("graph_replay_loop"):
+            for step_idx in range(STEPS):
+                with nvtx_range(f"graph_replay_{step_idx:03d}"):
+                    _unused, dt = sync_time(graph.replay)
+                    replay_times.append(dt * 1000)
+                    out = holder["out"]
+                    next_token = out.logits[:, -1:, :].argmax(dim=-1)
+                    generated.append(int(graph_token.item()))
+                    graph_token.copy_(next_token)
+        if CUDA_PROFILER_RANGE:
+            torch.cuda.synchronize()
+            torch.cuda.cudart().cudaProfilerStop()
 
         record["graph_loop"] = "ok"
         record["graph_loop_ms"] = replay_times
