@@ -121,6 +121,13 @@ class PyTorchBackend:
         """
         mirror = self._get_spmd_mirror()
         if mirror is None:
+            # TP2 LLM-boundary mode does not mirror whole backend methods; rank1
+            # waits inside DistributedTPLLM.worker_loop() and is kept alive by
+            # model._spmd_noop.  Mark the backend as SPMD driver so the server
+            # idle heartbeat calls call_spmd_noop() for this mode as well.
+            if self._get_spmd_noop() is not None:
+                self.spmd_is_driver = True
+                self.spmd_is_worker = False
             return
 
         mirror.model = _SpmdBackendTarget(self)
