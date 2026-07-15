@@ -48,6 +48,8 @@ from transformers.utils import is_torch_dtype
 from transformers.utils import requires_backends
 from transformers.utils import TensorType
 
+from .configuration_minicpmo import MiniCPMOConfig
+
 
 def recursive_converter(converter, value):
     if isinstance(value, list):
@@ -475,7 +477,7 @@ class MiniCPMVImageProcessor(BaseImageProcessor):
         )
 
 
-AutoImageProcessor.register("MiniCPMVImageProcessor", MiniCPMVImageProcessor)
+AutoImageProcessor.register(MiniCPMOConfig, MiniCPMVImageProcessor, exist_ok=True)
 
 
 def chunk_audio(audio: np.ndarray, max_duration_seconds: int = 30, sample_rate: int = 16000) -> List[np.ndarray]:
