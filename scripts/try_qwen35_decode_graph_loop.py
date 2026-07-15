@@ -19,6 +19,7 @@ STEPS = int(os.environ.get("STEPS", "32"))
 EXPERTS_IMPLEMENTATION = os.environ.get("EXPERTS_IMPLEMENTATION", "batched_mm")
 CUDA_PROFILER_RANGE = os.environ.get("CUDA_PROFILER_RANGE", "0").lower() in {"1", "true", "yes", "on"}
 NVTX_RANGES = os.environ.get("NVTX_RANGES", "1").lower() in {"1", "true", "yes", "on"}
+SYNC_EACH_STEP = os.environ.get("SYNC_EACH_STEP", "1").lower() in {"1", "true", "yes", "on"}
 DTYPE = torch.bfloat16
 
 
@@ -89,6 +90,7 @@ def main():
         "experts_implementation": EXPERTS_IMPLEMENTATION,
         "cuda_profiler_range": CUDA_PROFILER_RANGE,
         "nvtx_ranges": NVTX_RANGES,
+        "sync_each_step": SYNC_EACH_STEP,
         "eager_warm_decode_ms": eager_times,
         "eager_warm_generated": eager_generated,
     }
@@ -112,14 +114,28 @@ def main():
             torch.cuda.synchronize()
             torch.cuda.cudart().cudaProfilerStart()
         with nvtx_range("graph_replay_loop"):
-            for step_idx in range(STEPS):
-                with nvtx_range(f"graph_replay_{step_idx:03d}"):
-                    _unused, dt = sync_time(graph.replay)
-                    replay_times.append(dt * 1000)
-                    out = holder["out"]
-                    next_token = out.logits[:, -1:, :].argmax(dim=-1)
-                    generated.append(int(graph_token.item()))
-                    graph_token.copy_(next_token)
+            if SYNC_EACH_STEP:
+                for step_idx in range(STEPS):
+                    with nvtx_range(f"graph_replay_{step_idx:03d}"):
+                        _unused, dt = sync_time(graph.replay)
+                        replay_times.append(dt * 1000)
+                        out = holder["out"]
+                        next_token = out.logits[:, -1:, :].argmax(dim=-1)
+                        generated.append(int(graph_token.item()))
+                        graph_token.copy_(next_token)
+            else:
+                torch.cuda.synchronize()
+                loop_start = time.perf_counter()
+                for step_idx in range(STEPS):
+                    with nvtx_range(f"graph_replay_{step_idx:03d}"):
+                        graph.replay()
+                        out = holder["out"]
+                        next_token = out.logits[:, -1:, :].argmax(dim=-1)
+                        generated.append(int(graph_token.item()))
+                        graph_token.copy_(next_token)
+                torch.cuda.synchronize()
+                loop_dt = (time.perf_counter() - loop_start) * 1000
+                replay_times = [loop_dt / STEPS] * STEPS
         if CUDA_PROFILER_RANGE:
             torch.cuda.synchronize()
             torch.cuda.cudart().cudaProfilerStop()
