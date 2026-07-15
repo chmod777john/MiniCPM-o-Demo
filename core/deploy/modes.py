@@ -225,9 +225,24 @@ def build_tp2_llm(cfg, rank=0, world_size=2) -> BuildResult:
         )
     rank = dist.get_rank(); world_size = dist.get_world_size()
     dev = f"cuda:{rank}"
-    model = _surgery_tp(cfg, dev, rank=rank, world_size=world_size, sync_llm_calls=True)
+    llm_graph = os.environ.get("O5_LLM_GRAPH", "1") not in {"0", "false", "False"}
+    # LLM graph state is owned by StreamDecoder.feed(), outside the HF LLM
+    # module.  When graph is enabled, mirror whole backend calls so every rank
+    # advances decoder graph/cache state in lockstep; LLM-boundary-only sync does
+    # not run that outer state on worker ranks.
+    sync_llm_calls = not llm_graph
+    model = _surgery_tp(cfg, dev, rank=rank, world_size=world_size, sync_llm_calls=sync_llm_calls)
     _init_unified(model, cfg)
-    eng = _enable_engine(model, tp=True, cfg=cfg, token_broadcast=False); eng["mode"] = "tp2_llm"
+    eng = _enable_engine(model, tp=True, cfg=cfg, token_broadcast=llm_graph); eng["mode"] = "tp2_llm"
+    if llm_graph:
+        from .spmd import SpmdMirror
+        model._spmd_mirror = SpmdMirror(model, is_driver=(rank == 0), rank=rank, world_size=world_size)
+
+        def broadcast_input(obj):
+            box = [obj]; dist.broadcast_object_list(box, src=0); return box[0]
+
+        return BuildResult(model=model, world_size=world_size, rank=rank, is_driver=(rank == 0),
+                           engine=eng, broadcast_input=broadcast_input)
     model._spmd_worker_loop = model.llm.worker_loop
     model._spmd_shutdown = model.llm.shutdown_worker
     model._spmd_noop = model.llm.noop
