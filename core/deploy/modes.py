@@ -76,12 +76,17 @@ def _surgery_tp(
         config=tp_cfg,
         tp_plan="auto",
         dtype=torch.bfloat16,
+        attn_implementation=cfg.get("attn_implementation", "sdpa"),
     )
+    attn_impl = cfg.get("attn_implementation", "sdpa")
     experts_impl = _experts_impl()
     for m in tp.modules():
         c = getattr(m, "config", None)
-        if c is not None and hasattr(c, "_experts_implementation"):
-            c._experts_implementation = experts_impl
+        if c is not None:
+            if hasattr(c, "_experts_implementation"):
+                c._experts_implementation = experts_impl
+            if hasattr(c, "_attn_implementation"):
+                c._attn_implementation = attn_impl
     model.llm = DistributedTPLLM(
         tp,
         is_driver=(rank == 0),
