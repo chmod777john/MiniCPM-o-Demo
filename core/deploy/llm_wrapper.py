@@ -153,6 +153,8 @@ class DistributedTPLLM(torch.nn.Module):
 
     def _encode_value(self, value: Any, *, key: str | None) -> Any:
         if key == "past_key_values":
+            if value is None:
+                return None
             return _CACHE_SENTINEL
         if torch.is_tensor(value):
             return {
@@ -170,6 +172,9 @@ class DistributedTPLLM(torch.nn.Module):
         return value
 
     def _decode_value(self, value: Any, *, key: str | None) -> Any:
+        if key == "past_key_values" and value is None:
+            self._worker_past_key_values = None
+            return None
         if value == _CACHE_SENTINEL or key == "past_key_values":
             return self._worker_past_key_values
         if isinstance(value, dict) and value.get("__tp2_tensor__"):
