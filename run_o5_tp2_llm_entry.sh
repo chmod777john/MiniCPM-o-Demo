@@ -8,9 +8,11 @@ export MODEL_PATH="${MODEL_PATH:-/user/weihongliang/MiniCPM-o-4_6}"
 export PT_PATH="${PT_PATH:-/user/weihongliang/o5_weights/omni_sft2_main_run_iter1200.pt}"
 export BACKBONE_DIR="${BACKBONE_DIR:-/user/weihongliang/wangkaiqi/o5_backbone_hf}"
 export O5_DEPLOY_MODE="${O5_DEPLOY_MODE:-tp2_llm}"
-export O5_ATTN_IMPLEMENTATION="${O5_ATTN_IMPLEMENTATION:-sdpa}"
+export O5_ATTN_IMPLEMENTATION="${O5_ATTN_IMPLEMENTATION:-auto}"
 export O5_LLM_CACHE="${O5_LLM_CACHE:-32768}"
-export O5_LLM_GRAPH="${O5_LLM_GRAPH:-0}"
+# Default to the validated production path: accel venv + auto attention selects
+# flash_attention_2, and tp2_llm uses outer SPMD mirror when LLM graph is on.
+export O5_LLM_GRAPH="${O5_LLM_GRAPH:-1}"
 export O5_SPMD_HEARTBEAT_INTERVAL="${O5_SPMD_HEARTBEAT_INTERVAL:-30}"
 export GATEWAY_PORT="${GATEWAY_PORT:-8009}"
 export GATEWAY_INTERNAL_PORT="${GATEWAY_INTERNAL_PORT:-8010}"
