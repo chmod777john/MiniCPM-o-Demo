@@ -7,6 +7,7 @@ import time
 from pathlib import Path
 
 import torch
+import torch.nn.functional as F
 from transformers import AutoTokenizer, Qwen3_5MoeForCausalLM
 
 
@@ -20,6 +21,7 @@ EXPERTS_IMPLEMENTATION = os.environ.get("EXPERTS_IMPLEMENTATION", "batched_mm")
 CUDA_PROFILER_RANGE = os.environ.get("CUDA_PROFILER_RANGE", "0").lower() in {"1", "true", "yes", "on"}
 NVTX_RANGES = os.environ.get("NVTX_RANGES", "1").lower() in {"1", "true", "yes", "on"}
 SYNC_EACH_STEP = os.environ.get("SYNC_EACH_STEP", "1").lower() in {"1", "true", "yes", "on"}
+PATCH_B1_EXPERTS = os.environ.get("PATCH_B1_EXPERTS", "0").lower() in {"1", "true", "yes", "on"}
 DTYPE = torch.bfloat16
 
 
@@ -44,6 +46,28 @@ class nvtx_range:
             torch.cuda.nvtx.range_pop()
 
 
+def batch1_experts_forward(self, hidden_states, top_k_index, top_k_weights):
+    if hidden_states.shape[0] != 1 or self.has_bias or not self.has_gate or self.is_transposed:
+        return self.__base_forward(hidden_states, top_k_index, top_k_weights)
+    expert_ids = top_k_index.reshape(-1).clamp(0, self.num_experts - 1)
+    weights = top_k_weights.reshape(-1).to(hidden_states.dtype)
+    hidden = hidden_states.expand(expert_ids.shape[0], -1)
+    proj = torch.bmm(self.gate_up_proj[expert_ids], hidden.unsqueeze(-1)).squeeze(-1)
+    gate, up = proj.chunk(2, dim=-1)
+    proj = F.silu(gate) * up
+    proj = torch.bmm(self.down_proj[expert_ids], proj.unsqueeze(-1)).squeeze(-1)
+    return (proj * weights.unsqueeze(-1)).sum(dim=0, keepdim=True).to(hidden_states.dtype)
+
+
+def patch_batch1_experts(model):
+    for layer in model.model.layers:
+        experts = getattr(getattr(layer, "mlp", None), "experts", None)
+        if experts is None or hasattr(experts, "__base_forward"):
+            continue
+        experts.__base_forward = experts.forward
+        experts.forward = batch1_experts_forward.__get__(experts, experts.__class__)
+
+
 @torch.inference_mode()
 def main():
     OUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -56,6 +80,8 @@ def main():
         low_cpu_mem_usage=True,
     ).eval().cuda()
     model.config._experts_implementation = EXPERTS_IMPLEMENTATION
+    if PATCH_B1_EXPERTS:
+        patch_batch1_experts(model)
 
     tokenizer = AutoTokenizer.from_pretrained(TOKENIZER_PATH, trust_remote_code=True)
     input_ids = tokenizer("\n".join([PROMPT] * PROMPT_REPEAT), return_tensors="pt", add_special_tokens=True)[
@@ -88,6 +114,7 @@ def main():
         "cuda": torch.version.cuda,
         "transformers": __import__("transformers").__version__,
         "experts_implementation": EXPERTS_IMPLEMENTATION,
+        "patch_b1_experts": PATCH_B1_EXPERTS,
         "cuda_profiler_range": CUDA_PROFILER_RANGE,
         "nvtx_ranges": NVTX_RANGES,
         "sync_each_step": SYNC_EACH_STEP,
