@@ -804,6 +804,48 @@ graph replay mean: 14.00 ms/token
 4. 没有接入 MiniCPM-o 外层或 duplex。
 
 因此它不是可直接使用的推理实现，但已经证明方向成立。下一步应该做“可推进 graph decode loop”：固定输入 buffer，capture 一步 decode，replay 后把输出 token copy 回输入 buffer，并确认连续多 token 输出和 eager 一致或至少合法。
+
+## 第九批实验：可连续推进的 CUDA Graph decode loop
+
+任务：
+
+```text
+cctl task: 143801
+result dir: /user/weihongliang/o5_decode_graph_loop_probe_20260715_044935
+script: scripts/try_qwen35_decode_graph_loop.py
+```
+
+这次在第八批基础上增加了固定 `graph_token` buffer：
+
+1. capture 一步 decode；
+2. 每次 replay 后在图外做 `argmax`；
+3. 把输出 token `copy_` 回 `graph_token`；
+4. 连续 replay 32 步。
+
+结果：
+
+```text
+graph_loop: ok
+graph_loop_mean: 13.97 ms/token
+```
+
+生成文本片段：
+
+```text
+询问西安的历史、地理、文化和旅游特色，看来是希望获得一份全面且结构清晰的介绍。虽然问题重复了四次，但核心需求很明确，
+```
+
+这说明 pure Qwen3.5 backbone 的连续 greedy decode graph loop 是可行的，并且已经达到 `<20 ms/token`。
+
+当前仍然是 probe，不是生产实现，原因：
+
+1. 只覆盖 pure HF backbone，不含 MiniCPM-o 外层、duplex、TTS；
+2. 只做 greedy argmax，未做 sampling/top-p/temperature；
+3. capture 绑定了当前 prompt 后的 cache/state 形态，需要设计 graph 生命周期；
+4. 没有处理 batch/session 切换、结束条件、不同最大 cache 长度；
+5. 还没有验证长序列后 cache/recurrent state 的边界行为。
+
+但优化方向已经明确：如果要把 o5 decode 压到 20ms/token 内，应该优先把这个 graph loop 工程化，而不是继续做小的 experts wrapper。
 4. 下一步应围绕 `batched_mm` 做 top-op profile，并考虑在 demo 推理代码中为 A100/batch=1 decode 默认选择 `batched_mm`。
 
 ## batched_mm top-op profile
