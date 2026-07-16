@@ -99,10 +99,12 @@ class SaveShareUI {
      * @param {string} opts.containerId - 挂载容器的 DOM id
      * @param {string} [opts.appType] - 应用类型标识
      * @param {boolean} [opts.collectComment=false] - 分享前弹评语对话框
+     * @param {boolean} [opts.requireRecordingBlob=false] - 有录制 blob 后才允许分享
      */
     constructor(opts) {
         this.appType = opts.appType || 'unknown';
         this.collectComment = !!opts.collectComment;
+        this.requireRecordingBlob = !!opts.requireRecordingBlob;
         this._sessionId = null;
         this._recordingBlob = null;
         this._recordingExt = null;
@@ -131,9 +133,12 @@ class SaveShareUI {
     _updateBtn() {
         const btn = this._container?.querySelector('.ss-btn');
         if (btn) {
-            btn.disabled = !this._sessionId || this._uploading;
+            const waitingForRecording = this.requireRecordingBlob && !(this._recordingBlob && this._recordingBlob.size > 0);
+            btn.disabled = !this._sessionId || this._uploading || waitingForRecording;
             btn.textContent = this._uploading
                 ? _ssT('uploading', 'Uploading…')
+                : waitingForRecording
+                    ? _ssT('stopToShare', 'Stop to Share')
                 : _ssT('uploadAndShare', 'Upload & Share');
         }
     }
