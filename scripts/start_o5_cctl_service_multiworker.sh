@@ -14,6 +14,7 @@ GATEWAY_HOST="${GATEWAY_HOST:-0.0.0.0}"
 GATEWAY_PORT="${GATEWAY_PORT:-8009}"
 GATEWAY_INTERNAL_PORT="${GATEWAY_INTERNAL_PORT:-8010}"
 NUM_WORKERS="${NUM_WORKERS:-2}"
+BACKEND_START_STAGGER_SECONDS="${BACKEND_START_STAGGER_SECONDS:-90}"
 
 WORKER_ID_PREFIX="${WORKER_ID_PREFIX:-o5-cctl-worker}"
 WORKER_GPU_GROUP_PREFIX="${WORKER_GPU_GROUP_PREFIX:-cctl-a100}"
@@ -106,6 +107,7 @@ echo "[start] project=${PROJECT_DIR}"
 echo "[start] model=${MODEL_PATH}"
 echo "[start] pt=${PT_PATH}"
 echo "[start] workers=${NUM_WORKERS} backend_base=${BACKEND_BASE_PORT} worker_base=${WORKER_BASE_PORT}"
+echo "[start] backend_start_stagger_seconds=${BACKEND_START_STAGGER_SECONDS}"
 echo "[start] gateway=https://${GATEWAY_HOST}:${GATEWAY_PORT} internal=:${GATEWAY_INTERNAL_PORT}"
 
 "${PYTHON}" gateway.py \
@@ -145,6 +147,10 @@ for ((i=0; i<NUM_WORKERS; i++)); do
         --gpu-id 0 \
         > "${LOG_DIR}/backend_${i}.log" 2>&1 &
     pids+=("$!")
+    if [ "${BACKEND_START_STAGGER_SECONDS}" -gt 0 ] && [ "$((i + 1))" -lt "${NUM_WORKERS}" ]; then
+        echo "[start] waiting ${BACKEND_START_STAGGER_SECONDS}s before launching next backend"
+        sleep "${BACKEND_START_STAGGER_SECONDS}"
+    fi
 done
 
 for ((i=0; i<NUM_WORKERS; i++)); do
