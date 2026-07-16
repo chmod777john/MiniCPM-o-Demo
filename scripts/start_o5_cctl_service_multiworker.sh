@@ -119,35 +119,64 @@ echo "[start] gateway=https://${GATEWAY_HOST}:${GATEWAY_PORT} internal=:${GATEWA
 pids+=("$!")
 wait_http "http://127.0.0.1:${GATEWAY_INTERNAL_PORT}/health" 120 "gateway-internal"
 
+backend_ports=()
+backend_urls=()
+worker_ports=()
+worker_endpoints=()
+
 for ((i=0; i<NUM_WORKERS; i++)); do
     backend_port=$((BACKEND_BASE_PORT + i))
     worker_port=$((WORKER_BASE_PORT + i))
     gpu_id="${i}"
     backend_url="http://${BACKEND_HOST}:${backend_port}"
     worker_endpoint="${WORKER_HOST}:${worker_port}"
-    worker_id="${WORKER_ID_PREFIX}-${i}"
-    gpu_group="${WORKER_GPU_GROUP_PREFIX}-${gpu_id}"
 
-    echo "[start] backend ${i}: gpu=${gpu_id} url=${backend_url}"
-    "${PYTHON}" -m py_backend.server \
+    backend_ports+=("${backend_port}")
+    backend_urls+=("${backend_url}")
+    worker_ports+=("${worker_port}")
+    worker_endpoints+=("${worker_endpoint}")
+
+    echo "[start] backend ${i}: physical_gpu=${gpu_id} visible_cuda=0 url=${backend_url}"
+    CUDA_VISIBLE_DEVICES="${gpu_id}" "${PYTHON}" -m py_backend.server \
         --host "${BACKEND_HOST}" \
         --port "${backend_port}" \
         --model-path "${MODEL_PATH}" \
         --pt-path "${PT_PATH}" \
-        --gpu-id "${gpu_id}" \
+        --gpu-id 0 \
         > "${LOG_DIR}/backend_${i}.log" 2>&1 &
     pids+=("$!")
-    wait_http "${backend_url}/health" 1200 "backend-${i}"
+done
+
+for ((i=0; i<NUM_WORKERS; i++)); do
+    wait_http "${backend_urls[$i]}/health" 1200 "backend-${i}"
+done
+
+for ((i=0; i<NUM_WORKERS; i++)); do
+    gpu_id="${i}"
+    backend_url="${backend_urls[$i]}"
+    worker_endpoint="${worker_endpoints[$i]}"
+    worker_id="${WORKER_ID_PREFIX}-${i}"
+    gpu_group="${WORKER_GPU_GROUP_PREFIX}-${gpu_id}"
 
     echo "[start] worker ${i}: endpoint=${worker_endpoint} backend=${backend_url}"
-    "${PYTHON}" worker.py \
+    CUDA_VISIBLE_DEVICES="${gpu_id}" "${PYTHON}" worker.py \
         --host "${WORKER_HOST}" \
-        --port "${worker_port}" \
-        --gpu-id "${gpu_id}" \
+        --port "${worker_ports[$i]}" \
+        --gpu-id 0 \
         --backend-server-url "${backend_url}" \
         > "${LOG_DIR}/worker_${i}.log" 2>&1 &
     pids+=("$!")
-    wait_http "http://${worker_endpoint}/health" 120 "worker-${i}"
+done
+
+for ((i=0; i<NUM_WORKERS; i++)); do
+    wait_http "http://${worker_endpoints[$i]}/health" 120 "worker-${i}"
+done
+
+for ((i=0; i<NUM_WORKERS; i++)); do
+    gpu_id="${i}"
+    worker_endpoint="${worker_endpoints[$i]}"
+    worker_id="${WORKER_ID_PREFIX}-${i}"
+    gpu_group="${WORKER_GPU_GROUP_PREFIX}-${gpu_id}"
 
     payload="{\"endpoint\":\"${worker_endpoint}\",\"gpu_group\":\"${gpu_group}\",\"labels\":{\"model\":\"o5\",\"runtime\":\"cctl\",\"worker_index\":\"${i}\"}}"
     curl -sf -X PUT \
