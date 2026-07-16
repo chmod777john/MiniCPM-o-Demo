@@ -13,7 +13,7 @@ export class RealtimeSession {
     constructor(prefix, config = {}) {
         this.prefix = prefix;
         this.config = {
-            getMaxKvTokens: config.getMaxKvTokens || (() => 8192),
+            getMaxKvTokens: config.getMaxKvTokens || (() => 32768),
             getPlaybackDelayMs: config.getPlaybackDelayMs || (() => 200),
             getStopOnSlidingWindow: config.getStopOnSlidingWindow || (() => false),
             outputSampleRate: config.outputSampleRate || 24000,
