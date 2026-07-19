@@ -440,7 +440,8 @@ class LiveMediaProvider extends MediaProvider {
     getVideoElement() { return this._videoEl; }
 }
 
-const FILE_MAX_DURATION = 120; // 2 minutes
+const FILE_MAX_DURATION = 10 * 60; // 10 minutes
+const FILE_MAX_DURATION_LABEL = '10min';
 
 class FileMediaProvider extends MediaProvider {
     /**
@@ -498,13 +499,13 @@ class FileMediaProvider extends MediaProvider {
     async start() {
         addSystemEntry('Processing video file...');
 
-        // 1. Get duration, cap at 2 minutes
+        // 1. Get duration, cap at FILE_MAX_DURATION
         const rawDuration = await this._getVideoDuration();
         const cappedDuration = Math.min(rawDuration, FILE_MAX_DURATION);
         this._mainChunks = Math.floor(cappedDuration);
         if (this._mainChunks === 0) throw new Error('Video too short');
         if (rawDuration > FILE_MAX_DURATION) {
-            addSystemEntry(`Video truncated: ${rawDuration.toFixed(1)}s → ${cappedDuration}s`);
+            addSystemEntry(`Video truncated: ${rawDuration.toFixed(1)}s → ${FILE_MAX_DURATION_LABEL}`);
         }
 
         // 2. Pre-extract frames (with offset k)
@@ -1364,7 +1365,7 @@ function onFileSelected(input) {
         video.onloadedmetadata = () => {
             const dur = video.duration;
             const label = dur > FILE_MAX_DURATION
-                ? `${dur.toFixed(1)}s (will truncate to ${FILE_MAX_DURATION}s)`
+                ? `${dur.toFixed(1)}s (will truncate to ${FILE_MAX_DURATION_LABEL})`
                 : `${dur.toFixed(1)}s`;
             document.getElementById('fileDuration').textContent = label;
             URL.revokeObjectURL(url);
