@@ -1,18 +1,8 @@
-# Worktree 说明
+# Worktree: o5 TP2 CUDA Graph profile
 
-- 创建时间：2026-07-14
-- 来源仓库：`/user/weihongliang/MiniCPM-o-Demo-wt-o5-inference-refactor-2026-06-30`
-- 来源分支：`wt/o5-inference-refactor-2026-06-30`
-- 来源 commit：`07fcb1a421f5525689eb600655192eec8adcb6fb`
-- 当前分支：`wt/o5-pure-moe-profile-2026-07-14`
-- 当前路径：`/user/weihongliang/MiniCPM-o-Demo-wt-o5-pure-moe-profile-2026-07-14`
-
-## 目的
-
-这个 worktree 用于对 o5 backbone 里的纯 Qwen3.5 MoE 推理过程做性能 profiling。
-目标是尽量排除 MiniCPM-o 外层、音频、TTS、duplex、服务框架等因素，只观察 LLM/MoE 本体在 prefill 和 decode 阶段的耗时。
-
-默认只读使用以下模型目录，不修改该目录内容：
-
-`/user/weihongliang/wangkaiqi/o5_backbone_hf`
-
+- Created at: 2026-07-20
+- Created from branch: `wt/o5-pure-moe-profile-2026-07-14`
+- Created from commit: `9f0c772e4176c3738b97314c58e6c9f7c265ba10`
+- New branch: `wt/o5-tp2-graph-profile-2026-07-20`
+- Purpose: isolate experiments for Qwen3.5-MoE tensor-parallel decode with CUDA Graph. The immediate question is whether `tp_plan="auto"` + one-token decode can be graph-captured on two A100 GPUs, and whether it improves over TP2 eager decode.
+- Scope: profiling scripts and report notes only. Do not change demo serving code.
