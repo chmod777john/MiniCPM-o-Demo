@@ -1112,9 +1112,107 @@ error: cudaErrorStreamCaptureInvalidated
 
 失败发生前普通 eager warm decode 约 `57 ms/token`。当前判断：full-step capture 里仍包含不适合 capture 的动态索引或 buffer 写入路径。这个方向不是完全不可行，但收益上限不大，因为第十一批实验已经证明 graph 外 argmax/copy 不是主要瓶颈。短期不应把它作为最高优先级。
 
+## 第十五批实验：DeepGEMM A100 legacy 路径
+
+实验 worktree：
+
+```text
+/user/weihongliang/MiniCPM-o-Demo-wt-o5-deepgemm-a100-2026-07-20
+branch: wt/o5-deepgemm-a100-2026-07-20
+commit: 74be9f0947cd2f6735de51a1ac45cf67d46eb893
+report: o5-deepgemm-a100-notes-2026-07-20.md
+```
+
+DeepGEMM README 的主线 Quick start 要求 `SM90 or SM100`，但源码里仍有 `deep_gemm.legacy`，顶层注释为 `Legacy Triton kernels for A100`。因此本次单独验证了 A100/SM80 legacy Triton kernel，而不是 DeepGEMM 当前 SM90/SM100 主路径。
+
+### legacy m-grouped GEMM smoke
+
+任务和结果：
+
+```text
+task_id=595718
+out_dir=/user/weihongliang/deepgemm_legacy_a100_probe_20260720_115954
+torch=2.3.0a0+ebedce2
+cuda=12.3
+triton=2.2.0
+device=A100-SXM4-80GB
+shape: groups=8, m_per_group=128, M=1024, N=512, K=1024
+legacy mean: 0.0932 ms
+```
+
+结论：DeepGEMM legacy Triton BF16 m-grouped GEMM 在 A100 上可以实际运行。之前不尝试它不是因为文档明确禁止 A100，而是因为 DeepGEMM 主路径偏 SM90/SM100，并且当前 decode 场景更关心小 batch/top8 expert routing。
+
+### Qwen3.5-MoE expert 形状 smoke
+
+Qwen3.5-MoE backbone 配置：
+
+```text
+hidden_size=2048
+moe_intermediate_size=512
+num_experts=256
+num_experts_per_tok=8
+```
+
+对应两个 expert GEMM 近似为：
+
+```text
+gate/up: K=2048, N=1024
+down:    K=512,  N=2048
+```
+
+在 legacy kernel 的 128 行对齐假设下，理想 grouped GEMM 结果：
+
+| task | shape | legacy mean |
+| --- | --- | ---: |
+| `595741` | groups=8, m_per_group=128, M=1024, N=1024, K=2048 | 0.1302 ms |
+| `595742` | groups=8, m_per_group=128, M=1024, N=2048, K=512 | 0.0989 ms |
+
+这些结果说明 legacy GEMM 本体很快，但它要求每个 group 至少按 128 行对齐。真实 batch=1 decode 是 1 个 token 走 top8 experts，每个 expert 实际只有约 1 行输入。如果直接使用 legacy m-grouped GEMM，需要把每个 expert padding 到 128 行，产生大量无效计算。
+
+### 单 token decode microbench
+
+任务：
+
+```text
+task_id=595799
+out_dir=/user/weihongliang/deepgemm_qwen_decode_bench_20260720_venv3
+script: scripts/bench_deepgemm_legacy_qwen_decode.py
+venv=/user/weihongliang/MiniCPM-o-Demo-wt-o5-inference-refactor-2026-06-30/.venv-accel
+torch=2.8.0+cu126
+transformers=5.5.4
+device=A100-SXM4-80GB
+```
+
+测试对象是第 0 层 MoE experts，单 hidden token、top8 experts。`hf_experts` 强制设置：
+
+```python
+model.config._experts_implementation = "batched_mm"
+```
+
+否则 torch 2.8 + transformers 5.5.4 会默认尝试 `grouped_mm`，在 A100 上报 `torch._grouped_mm is only supported on CUDA devices with compute capability = 9.0`。
+
+结果：
+
+| path | mean ms |
+| --- | ---: |
+| `simple_bmm` | 0.1627 |
+| `hf_experts` | 0.2189 |
+| `deepgemm_padded` | 0.2746 |
+
+数值误差：
+
+```text
+deepgemm_vs_simple_max_abs_diff=1.22e-4
+deepgemm_vs_simple_mean_abs_diff=5.13e-7
+```
+
+结论：对当前单请求、单 token decode、top8 expert 场景，DeepGEMM legacy A100 路径即使正确，也因为 128 行 padding 慢于当前 `simple_bmm` / `batched_mm` 路径。它不适合直接作为当前 decode 主线优化。
+
+DeepGEMM legacy 更可能适合 token 数足够多的 grouped GEMM，例如 prefill、多请求 batching 后 expert token 聚合，或者后续自研/接入真正支持小 M routing 的 fused MoE kernel。
+
 ## 当前优化判断
 
-截至 commit `5d63fa4`，A100 单卡 pure Qwen3.5 MoE backbone 的最好结果是：
+截至 commit `5d63fa4` 和 DeepGEMM A100 legacy 补充实验 `74be9f0`，A100 单卡 pure Qwen3.5 MoE backbone 的最好结果仍是：
 
 ```text
 experts_implementation: batched_mm
@@ -1123,8 +1221,8 @@ CUDA Graph decode loop: 13.97-14.00 ms/token
 
 这已经达到最初 `decode < 20 ms/token` 的实验目标。继续下降的主要路径不是继续改 Python wrapper，而是：
 
-1. 在 H100/SM90 上验证 `sonicmoe` / `deepgemm` / 新 fused MoE backend；
-2. 或者自研更融合的 MoE decode kernel，减少 expert weight gather、copy、topk/gather、scatter/add 等碎片；
+1. 在 H100/SM90 上验证 `sonicmoe` / DeepGEMM 主路径 / 新 fused MoE backend；
+2. 或者自研更融合的 MoE decode kernel，减少 expert weight gather、copy、topk/gather、scatter/add 等碎片；A100 legacy DeepGEMM 已验证不适合直接优化 batch=1 decode；
 3. 工程化 CUDA Graph 生命周期，让服务端真实 decode 路径能复用当前实验里的 graph loop。
 
 从 node trace 粗略估算，单独消除显性 `vectorized_gather_kernel` 的理论上限约 `15.49ms / 8 = 1.94 ms/token`。如果 fused MoE 同时减少 gather、copy、elementwise 和小 GEMM/GEMV 调度，A100 等价收益可能在 `3-5 ms/token` 量级；H100 上需要实测，可能还会受 Tensor Core、内存带宽、后端实现和 kernel 可用性影响。
