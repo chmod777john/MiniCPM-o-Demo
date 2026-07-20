@@ -1293,9 +1293,52 @@ TP2 仍有价值的方向可能是：
 
 但对当前目标“单请求 decode latency 低于 20 ms/token”，TP2 不是直接加速路径。
 
+## 第十七批实验：TP2 + CUDA Graph
+
+实验 worktree：
+
+```text
+/user/weihongliang/MiniCPM-o-Demo-wt-o5-tp2-graph-profile-2026-07-20
+branch: wt/o5-tp2-graph-profile-2026-07-20
+commit: 2d3bdbe
+report: o5-tp2-graph-profile-report-2026-07-20.md
+```
+
+新增脚本：
+
+```text
+scripts/profile_qwen35_moe_tp2_graph.py
+```
+
+任务：
+
+```text
+task_id=596436
+out_dir=/user/weihongliang/o5_qwen35_tp2_graph_profile_20260720_1
+world_size=2
+torch=2.8.0+cu126
+transformers=5.5.4
+device=A100-SXM4-80GB
+```
+
+结果：
+
+```text
+graph_capture: ok
+eager warm decode median: 76.45 ms/token
+graph replay mean: 13.19 ms/token
+graph replay throughput: 75.80 token/s
+```
+
+但这个结果有一个关键限制：生成 token 全部相同，输出重复 `作为`。因此当前 TP2 graph 脚本只能说明“TP2 one-token forward 固定形状路径可以被 CUDA Graph capture，并且 replay 成本约 13.2 ms”，还不能说明它已经是一个正确的自回归 decode loop。
+
+这和单卡 graph probe 的状态不同：TP2 graph 当前还没有证明 KV/cache/token 状态以正常 eager decode 的方式推进。任务写出 `result.json` 后还卡在最终分布式清理，已手动停止并在实验脚本里去掉 final barrier。
+
+当前判断：TP2 + CUDA Graph 是有技术可行性的，但还需要额外工程处理状态推进和进程退出。即使做到正确，它目前的 replay 成本也只是略低于单卡 graph 的 `13.97-14.00 ms/token`，优势不明显；考虑到 TP2 eager 慢、实现复杂度高，短期不应作为主优化路径。
+
 ## 当前优化判断
 
-截至 commit `5d63fa4`、DeepGEMM A100 legacy 补充实验 `74be9f0` 和 TP2 补充实验，A100 pure Qwen3.5 MoE backbone 的最好结果仍是单卡 CUDA Graph：
+截至 commit `5d63fa4`、DeepGEMM A100 legacy 补充实验 `74be9f0`、TP2 eager 补充实验和 TP2 graph 补充实验，A100 pure Qwen3.5 MoE backbone 的最可信最好结果仍是单卡 CUDA Graph：
 
 ```text
 experts_implementation: batched_mm
@@ -1305,7 +1348,7 @@ CUDA Graph decode loop: 13.97-14.00 ms/token
 这已经达到最初 `decode < 20 ms/token` 的实验目标。继续下降的主要路径不是继续改 Python wrapper，而是：
 
 1. 在 H100/SM90 上验证 `sonicmoe` / DeepGEMM 主路径 / 新 fused MoE backend；
-2. 或者自研更融合的 MoE decode kernel，减少 expert weight gather、copy、topk/gather、scatter/add 等碎片；A100 legacy DeepGEMM 已验证不适合直接优化 batch=1 decode；Transformers TP2 已验证不适合直接优化 batch=1 latency；
+2. 或者自研更融合的 MoE decode kernel，减少 expert weight gather、copy、topk/gather、scatter/add 等碎片；A100 legacy DeepGEMM 已验证不适合直接优化 batch=1 decode；Transformers TP2 eager 已验证不适合直接优化 batch=1 latency；TP2 graph 虽可 capture，但尚未证明正确自回归推进；
 3. 工程化 CUDA Graph 生命周期，让服务端真实 decode 路径能复用当前实验里的 graph loop。
 
 从 node trace 粗略估算，单独消除显性 `vectorized_gather_kernel` 的理论上限约 `15.49ms / 8 = 1.94 ms/token`。如果 fused MoE 同时减少 gather、copy、elementwise 和小 GEMM/GEMV 调度，A100 等价收益可能在 `3-5 ms/token` 量级；H100 上需要实测，可能还会受 Tensor Core、内存带宽、后端实现和 kernel 可用性影响。
