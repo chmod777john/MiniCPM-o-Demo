@@ -1210,9 +1210,92 @@ deepgemm_vs_simple_mean_abs_diff=5.13e-7
 
 DeepGEMM legacy 更可能适合 token 数足够多的 grouped GEMM，例如 prefill、多请求 batching 后 expert token 聚合，或者后续自研/接入真正支持小 M routing 的 fused MoE kernel。
 
+## 第十六批实验：Transformers TP2 双卡
+
+新增脚本：
+
+```text
+scripts/profile_qwen35_moe_tp2.py
+```
+
+运行方式：
+
+```bash
+torchrun --standalone --nproc_per_node=2 scripts/profile_qwen35_moe_tp2.py
+```
+
+脚本使用 Transformers 自带 tensor parallel：
+
+```python
+Qwen3_5MoeForCausalLM.from_pretrained(..., tp_plan="auto")
+model.config._experts_implementation = "batched_mm"
+```
+
+`tp_plan="auto"` 会使用 Qwen3.5-MoE config 中的 base TP plan，包括 attention projection、MoE experts、shared expert 和 lm_head 的分片。这里仍强制 `batched_mm`，避免 torch 2.8 在 A100 上默认 `grouped_mm` 报 compute capability 9.0 的错误。
+
+### 首次 TP2 eager 结果
+
+```text
+task_id=596377
+out_dir=/user/weihongliang/o5_qwen35_tp2_profile_20260720_1
+world_size=2
+torch=2.8.0+cu126
+transformers=5.5.4
+input_tokens=103
+decode_steps=32
+```
+
+结果：
+
+```text
+prefill_ms: 36639.1 ms
+decode mean: 73.93 ms/token
+```
+
+prefill 包含明显的一次性初始化/通信/TP 懒加载开销，不适合作为 warmed prefill 对比；decode 已经稳定在约 74 ms/token。
+
+### warmed TP2 eager 结果
+
+```text
+task_id=596398
+out_dir=/user/weihongliang/o5_qwen35_tp2_profile_20260720_2
+world_size=2
+input_tokens=103
+warmup_prefill_steps=2
+warmup_decode_steps=16
+decode_steps=64
+```
+
+结果：
+
+```text
+warm prefill min: 168.0 ms
+measured prefill: 161.6 ms
+decode mean: 75.49 ms/token
+decode throughput: 13.25 token/s
+```
+
+对比当前单卡记录：
+
+| 路径 | prefill | decode |
+| --- | ---: | ---: |
+| 单卡 `batched_mm` eager | 约 165 ms | 约 55 ms/token |
+| 单卡 `batched_mm` CUDA Graph | - | 13.97-14.00 ms/token |
+| TP2 `tp_plan=auto` eager | 约 162 ms | 75.5 ms/token |
+
+结论：Transformers TP2 在当前 A100、batch=1、单请求 decode 场景下没有收益。prefill warmed 后大致持平，decode 反而慢于单卡 eager，更远慢于单卡 CUDA Graph。原因符合预期：TP 会减少每卡局部矩阵计算，但 batch=1 decode 的 MoE/attention 路径本来已经被大量小 kernel、gather/copy 和 launch/通信开销主导，TP 引入的跨卡通信会抵消甚至超过计算减少。
+
+TP2 仍有价值的方向可能是：
+
+1. 显存容量不够时分片承载模型；
+2. batch 或并发足够大时提高吞吐；
+3. 与更高层 serving batching / CUDA Graph / fused MoE kernel 配合后重新评估。
+
+但对当前目标“单请求 decode latency 低于 20 ms/token”，TP2 不是直接加速路径。
+
 ## 当前优化判断
 
-截至 commit `5d63fa4` 和 DeepGEMM A100 legacy 补充实验 `74be9f0`，A100 单卡 pure Qwen3.5 MoE backbone 的最好结果仍是：
+截至 commit `5d63fa4`、DeepGEMM A100 legacy 补充实验 `74be9f0` 和 TP2 补充实验，A100 pure Qwen3.5 MoE backbone 的最好结果仍是单卡 CUDA Graph：
 
 ```text
 experts_implementation: batched_mm
@@ -1222,7 +1305,7 @@ CUDA Graph decode loop: 13.97-14.00 ms/token
 这已经达到最初 `decode < 20 ms/token` 的实验目标。继续下降的主要路径不是继续改 Python wrapper，而是：
 
 1. 在 H100/SM90 上验证 `sonicmoe` / DeepGEMM 主路径 / 新 fused MoE backend；
-2. 或者自研更融合的 MoE decode kernel，减少 expert weight gather、copy、topk/gather、scatter/add 等碎片；A100 legacy DeepGEMM 已验证不适合直接优化 batch=1 decode；
+2. 或者自研更融合的 MoE decode kernel，减少 expert weight gather、copy、topk/gather、scatter/add 等碎片；A100 legacy DeepGEMM 已验证不适合直接优化 batch=1 decode；Transformers TP2 已验证不适合直接优化 batch=1 latency；
 3. 工程化 CUDA Graph 生命周期，让服务端真实 decode 路径能复用当前实验里的 graph loop。
 
 从 node trace 粗略估算，单独消除显性 `vectorized_gather_kernel` 的理论上限约 `15.49ms / 8 = 1.94 ms/token`。如果 fused MoE 同时减少 gather、copy、elementwise 和小 GEMM/GEMV 调度，A100 等价收益可能在 `3-5 ms/token` 量级；H100 上需要实测，可能还会受 Tensor Core、内存带宽、后端实现和 kernel 可用性影响。
