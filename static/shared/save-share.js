@@ -1,7 +1,7 @@
 /**
  * Session Save & Share 共享组件
  *
- * 聊天页面：Upload & Share 按钮 → 有前端录制 blob 时先上传再复制链接，无 blob 直接复制链接 + 5s toast。
+ * 聊天页面：Upload & Share 按钮 → 有前端录制 blob 时先上传再复制链接，无 blob 直接复制链接 + toast。
  * 首页：读取 localStorage 展示 Recent Sessions 列表。
  *
  * 使用方式（聊天页面）：
@@ -23,6 +23,9 @@
 
 const RECENT_SESSIONS_KEY = 'minicpmo45_recent_sessions';
 const MAX_RECENT = 20;
+const TOAST_DEFAULT_MS = 5000;
+const TOAST_SHARE_MS = 30000;
+const TOAST_MANUAL_MS = 60000;
 
 function _ssT(key, fallback) {
     return window.I18n?.t?.[key] ?? fallback;
@@ -99,10 +102,12 @@ class SaveShareUI {
      * @param {string} opts.containerId - 挂载容器的 DOM id
      * @param {string} [opts.appType] - 应用类型标识
      * @param {boolean} [opts.collectComment=false] - 分享前弹评语对话框
+     * @param {boolean} [opts.requireRecordingBlob=false] - 有录制 blob 后才允许分享
      */
     constructor(opts) {
         this.appType = opts.appType || 'unknown';
         this.collectComment = !!opts.collectComment;
+        this.requireRecordingBlob = !!opts.requireRecordingBlob;
         this._sessionId = null;
         this._recordingBlob = null;
         this._recordingExt = null;
@@ -131,9 +136,12 @@ class SaveShareUI {
     _updateBtn() {
         const btn = this._container?.querySelector('.ss-btn');
         if (btn) {
-            btn.disabled = !this._sessionId || this._uploading;
+            const waitingForRecording = this.requireRecordingBlob && !(this._recordingBlob && this._recordingBlob.size > 0);
+            btn.disabled = !this._sessionId || this._uploading || waitingForRecording;
             btn.textContent = this._uploading
                 ? _ssT('uploading', 'Uploading…')
+                : waitingForRecording
+                    ? _ssT('stopToShare', 'Stop to Share')
                 : _ssT('uploadAndShare', 'Upload & Share');
         }
     }
@@ -216,14 +224,19 @@ class SaveShareUI {
         if (this._recordingBlob && this._recordingBlob.size > 0) {
             this._uploading = true;
             this._updateBtn();
-            this._showToast(_ssT('uploading', 'Uploading…'));
+            this._showToast(_ssT('uploading', 'Uploading…'), false, TOAST_DEFAULT_MS);
             try {
                 await uploadRecording(sid, this._recordingBlob, this._recordingExt);
             } catch (e) {
                 console.error('[SaveShare] upload error:', e);
-                this._showToast(`${_ssT('uploadFailed', 'Upload failed: ')}${e.message}\n${url}`, true);
                 this._uploading = false;
                 this._updateBtn();
+                const message = `${_ssT('uploadFailed', 'Upload failed: ')}${e.message}`;
+                if (this.requireRecordingBlob) {
+                    this._showToast(message, true);
+                    return;
+                }
+                this._showToast(`${message}\n${url}`, true);
                 addToRecent(sid, this.appType);
                 return;
             }
@@ -234,20 +247,21 @@ class SaveShareUI {
         // 3. Add to recent + copy link.
         addToRecent(sid, this.appType);
         navigator.clipboard.writeText(url).then(() => {
-            this._showToast(`${_ssT('copiedToClipboard', 'Copied to clipboard')}\n${url}`);
+            this._showToast(`${_ssT('copiedToClipboard', 'Copied to clipboard')}\n${url}`, false, TOAST_SHARE_MS);
         }).catch(() => {
             this._showToast(`${_ssT('shareLink', 'Share link: ')}${url}`, true);
         });
     }
 
-    _showToast(text, isManual) {
+    _showToast(text, isManual, durationMs) {
         const toast = this._container?.querySelector('.ss-toast');
         if (!toast) return;
         toast.textContent = text;
         toast.style.display = 'block';
         toast.classList.toggle('manual', !!isManual);
         clearTimeout(this._toastTimer);
-        this._toastTimer = setTimeout(() => { toast.style.display = 'none'; }, 5000);
+        const timeoutMs = durationMs || (isManual ? TOAST_MANUAL_MS : TOAST_DEFAULT_MS);
+        this._toastTimer = setTimeout(() => { toast.style.display = 'none'; }, timeoutMs);
     }
 
     static getRecentSessions() { return getRecentSessions(); }

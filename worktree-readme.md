@@ -1,13 +1,16 @@
-# Worktree: o5-tp2-encapsulation-2026-07-14
+# Worktree: o5-no-fc-speedup-tp2
 
-- Created at: 2026-07-14
-- Source worktree: `/user/weihongliang/MiniCPM-o-Demo-wt-o5-multimode-deploy-2026-07-13`
-- Source branch: `wt/o5-multimode-deploy-wkq-deploy-2026-07-13`
-- Source commit: `98b8d66` (`Mirror spmd generator calls`)
-- New branch: `wt/o5-tp2-encapsulation-2026-07-14`
+- Created at: 2026-07-19
+- Source worktree: `/user/weihongliang/MiniCPM-o-Demo-wt-o5-tp2-llm-wrapper-2026-07-15`
+- Source branch: `wt/o5-tp2-llm-wrapper-2026-07-15`
+- Source commit: `84e224b` (`Restore direct nonstream chat path`)
+- New worktree: `/user/weihongliang/MiniCPM-o-Demo-wt-o5-no-fc-speedup-tp2`
+- New branch: `o5-no-fc-speedup-tp2`
 
 ## Purpose
 
-Explore how to encapsulate the O5 TP2/distributed execution path so that, relative to the existing optimized single-card path, enabling two-card inference does not require changing unrelated modeling or business logic.
+Carry the TP2 LLM-wrapper serving path forward as the two-card counterpart of `o5-no-fc-speedup`.
 
-The intended discussion target is a cleaner boundary where TP2-specific process/rank coordination is isolated behind model/runtime construction or LLM-forward-level wrappers, while the rest of the demo continues to call the same public model APIs.
+This worktree starts from the TP2 wrapper branch, then brings in the service/frontend updates already used by the single-card speedup line: multi-worker launcher support, worker GPU isolation, staged backend startup, omni sharing safeguards, 32k default MaxKV, larger recording uploads, and longer video-file share handling.
+
+The intent is to preserve the TP2 model/runtime boundary while keeping the surrounding demo behavior aligned with the current speedup branch.

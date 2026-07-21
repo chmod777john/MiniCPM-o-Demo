@@ -1158,7 +1158,8 @@ async def download_session(session_id: str):
     )
 
 
-_UPLOAD_MAX_BYTES = 200 * 1024 * 1024  # 200 MB
+_UPLOAD_MAX_MB = 500
+_UPLOAD_MAX_BYTES = _UPLOAD_MAX_MB * 1024 * 1024
 _ALLOWED_UPLOAD_TYPES = {"video/webm", "video/mp4", "audio/wav", "audio/webm"}
 _EXT_FROM_MIME = {"video/webm": ".webm", "video/mp4": ".mp4", "audio/wav": ".wav", "audio/webm": ".webm"}
 
@@ -1189,7 +1190,7 @@ async def upload_session_recording(session_id: str, file: UploadFile = File(...)
             if total > _UPLOAD_MAX_BYTES:
                 f.close()
                 os.remove(dest)
-                raise HTTPException(status_code=413, detail="File too large (max 200MB)")
+                raise HTTPException(status_code=413, detail=f"File too large (max {_UPLOAD_MAX_MB}MB)")
             f.write(chunk)
 
     logger.info(f"[Session] uploaded frontend recording: {dest} ({total / 1024 / 1024:.1f} MB)")
