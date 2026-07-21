@@ -397,6 +397,12 @@ class ChatView(MiniCPMOProcessorMixin):
                 max_slice_nums=request.image.max_slice_nums if hasattr(request, 'image') and request.image else None,
                 use_image_id=request.image.use_image_id if hasattr(request, 'image') and request.image else False,
                 length_penalty=length_penalty,
+                # O5 uses 3D M-RoPE position_ids shaped [3, batch, seq].
+                # Transformers beam search expands ordinary [batch, seq]
+                # position_ids along dim 0, which corrupts O5's M-RoPE axis
+                # and fails in rotary embedding. Keep chat on single-beam
+                # generation until beam expansion is made M-RoPE aware.
+                num_beams=1,
             )
         
         # 处理返回值
