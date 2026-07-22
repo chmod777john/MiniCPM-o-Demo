@@ -1,8 +1,8 @@
-# o5 TP2 CUDA Graph profile report
+# o5 pure MoE TP2 CUDA Graph profile report
 
 ## Context
 
-This worktree checks whether pure Qwen3.5-MoE tensor-parallel decode can be CUDA-graph captured on two A100 GPUs, and whether that changes the earlier TP2 eager result.
+This worktree checks whether pure Qwen3.5-MoE / Transformers tensor-parallel decode can be CUDA-graph captured on two A100 GPUs, and whether that changes the earlier TP2 eager result.
 
 Base branch and commit:
 
