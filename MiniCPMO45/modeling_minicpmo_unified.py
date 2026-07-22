@@ -45,6 +45,8 @@ from .modeling_minicpmo import MiniCPMODuplex as BaseMiniCPMODuplex
 from .modeling_minicpmo import MiniCPMOPreTrainedModel
 from .modeling_minicpmo import MiniCPMTTS
 from .modeling_minicpmo import Resampler
+from .modeling_minicpmo import _spoken_syllable_count
+from .modeling_minicpmo import _split_trailing_digit_run
 from .mrope_canvas import expand_1d_position_ids_to_3d
 from .mrope_canvas import uses_mrope_canvas
 from .processing_minicpmo import MiniCPMOProcessor
@@ -2582,6 +2584,8 @@ class DuplexCapability(BaseMiniCPMODuplex):
         super()._reset_streaming_state()
         self._pending_finalize = None
         self._last_chunk_had_tts_pad = False
+        self.tts_pending_hidden = None
+        self.tts_pending_text = ""
 
     def prepare(
         self,
@@ -3367,23 +3371,92 @@ class DuplexCapability(BaseMiniCPMODuplex):
                 profile_events=profile_events,
             )
 
+        digit_defer = os.environ.get("TTS_DIGIT_DEFER", "1") != "0"
+        pending_hidden = self.tts_pending_hidden
+        pending_text = self.tts_pending_text
+        self.tts_pending_hidden = None
+        self.tts_pending_text = ""
+
+        if pending_hidden:
+            combined_hidden_in_unit = pending_hidden + tts_hidden_in_unit
+        else:
+            combined_hidden_in_unit = tts_hidden_in_unit
+        combined_text = pending_text + text
+
+        tts_deferred = False
+        deferred_hidden = []
+        deferred_text = ""
+        flush_hidden = combined_hidden_in_unit
+        tts_context_text = combined_text
+        if digit_defer and not end_of_turn:
+            flush_hidden, deferred_hidden = _split_trailing_digit_run(
+                combined_hidden_in_unit, self.tokenizer
+            )
+            if deferred_hidden:
+                deferred_text = self.tokenizer.decode(
+                    [item[0] for item in deferred_hidden], skip_special_tokens=True
+                )
+                self.tts_pending_hidden = deferred_hidden
+                self.tts_pending_text = deferred_text
+                tts_deferred = True
+                if deferred_text and combined_text.endswith(deferred_text):
+                    tts_context_text = combined_text[: -len(deferred_text)]
+
+        if not flush_hidden:
+            self.tts_pending_hidden = None
+            self.tts_pending_text = ""
+            return self._make_generate_result(
+                start_time, is_listen=False, text=text,
+                end_of_turn=end_of_turn, cost_llm=cost_llm,
+                n_tokens=len(total_ids_in_unit),
+                n_tts_tokens=0,
+                profile_events=profile_events,
+            )
+
         # TTS generate
         tts_start_time = time.time()
         tts_prep_start_time = time.time()
-        tts_condition = self._convert_results_to_tts_input(tts_hidden_in_unit)
+        tts_condition = self._convert_results_to_tts_input(flush_hidden)
         tts_prep_end_time = time.time()
         self._profile_add(profile_events, "generate.tts_prepare", tts_prep_start_time, condition_tokens=int(tts_condition.shape[1]))
 
-        max_token_per_chunk = 25 + 1
-        min_token_per_chunk = 25 + 1
+        if os.environ.get("TTS_SYL_SPOKEN", "1") != "0":
+            speech_chars = _spoken_syllable_count(tts_context_text)
+        else:
+            speech_chars = sum(1 for ch in tts_context_text if ch.isalnum())
+        syllable_est = max(len(flush_hidden), speech_chars)
+        tts_tokens_per_syl = int(os.environ.get("TTS_TOKENS_PER_SYL", "7"))
+        tts_base_chunk = int(os.environ.get("TTS_BASE_CHUNK", "26"))
+        tts_max_chunk = int(os.environ.get("TTS_MAX_CHUNK", "50"))
+        tts_min_floor_mode = os.environ.get("TTS_MIN_FLOOR_MODE", "content")
+        tts_min_tokens_per_syl = int(os.environ.get("TTS_MIN_TOKENS_PER_SYL", "4"))
+        content_budget = syllable_est * tts_tokens_per_syl
+        min_budget = syllable_est * tts_min_tokens_per_syl
 
-        if end_of_turn:
-            min_token_per_chunk = 0
+        max_token_per_chunk = min(max(tts_base_chunk, content_budget + 4), tts_max_chunk)
+        if tts_min_floor_mode == "content":
+            min_token_per_chunk = min(min_budget, max_token_per_chunk - 1)
+        else:
+            min_token_per_chunk = min(max(tts_base_chunk, min_budget), max_token_per_chunk - 1)
+
         force_flush = True
         if self.tts_text_start_pos == 0:  # 这是turn的开始
             min_token_per_chunk = 0  # 可以允许解码<1s的音频
-            # min_token_per_chunk = 10 + 1
             force_flush = True
+            if os.environ.get("TTS_FIRST_MAX_CAP", "1") != "0":
+                first_cap = max(content_budget + 4, tts_tokens_per_syl * 2)
+                max_token_per_chunk = min(first_cap, tts_max_chunk)
+                min_token_per_chunk = min(min_token_per_chunk, max_token_per_chunk - 1)
+
+        if end_of_turn:
+            eot_syllables = (
+                _spoken_syllable_count(tts_context_text)
+                if os.environ.get("TTS_SYL_SPOKEN", "1") != "0"
+                else sum(1 for ch in tts_context_text if ch.isalnum())
+            )
+            eot_tokens_per_syl = int(os.environ.get("TTS_EOT_TOKENS_PER_SYL", str(tts_tokens_per_syl)))
+            max_token_per_chunk = tts_max_chunk
+            min_token_per_chunk = min(eot_syllables * eot_tokens_per_syl, max_token_per_chunk - 1)
 
         if self.tts_current_turn_start_time is None:
             self.tts_current_turn_start_time = current_time
@@ -3409,6 +3482,8 @@ class DuplexCapability(BaseMiniCPMODuplex):
             self.tts_text_start_pos = 0
             self.tts_past_key_values = None
             self.tts_current_turn_start_time = None
+            self.tts_pending_hidden = None
+            self.tts_pending_text = ""
             # 注意：_reset_token2wav_for_new_turn() 移到下面音频生成之后
         else:
             self.tts_past_key_values = old_kv

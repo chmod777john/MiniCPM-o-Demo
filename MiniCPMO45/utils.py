@@ -1420,6 +1420,10 @@ class StreamDecoder:
 
         assert isinstance(self.forbidden_token_ids, list)
 
+        # dedicated RNG for LLM sampling; isolates LLM decode from TTS/token2wav
+        # global RNG consumption so LLM inference stays reproducible.
+        self.sampling_generator = None
+
         self.cache = None
         self.context = ""
         self.generated_tokens = []  # track generated tokens
@@ -1468,8 +1472,15 @@ class StreamDecoder:
         # feed
         pass
 
+    def set_sampling_seed(self, seed: int):
+        """Bind LLM sampling to its own RNG stream, independent of TTS RNG."""
+        g = torch.Generator(device=self.m.device)
+        g.manual_seed(int(seed))
+        self.sampling_generator = g
+
     def reset(self):
         self.context = ""
+        self.sampling_generator = None
         _r = getattr(self, "_llm_runner", None)
         if _r is not None:
             _r.reset()   # inference_mode-safe (buffers are inference tensors; demo resets outside inference_mode)
@@ -2394,7 +2405,9 @@ class StreamDecoder:
                 sampled_token = torch.argmax(logits[0]).item()
             else:
                 original_probs = F.softmax(logits[0], dim=-1)
-                sampled_token = torch.multinomial(original_probs, num_samples=1).item()
+                sampled_token = torch.multinomial(
+                    original_probs, num_samples=1, generator=self.sampling_generator
+                ).item()
 
             # if sampled chunk_eos, return directly
             if sampled_token == eos_id:
@@ -2454,7 +2467,9 @@ class StreamDecoder:
             logits = logits / temperature
             logits = top_k_top_p_filtering(logits, top_k=top_k, top_p=top_p)
             probs = F.softmax(logits, dim=-1)
-            next_token_id = torch.multinomial(probs, num_samples=1).squeeze(1)
+            next_token_id = torch.multinomial(
+                probs, num_samples=1, generator=self.sampling_generator
+            ).squeeze(1)
         else:
             raise ValueError(f"Unsupported decode mode: {mode}")
 
