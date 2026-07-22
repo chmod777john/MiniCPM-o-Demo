@@ -1298,10 +1298,10 @@ TP2 仍有价值的方向可能是：
 实验 worktree：
 
 ```text
-/user/weihongliang/MiniCPM-o-Demo-wt-o5-tp2-graph-profile-2026-07-20
-branch: wt/o5-tp2-graph-profile-2026-07-20
-commit: 2d3bdbe
-report: o5-tp2-graph-profile-report-2026-07-20.md
+/user/weihongliang/MiniCPM-o-Demo-wt-o5-pure-moe-tp2-graph-profile-2026-07-20
+branch: wt/o5-pure-moe-tp2-graph-profile-2026-07-20
+commit: ff53e29
+report: o5-pure-moe-tp2-graph-profile-report-2026-07-20.md
 ```
 
 新增脚本：
