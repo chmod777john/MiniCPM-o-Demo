@@ -229,12 +229,120 @@ offline_spoken_text == live_spoken_text
 
 tool event 的 unit 编号有 1 个 unit 的偏移，主要是事件发出 / closed span 标记的 input_id 口径不同；工具调用顺序、参数和最终 spoken text 已经对齐。
 
-## 代码改动
+## 第二条 case 交叉验证
 
-当前关键提交：
+为避免只在单一 binary case 上过拟合，又选了一条工具链更长的 TauVoice case：
 
 ```text
-efb321107f2f11036d20002321e6ad5253bfa8fe
+/user/heweiquan/dataset/O5_Dubplex_FC/overfit100/tau_function_call_sft_v13_think_cleaned_sample_2_colloquialize_tts_atom_export_relation_00025.json
+```
+
+用户请求是给室内 herb garden 浇 500ml 水并检查土壤湿度。GT 工具调用有 4 个：
+
+```text
+fetch_container(volume=500)
+fill_container_with_liquid(container_id=container_12345, volume=500)
+water_plant(plant_id=herb_garden_001, container_id=container_12345)
+measure_soil_moisture(plant_id=herb_garden_001)
+```
+
+当前分支 offline 路径先跑通，结果目录：
+
+```text
+/user/weihongliang/fc_align_case_00025/ours_iter1500_auto_20260723_142145
+```
+
+API 路径使用相同 offline-like 调度，并通过 probe 回放 train-data 中的 GT tool responses。结果文件：
+
+```text
+run-logs/fc_tauvoice_00025_api_align_20260723_142724.json
+/user/weihongliang/fc_align_case_00025/alignment_summary_api_20260723.json
+```
+
+API 输出的工具调用顺序和参数为：
+
+```text
+fetch_container({'volume': 500})
+fill_container_with_liquid({'container_id': 'container_12345', 'volume': 500})
+water_plant({'plant_id': 'herb_garden_001', 'container_id': 'container_12345'})
+measure_soil_moisture({'plant_id': 'herb_garden_001'})
+```
+
+这与 offline 预测的工具调用语义一致。该 case 的 spoken text 没有逐字一致；offline 与 API 都是自然语言生成，评测关键点是 FC tool calls 的顺序与参数。这个交叉验证说明修复不是只对 `01029` 单个 case 生效。
+
+## 带音频速度测试
+
+在第二条 case 上继续跑了带音频生成的 API timing probe。测试命令保留 `generate_audio=true`，使用 TP2 + LLM graph + FC API + TTS/token2wav 端到端链路。
+
+结果文件：
+
+```text
+run-logs/fc_tauvoice_00025_timing_audio_20260723_143057.json
+/user/weihongliang/fc_align_case_00025/timing_audio_summary_20260723.json
+```
+
+该次运行共统计 40 个 unit。分段耗时如下：
+
+```text
+prefill:
+  avg 197.6 ms
+  p50 175.5 ms
+  max 369.2 ms
+
+spoken:
+  avg 185.0 ms
+  p50 31.1 ms
+  max 668.3 ms
+
+non_spoken:
+  avg 211.8 ms
+  p50 46.3 ms
+  max 485.9 ms
+
+finalize:
+  avg 26.9 ms
+  p50 14.8 ms
+  max 45.2 ms
+
+unit total:
+  avg 624.1 ms
+  p50 665.5 ms
+  max 1144.9 ms
+```
+
+最慢的几个 unit：
+
+```text
+unit_023 total 1144.9 ms
+unit_024 total 1006.1 ms
+unit_025 total 932.1 ms
+unit_014 total 922.6 ms
+unit_013 total 889.2 ms
+```
+
+带文本输出的 speaking units 中，TTS 相关开销大致为：
+
+```text
+cost_llm:        约 0.38-0.67 s
+cost_tts_prep:   约 0.006 s
+cost_tts:        稳态约 0.113 s
+cost_token2wav:  典型约 0.18 s，首个有音频输出 unit 可到约 0.31 s
+```
+
+从实时性角度看，平均 unit total 约 0.62s，多数 unit 在 1s 内；最慢 unit 约 1.145s，边界上略超过 1s budget。主要耗时来自：
+
+- speaking unit 的 LLM 生成与 TTS/token2wav；
+- non-spoken budget 为 30 的工具/思考 unit。
+
+因此当前 TP2 + graph + TTS 链路已经接近实时要求，但仍有少数 tail latency 需要继续优化，尤其是 spoken LLM 和 30-budget non-spoken 阶段。
+
+## 代码改动
+
+当前关键提交链：
+
+```text
+efb321107f2f11036d20002321e6ad5253bfa8fe  # FC API/offline arrangement 对齐与 ref audio 修复
+af041e4c3a54b019a386e80bf54debe66232fbe8  # GT response replay 与 timing probe
 ```
 
 主要改动：
@@ -248,6 +356,7 @@ efb321107f2f11036d20002321e6ad5253bfa8fe
 - `scripts/probe_fc_tauvoice_backend.py`
   - 修正 tool result `contents`。
   - 支持 offline-like probe 参数。
+  - 支持回放 train-data GT tool responses。
 - `scripts/probe_fc_train_data_offline.py`
   - 当前分支最小 offline train-data runner。
 - `scripts/summarize_fc_alignment.py`
