@@ -268,6 +268,12 @@ async def _handle_remote_backend_runtime_ws(
                     await runtime.push(_input_payload(msg))
                     continue
 
+                if msg_type in {"input.tool_result", "input.tool_result.delta", "input.tool_result.done"}:
+                    payload = _payload(msg)
+                    payload["type"] = msg_type.replace("input.", "")
+                    await runtime.push(payload)
+                    continue
+
                 if msg_type == "session.close":
                     close_event = await runtime.unary("close", {"reason": str(msg.get("reason") or "client_closed")})
                     backend_closed = True
