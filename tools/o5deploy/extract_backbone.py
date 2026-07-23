@@ -35,6 +35,13 @@ def main():
     log(f"state_dict keys={len(sd)}  (load {time.time()-t0:.0f}s)")
     n_llm = sum(1 for k in sd if k.startswith("llm."))
     log(f"llm.* keys={n_llm}")
+    ckpt_vocab = sd.get("llm.model.embed_tokens.weight")
+    if ckpt_vocab is not None:
+        ckpt_vocab_size = int(ckpt_vocab.shape[0])
+        model_vocab_size = int(model.llm.get_input_embeddings().weight.shape[0])
+        if ckpt_vocab_size != model_vocab_size:
+            log(f"resizing llm token embeddings {model_vocab_size} -> {ckpt_vocab_size}")
+            model.llm.resize_token_embeddings(ckpt_vocab_size, mean_resizing=False)
     info = model.load_state_dict(sd, strict=False, assign=True)
     log(f"load_state_dict missing={len(info.missing_keys)} unexpected={len(info.unexpected_keys)}")
     del sd
