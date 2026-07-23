@@ -94,10 +94,11 @@ async def main() -> None:
     events: List[Dict[str, Any]] = []
     pending_tool_results: List[Dict[str, Any]] = []
 
+    target_url = ws_url(args.backend, args.path)
     ssl_ctx = None
-    if args.insecure:
-        ssl_ctx = ssl._create_unverified_context()
-    async with websockets.connect(ws_url(args.backend, args.path), max_size=128 * 1024 * 1024, ping_interval=None, ssl=ssl_ctx) as ws:
+    if target_url.startswith("wss://"):
+        ssl_ctx = ssl._create_unverified_context() if args.insecure else ssl.create_default_context()
+    async with websockets.connect(target_url, max_size=128 * 1024 * 1024, ping_interval=None, ssl=ssl_ctx) as ws:
         await ws.send(json.dumps({
             "type": "session.init",
             "payload": {
