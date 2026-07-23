@@ -16,6 +16,7 @@ import os
 import re
 import time
 import uuid
+import hashlib
 from contextlib import suppress
 from types import SimpleNamespace
 from typing import Any, Awaitable, Callable, Dict, List, Optional
@@ -83,9 +84,13 @@ class FcDuplexSessionRuntime:
         self._tool_seq = 0
         self._max_spoken_tokens = 24
         self._non_spoken_budget_per_unit = 12
+        self._non_spoken_budgets_while_listening: Optional[List[Optional[int]]] = None
+        self._non_spoken_budgets_while_speaking: Optional[List[Optional[int]]] = None
         self._non_spoken_scheduling = "latency"
         self._decode_mode = "greedy"
         self._sample_rate = 16000
+        self._unit_index = 0
+        self._force_listen_units = 0
         self._input_queue: asyncio.Queue[Dict[str, Any]] = asyncio.Queue()
         self._queue_worker: Optional[asyncio.Task[None]] = None
         self._next_input_event = asyncio.Event()
@@ -103,6 +108,12 @@ class FcDuplexSessionRuntime:
         self._non_spoken_budget_per_unit = int(
             config.get("non_spoken_budget_per_unit", params.get("non_spoken_budget_per_unit", 12)) or 12
         )
+        self._non_spoken_budgets_while_listening = _optional_int_list(
+            config.get("non_spoken_budgets_while_listening", params.get("non_spoken_budgets_while_listening"))
+        )
+        self._non_spoken_budgets_while_speaking = _optional_int_list(
+            config.get("non_spoken_budgets_while_speaking", params.get("non_spoken_budgets_while_speaking"))
+        )
         requested_scheduling = str(
             config.get("non_spoken_scheduling", params.get("non_spoken_scheduling", "latency")) or "latency"
         ).lower()
@@ -111,18 +122,31 @@ class FcDuplexSessionRuntime:
         self._non_spoken_scheduling = requested_scheduling
         self._decode_mode = str(config.get("decode_mode", params.get("decode_mode", "greedy")) or "greedy")
         self._sample_rate = int(config.get("sample_rate", params.get("sample_rate", 16000)) or 16000)
+        self._force_listen_units = max(0, int(config.get("force_listen_units", params.get("force_listen_units", 0)) or 0))
         self._tools = list(params.get("tools") or [DEFAULT_DISPLAY_OBJECT_TOOL])
 
         voice = _first_dict(params.get("voice"), params.get("defaults"))
         ref_audio_path = _coalesce(params.get("ref_audio_path"), voice.get("ref_audio_path"))
         prompt_wav_path = _coalesce(params.get("prompt_wav_path"), params.get("tts_ref_audio_path"), voice.get("tts_ref_audio_path"), ref_audio_path)
-        await asyncio.to_thread(
+        prepare_result = await asyncio.to_thread(
             self.backend.fc_duplex_prepare,
             system_prompt=str(_coalesce(params.get("system_prompt"), params.get("instructions"), default="")),
             tools=self._tools,
             ref_audio_path=ref_audio_path,
             prompt_wav_path=prompt_wav_path,
             generate_audio=bool(params.get("generate_audio", True)),
+        )
+        prepare_info = _model_to_dict(prepare_result)
+        prefill_ids = prepare_info.get("prefill_ids") or []
+        logger.info(
+            "fc_prepare_trace prefill_len=%s prefill_sha=%s render_head=%r generate_audio=%s ref=%s prompt_wav=%s tools=%s",
+            len(prefill_ids),
+            hashlib.sha256(json.dumps(prefill_ids).encode("utf-8")).hexdigest()[:16],
+            str(prepare_info.get("output_render") or "")[:500],
+            bool(params.get("generate_audio", True)),
+            ref_audio_path,
+            prompt_wav_path,
+            json.dumps(self._tools, ensure_ascii=False, sort_keys=True),
         )
 
     async def push(self, payload: Dict[str, Any]) -> None:
@@ -220,20 +244,37 @@ class FcDuplexSessionRuntime:
             sample_rate=int(payload.get("sample_rate") or self._sample_rate),
         )
 
-        spoken = await asyncio.to_thread(
-            self.backend.fc_duplex_spoken_generate,
-            max_tokens=self._max_spoken_tokens,
-            decode_mode=self._decode_mode,
-        )
+        if self._unit_index < self._force_listen_units:
+            spoken = await asyncio.to_thread(
+                self.backend.fc_duplex_spoken_generate,
+                max_tokens=1,
+                decode_mode=self._decode_mode,
+            )
+        else:
+            spoken = await asyncio.to_thread(
+                self.backend.fc_duplex_spoken_generate,
+                max_tokens=self._max_spoken_tokens,
+                decode_mode=self._decode_mode,
+            )
         await self._emit_spoken(spoken, input_id=input_id)
         spoken_done_elapsed_ms = (time.perf_counter() - unit_t0) * 1000
+        unit_budget = self._budget_for_unit(self._unit_index, spoken)
 
         await self._run_non_spoken_loop(
             input_id=input_id,
             pre_non_spoken_elapsed_ms=spoken_done_elapsed_ms,
+            unit_budget=unit_budget,
         )
 
-        await asyncio.to_thread(self.backend.fc_duplex_finalize)
+        unit_info = await asyncio.to_thread(self.backend.fc_duplex_finalize)
+        logger.info(
+            "fc_unit_finalize unit=%s input_id=%s budget=%s info=%s",
+            self._unit_index,
+            input_id,
+            unit_budget,
+            _short(json.dumps(_model_to_dict(unit_info), ensure_ascii=False, default=str), limit=1200),
+        )
+        self._unit_index += 1
 
     async def close(self) -> None:
         self._closed = True
@@ -258,10 +299,28 @@ class FcDuplexSessionRuntime:
         except Exception:
             logger.exception("failed to dump fc model trace: session=%s path=%s", self.session_id, path)
 
-    async def _run_non_spoken_loop(self, *, input_id: Optional[str], pre_non_spoken_elapsed_ms: float) -> None:
+    def _budget_for_unit(self, unit_index: int, spoken: Any) -> int:
+        if bool(getattr(spoken, "is_speaking", False)) and self._non_spoken_budgets_while_speaking:
+            budget = self._non_spoken_budgets_while_speaking[min(unit_index, len(self._non_spoken_budgets_while_speaking) - 1)]
+        elif (not bool(getattr(spoken, "is_speaking", False))) and self._non_spoken_budgets_while_listening:
+            budget = self._non_spoken_budgets_while_listening[min(unit_index, len(self._non_spoken_budgets_while_listening) - 1)]
+        else:
+            budget = self._non_spoken_budget_per_unit
+        if budget is None:
+            return self._non_spoken_budget_per_unit
+        return max(0, int(budget))
+
+    async def _run_non_spoken_loop(
+        self,
+        *,
+        input_id: Optional[str],
+        pre_non_spoken_elapsed_ms: float,
+        unit_budget: Optional[int] = None,
+    ) -> None:
         used = 0
         step_durations_ms: List[float] = []
-        for _ in range(max(0, self._non_spoken_budget_per_unit)):
+        budget = self._non_spoken_budget_per_unit if unit_budget is None else unit_budget
+        for _ in range(max(0, budget)):
             if self._non_spoken_scheduling == "latency" and self._next_input_event.is_set():
                 step = _deferred_budget_reached_step()
                 await self._emit_step_events(step, input_id=input_id)
@@ -806,6 +865,20 @@ def _first_dict(*values: Any) -> Dict[str, Any]:
         if isinstance(value, dict):
             return value
     return {}
+
+
+def _optional_int_list(value: Any) -> Optional[List[Optional[int]]]:
+    if value is None:
+        return None
+    if not isinstance(value, list):
+        raise RuntimeError("FC duplex per-unit budgets must be a list")
+    out: List[Optional[int]] = []
+    for item in value:
+        if item is None:
+            out.append(None)
+        else:
+            out.append(int(item))
+    return out
 
 
 def _coalesce(*values: Any, default: Any = None) -> Any:

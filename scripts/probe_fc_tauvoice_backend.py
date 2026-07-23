@@ -35,14 +35,15 @@ def ws_url(base_url: str, path: str) -> str:
     return urlunsplit((scheme, parsed.netloc, parsed.path, parsed.query, parsed.fragment))
 
 
-def extract_case(case_path: Path) -> tuple[str, List[Dict[str, Any]], Path, float]:
+def extract_case(case_path: Path) -> tuple[str, List[Dict[str, Any]], Path, float, Dict[str, Any]]:
     data = json.loads(case_path.read_text(encoding="utf-8"))
     tools = data.get("system", {}).get("tools") or []
     system_prompt = "".join(seg.get("text", "") for seg in data.get("system", {}).get("segments", []))
-    unit_sec = float(data.get("unit_policy", {}).get("unit_sec") or 1.0)
+    unit_policy = data.get("unit_policy", {}) or {}
+    unit_sec = float(unit_policy.get("unit_sec") or 1.0)
     rel_audio = data["tracks"]["user_audio"]["segments"][0]["audio"]["file_path"]
     audio_path = case_path.parent / rel_audio
-    return system_prompt, tools, audio_path, unit_sec
+    return system_prompt, tools, audio_path, unit_sec, unit_policy
 
 
 def encode_float32_audio(samples: np.ndarray) -> str:
@@ -68,6 +69,33 @@ def convert_decimal_to_binary(arguments: Any) -> str:
     )
 
 
+def budgets_from_units_info(path: Path) -> tuple[List[int | None], List[int | None]]:
+    units = json.loads(path.read_text(encoding="utf-8"))
+    listening: List[int | None] = []
+    speaking: List[int | None] = []
+    for unit in units:
+        terminator = unit.get("non_spoken_terminator")
+        if terminator == "budget_reached":
+            token_count = len(unit.get("non_spoken_ids") or [])
+            if token_count > 0:
+                token_count -= 1
+        else:
+            token_count = 30
+        if unit.get("is_speaking"):
+            listening.append(None)
+            speaking.append(token_count)
+        else:
+            listening.append(token_count)
+            speaking.append(None)
+    return listening, speaking
+
+
+def normalize_tools_like_offline(tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    from minicpm_o5_sdk import OpenAIToolDefinition
+
+    return [OpenAIToolDefinition.model_validate(tool).model_dump() for tool in tools]
+
+
 async def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--backend", default="http://127.0.0.1:22512")
@@ -77,13 +105,20 @@ async def main() -> None:
     parser.add_argument("--out", default="run-logs/fc_tauvoice_probe.json")
     parser.add_argument("--extra-silence-units", type=int, default=8)
     parser.add_argument("--non-spoken-budget", type=int, default=30)
+    parser.add_argument("--use-case-budgets", action="store_true")
+    parser.add_argument("--budget-units-info", default=None)
+    parser.add_argument("--normalize-tools", action="store_true")
+    parser.add_argument("--force-listen-units", type=int, default=0)
+    parser.add_argument("--no-generate-audio", action="store_true")
     parser.add_argument("--max-spoken-tokens", type=int, default=24)
     parser.add_argument("--final-idle-timeout", type=float, default=20.0)
     parser.add_argument("--final-max-wait", type=float, default=180.0)
     args = parser.parse_args()
 
     case_path = Path(args.case)
-    system_prompt, tools, audio_path, unit_sec = extract_case(case_path)
+    system_prompt, tools, audio_path, unit_sec, unit_policy = extract_case(case_path)
+    if args.normalize_tools:
+        tools = normalize_tools_like_offline(tools)
     audio, sr = sf.read(str(audio_path), dtype="float32")
     if audio.ndim > 1:
         audio = audio.mean(axis=1)
@@ -101,6 +136,26 @@ async def main() -> None:
     if target_url.startswith("wss://"):
         ssl_ctx = ssl._create_unverified_context() if args.insecure else ssl.create_default_context()
     async with websockets.connect(target_url, max_size=128 * 1024 * 1024, ping_interval=None, ssl=ssl_ctx) as ws:
+        config = {
+            "sample_rate": sr,
+            "unit_sec": unit_sec,
+            "decode_mode": "greedy",
+            "non_spoken_budget_per_unit": args.non_spoken_budget,
+            "max_spoken_tokens": args.max_spoken_tokens,
+            "non_spoken_scheduling": "quality",
+        }
+        if args.force_listen_units:
+            config["force_listen_units"] = args.force_listen_units
+        if args.use_case_budgets:
+            if "non_spoken_budgets_while_listening" in unit_policy:
+                config["non_spoken_budgets_while_listening"] = unit_policy["non_spoken_budgets_while_listening"]
+            if "non_spoken_budgets_while_speaking" in unit_policy:
+                config["non_spoken_budgets_while_speaking"] = unit_policy["non_spoken_budgets_while_speaking"]
+        if args.budget_units_info:
+            listening, speaking = budgets_from_units_info(Path(args.budget_units_info))
+            config["non_spoken_budgets_while_listening"] = listening
+            config["non_spoken_budgets_while_speaking"] = speaking
+
         await ws.send(json.dumps({
             "type": "session.init",
             "payload": {
@@ -108,15 +163,8 @@ async def main() -> None:
                 "fc_duplex": True,
                 "system_prompt": system_prompt,
                 "tools": tools,
-                "generate_audio": True,
-                "config": {
-                    "sample_rate": sr,
-                    "unit_sec": unit_sec,
-                    "decode_mode": "greedy",
-                    "non_spoken_budget_per_unit": args.non_spoken_budget,
-                    "max_spoken_tokens": args.max_spoken_tokens,
-                    "non_spoken_scheduling": "quality",
-                },
+                "generate_audio": not args.no_generate_audio,
+                "config": config,
             },
         }, ensure_ascii=False))
         events.append(json.loads(await ws.recv()))

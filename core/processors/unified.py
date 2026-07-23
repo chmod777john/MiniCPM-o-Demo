@@ -112,6 +112,7 @@ import os
 import time
 import logging
 import base64
+import hashlib
 import glob
 
 import numpy as np
@@ -1568,6 +1569,17 @@ class FcDuplexView:
             ref_audio=ref_audio,
             prompt_wav_path=request.prompt_wav_path or request.ref_audio_path,
             generate_audio=request.generate_audio,
+        )
+        prefill_ids = result.get("prefill_ids", []) if isinstance(result, dict) else []
+        logger.info(
+            "fc_view_prepare_trace prefill_len=%s prefill_sha=%s render_head=%r generate_audio=%s ref=%s prompt_wav=%s tools=%s",
+            len(prefill_ids),
+            hashlib.sha256(json.dumps(prefill_ids).encode("utf-8")).hexdigest()[:16],
+            str(result.get("output_render", "") if isinstance(result, dict) else "")[:500],
+            request.generate_audio,
+            request.ref_audio_path,
+            request.prompt_wav_path,
+            json.dumps(request.tools, ensure_ascii=False, sort_keys=True) if request.tools is not None else None,
         )
         return self._prepare_result(result)
 

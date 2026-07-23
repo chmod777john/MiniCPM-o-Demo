@@ -389,12 +389,14 @@ class PyTorchBackend:
         generate_audio: bool = False,
     ) -> Any:
         fc_view = self.processor.set_fc_duplex_mode()
+        effective_ref_audio_path = ref_audio_path or (self.ref_audio_path if generate_audio else None)
+        effective_prompt_wav_path = prompt_wav_path or ref_audio_path or (self.ref_audio_path if generate_audio else None)
         return fc_view.prepare(
             FcDuplexPrepareRequest(
                 system_prompt=system_prompt,
                 tools=tools,
-                ref_audio_path=ref_audio_path or self.ref_audio_path,
-                prompt_wav_path=prompt_wav_path or ref_audio_path or self.ref_audio_path,
+                ref_audio_path=effective_ref_audio_path,
+                prompt_wav_path=effective_prompt_wav_path,
                 generate_audio=generate_audio,
             )
         )
