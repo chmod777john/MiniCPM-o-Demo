@@ -129,6 +129,7 @@ async def main() -> None:
                 pending_tool_results.append({
                     "type": "tool_result",
                     "tool_call_id": event.get("tool_call_id"),
+                    "contents": result,
                     "content": result,
                 })
 
@@ -181,7 +182,11 @@ async def main() -> None:
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps({"case": str(case_path), "audio": str(audio_path), "events": events}, ensure_ascii=False, indent=2), encoding="utf-8")
     tool_calls = [e for e in events if e.get("type") == "response.tool_call.args.raw"]
-    spoken = "".join(e.get("delta", "") for e in events if e.get("type") == "response.output.delta" and e.get("kind") == "text")
+    spoken = "".join(
+        e.get("delta") or e.get("text") or ""
+        for e in events
+        if e.get("type") == "response.output.delta" and e.get("kind") == "text"
+    )
     print(json.dumps({"out": str(out_path), "events": len(events), "tool_calls": tool_calls, "spoken_text": spoken}, ensure_ascii=False, indent=2))
 
 
