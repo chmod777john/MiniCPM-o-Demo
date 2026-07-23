@@ -46,6 +46,23 @@ def extract_case(case_path: Path) -> tuple[str, List[Dict[str, Any]], Path, floa
     return system_prompt, tools, audio_path, unit_sec, unit_policy
 
 
+def extract_train_tool_response_contents(case_path: Path) -> List[str]:
+    data = json.loads(case_path.read_text(encoding="utf-8"))
+    responses = []
+    for segment in ((data.get("tracks") or {}).get("input_event") or {}).get("segments") or []:
+        event = segment.get("event") or {}
+        if event.get("kind") != "tool_response":
+            continue
+        parts = []
+        for item in event.get("contents") or event.get("content") or []:
+            if isinstance(item, dict):
+                parts.append(str(item.get("text", "")))
+            else:
+                parts.append(str(item))
+        responses.append("".join(parts))
+    return responses
+
+
 def encode_float32_audio(samples: np.ndarray) -> str:
     samples = np.asarray(samples, dtype=np.float32).reshape(-1)
     return base64.b64encode(samples.tobytes()).decode("ascii")
@@ -110,6 +127,7 @@ async def main() -> None:
     parser.add_argument("--normalize-tools", action="store_true")
     parser.add_argument("--force-listen-units", type=int, default=0)
     parser.add_argument("--no-generate-audio", action="store_true")
+    parser.add_argument("--replay-train-tool-responses", action="store_true")
     parser.add_argument("--max-spoken-tokens", type=int, default=24)
     parser.add_argument("--final-idle-timeout", type=float, default=20.0)
     parser.add_argument("--final-max-wait", type=float, default=180.0)
@@ -119,6 +137,8 @@ async def main() -> None:
     system_prompt, tools, audio_path, unit_sec, unit_policy = extract_case(case_path)
     if args.normalize_tools:
         tools = normalize_tools_like_offline(tools)
+    train_tool_responses = extract_train_tool_response_contents(case_path) if args.replay_train_tool_responses else []
+    tool_call_count = 0
     audio, sr = sf.read(str(audio_path), dtype="float32")
     if audio.ndim > 1:
         audio = audio.mean(axis=1)
@@ -172,8 +192,13 @@ async def main() -> None:
         async def handle_event(event: Dict[str, Any]) -> None:
             events.append(event)
             if event.get("type") == "response.tool_call.args.raw":
+                nonlocal tool_call_count
                 raw_call = event.get("raw") or {}
-                result = convert_decimal_to_binary(json.loads(raw_call.get("arguments") or "{}"))
+                if args.replay_train_tool_responses and tool_call_count < len(train_tool_responses):
+                    result = train_tool_responses[tool_call_count]
+                else:
+                    result = convert_decimal_to_binary(json.loads(raw_call.get("arguments") or "{}"))
+                tool_call_count += 1
                 pending_tool_results.append({
                     "type": "tool_result",
                     "tool_call_id": event.get("tool_call_id"),

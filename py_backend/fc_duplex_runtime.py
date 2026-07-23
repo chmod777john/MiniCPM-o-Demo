@@ -243,7 +243,9 @@ class FcDuplexSessionRuntime:
             tool_responses=tool_responses or None,
             sample_rate=int(payload.get("sample_rate") or self._sample_rate),
         )
+        prefill_elapsed_ms = (time.perf_counter() - unit_t0) * 1000
 
+        spoken_t0 = time.perf_counter()
         if self._unit_index < self._force_listen_units:
             spoken = await asyncio.to_thread(
                 self.backend.fc_duplex_spoken_generate,
@@ -256,23 +258,53 @@ class FcDuplexSessionRuntime:
                 max_tokens=self._max_spoken_tokens,
                 decode_mode=self._decode_mode,
             )
+        spoken_elapsed_ms = (time.perf_counter() - spoken_t0) * 1000
         await self._emit_spoken(spoken, input_id=input_id)
         spoken_done_elapsed_ms = (time.perf_counter() - unit_t0) * 1000
         unit_budget = self._budget_for_unit(self._unit_index, spoken)
 
+        non_spoken_t0 = time.perf_counter()
         await self._run_non_spoken_loop(
             input_id=input_id,
             pre_non_spoken_elapsed_ms=spoken_done_elapsed_ms,
             unit_budget=unit_budget,
         )
+        non_spoken_elapsed_ms = (time.perf_counter() - non_spoken_t0) * 1000
 
+        finalize_t0 = time.perf_counter()
         unit_info = await asyncio.to_thread(self.backend.fc_duplex_finalize)
+        finalize_elapsed_ms = (time.perf_counter() - finalize_t0) * 1000
+        unit_total_ms = (time.perf_counter() - unit_t0) * 1000
         logger.info(
-            "fc_unit_finalize unit=%s input_id=%s budget=%s info=%s",
+            "fc_unit_finalize unit=%s input_id=%s budget=%s timing_ms=%s info=%s",
             self._unit_index,
             input_id,
             unit_budget,
+            {
+                "prefill": round(prefill_elapsed_ms, 3),
+                "spoken": round(spoken_elapsed_ms, 3),
+                "non_spoken": round(non_spoken_elapsed_ms, 3),
+                "finalize": round(finalize_elapsed_ms, 3),
+                "total": round(unit_total_ms, 3),
+            },
             _short(json.dumps(_model_to_dict(unit_info), ensure_ascii=False, default=str), limit=1200),
+        )
+        await self._send(
+            "response.debug",
+            session_id=self.session_id,
+            response_id=self._response_id,
+            input_id=input_id,
+            debug={
+                "unit_timing_ms": {
+                    "prefill": prefill_elapsed_ms,
+                    "spoken": spoken_elapsed_ms,
+                    "non_spoken": non_spoken_elapsed_ms,
+                    "finalize": finalize_elapsed_ms,
+                    "total": unit_total_ms,
+                },
+                "unit_budget": unit_budget,
+                "unit_index": self._unit_index,
+            },
         )
         self._unit_index += 1
 
