@@ -13,6 +13,7 @@ import asyncio
 import base64
 import json
 import math
+import ssl
 from pathlib import Path
 from typing import Any, Dict, List
 from urllib.parse import urlsplit, urlunsplit
@@ -71,6 +72,7 @@ async def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--backend", default="http://127.0.0.1:22512")
     parser.add_argument("--path", default="/backend")
+    parser.add_argument("--insecure", action="store_true", help="Disable TLS certificate verification for gateway probes")
     parser.add_argument("--case", default=DEFAULT_CASE)
     parser.add_argument("--out", default="run-logs/fc_tauvoice_probe.json")
     parser.add_argument("--extra-silence-units", type=int, default=8)
@@ -92,7 +94,10 @@ async def main() -> None:
     events: List[Dict[str, Any]] = []
     pending_tool_results: List[Dict[str, Any]] = []
 
-    async with websockets.connect(ws_url(args.backend, args.path), max_size=128 * 1024 * 1024, ping_interval=None) as ws:
+    ssl_ctx = None
+    if args.insecure:
+        ssl_ctx = ssl._create_unverified_context()
+    async with websockets.connect(ws_url(args.backend, args.path), max_size=128 * 1024 * 1024, ping_interval=None, ssl=ssl_ctx) as ws:
         await ws.send(json.dumps({
             "type": "session.init",
             "payload": {
