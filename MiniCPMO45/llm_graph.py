@@ -24,10 +24,14 @@ import torch
 from transformers.cache_utils import StaticCache
 
 
+_NO_DIST_CALL = object()
+
+
 class LLMGraphRunner:
-    def __init__(self, model, lm_head, max_cache_len=8192):
+    def __init__(self, model, lm_head, max_cache_len=8192, distributed=None):
         self.model = model            # hybrid backbone (self.m.model)
         self.lm_head = lm_head        # self.m.lm_head
+        self.distributed = distributed
         self.cfg = model.config
         self.max_cache_len = max_cache_len
         p = next(model.parameters())
@@ -51,6 +55,93 @@ class LLMGraphRunner:
         H = self.cfg.hidden_size
         self._init(H)
         self._capture(H)
+
+    @property
+    def _dist_enabled(self):
+        return (
+            self.distributed is not None
+            and bool(getattr(self.distributed, "sync_calls", False))
+            and int(getattr(self.distributed, "world_size", 1)) > 1
+        )
+
+    @property
+    def _dist_driver(self):
+        return bool(getattr(self.distributed, "is_driver", True))
+
+    def shutdown_worker(self):
+        if self._dist_enabled and self._dist_driver:
+            with self.distributed._call_lock:
+                self.distributed._broadcast_object(("graph_shutdown", None))
+
+    def noop(self):
+        if self._dist_enabled and self._dist_driver:
+            with self.distributed._call_lock:
+                self.distributed._broadcast_object(("graph_noop", None))
+
+    def worker_loop(self):
+        assert self._dist_enabled and not self._dist_driver, "worker_loop() is worker-rank only"
+        rank = getattr(self.distributed, "rank", "?")
+        print(f"[llm_graph_spmd] rank={rank} entering graph worker_loop", flush=True)
+        while True:
+            method, payload = self.distributed._broadcast_object(None)
+            if method in {"graph_shutdown", "__shutdown__"}:
+                return
+            if method in {"graph_noop", "noop"}:
+                continue
+            if method in {"forward", "model", "generate"}:
+                args, kwargs = self.distributed._materialize_payload(payload)
+                self.distributed._run_local(method, args, kwargs)
+                continue
+            if method == "graph_reset":
+                self._reset_local()
+                continue
+            if method == "graph_prefill":
+                meta, tensor_payload = payload
+                tensor = self._empty_like(tensor_payload)
+                self._broadcast_tensor(tensor)
+                self._prefill_local(tensor, int(meta["start_pos"]))
+                continue
+            if method == "graph_decode":
+                meta, tensor_payload = payload
+                tensor = self._empty_like(tensor_payload)
+                self._broadcast_tensor(tensor)
+                self._decode_local(tensor, int(meta["pos"]))
+                continue
+            raise RuntimeError(f"unknown graph worker method: {method}")
+
+    def _tensor_payload(self, tensor):
+        return {
+            "shape": tuple(tensor.shape),
+            "dtype": tensor.dtype,
+        }
+
+    def _empty_like(self, payload):
+        return torch.empty(payload["shape"], dtype=payload["dtype"], device=self.device)
+
+    def _broadcast_tensor(self, tensor):
+        import torch.distributed as dist
+
+        if not tensor.is_contiguous():
+            tensor = tensor.contiguous()
+        dist.broadcast(tensor, src=0)
+        return tensor
+
+    def _driver_graph_call(self, method, tensor=None, **meta):
+        if not self._dist_enabled or not self._dist_driver:
+            return _NO_DIST_CALL
+        with self.distributed._call_lock:
+            if method == "graph_reset":
+                self.distributed._broadcast_object((method, None))
+                self._reset_local()
+                return True
+            payload = (meta, self._tensor_payload(tensor))
+            self.distributed._broadcast_object((method, payload))
+            self._broadcast_tensor(tensor)
+            if method == "graph_prefill":
+                return self._prefill_local(tensor, int(meta["start_pos"]))
+            if method == "graph_decode":
+                return self._decode_local(tensor, int(meta["pos"]))
+            raise RuntimeError(f"unknown graph driver method: {method}")
 
     def _init(self, H):
         # Force inference_mode(True) for ALL buffer ops in this runner (init/capture/decode/prefill),
@@ -106,7 +197,7 @@ class LLMGraphRunner:
             except Exception:
                 pass
 
-    def reset(self):
+    def _reset_local(self):
         # inference_mode: the buffers are inference tensors (created under inference_mode); the demo
         # calls decoder.reset() between videos OUTSIDE inference_mode, and StaticCache.reset() does
         # conv_states.zero_()/keys.zero_() in-place -> must be inside inference_mode.
@@ -116,6 +207,11 @@ class LLMGraphRunner:
             if self._mask is not None:
                 self._mask.fill_(self.neg)
 
+    def reset(self):
+        if self._driver_graph_call("graph_reset") is not _NO_DIST_CALL:
+            return
+        self._reset_local()
+
     def _warn_overflow(self, pos):
         if not getattr(self, "_overflowed", False):
             self._overflowed = True
@@ -124,7 +220,7 @@ class LLMGraphRunner:
                   f"(the demo sliding_window does NOT trim a StaticCache). No crash; tail may degrade.",
                   flush=True)
 
-    def prefill(self, inputs_embeds, start_pos):
+    def _prefill_local(self, inputs_embeds, start_pos):
         """Variable-length prefill via the non-graph StaticCache path. inputs_embeds: [1,L,H]."""
         with torch.inference_mode():
             L = inputs_embeds.shape[1]
@@ -144,7 +240,13 @@ class LLMGraphRunner:
             self._mask[..., :start_pos + L] = 0.0
         return h
 
-    def decode(self, inputs_embeds, pos):
+    def prefill(self, inputs_embeds, start_pos):
+        out = self._driver_graph_call("graph_prefill", inputs_embeds, start_pos=int(start_pos))
+        if out is not _NO_DIST_CALL:
+            return out
+        return self._prefill_local(inputs_embeds, start_pos)
+
+    def _decode_local(self, inputs_embeds, pos):
         """Single-token decode at absolute position `pos` (== cache length before this token)."""
         with torch.inference_mode():
             if pos >= self.max_cache_len:
@@ -156,3 +258,9 @@ class LLMGraphRunner:
                 return self._fwd()
             self.graph.replay()
             return self._hidden
+
+    def decode(self, inputs_embeds, pos):
+        out = self._driver_graph_call("graph_decode", inputs_embeds, pos=int(pos))
+        if out is not _NO_DIST_CALL:
+            return out
+        return self._decode_local(inputs_embeds, pos)

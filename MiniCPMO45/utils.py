@@ -2259,6 +2259,26 @@ class StreamDecoder:
         tids = torch.tensor(token_ids, device=self.m.device)
         return self.m.model.embed_tokens(tids)
 
+    def ensure_llm_graph_runner(self):
+        from .opt_flags import OPT as _OPT
+
+        if not bool(_OPT.get("llm_graph")):
+            return None
+        if getattr(self, "_llm_runner", None) is None:
+            from .llm_graph import LLMGraphRunner
+
+            distributed = self.m if bool(getattr(self.m, "sync_calls", False)) else None
+            raw_llm = getattr(self.m, "inner", self.m)
+            self._llm_runner = LLMGraphRunner(
+                raw_llm.model,
+                raw_llm.lm_head,
+                max_cache_len=int(os.environ.get("O5_LLM_CACHE", "8192")),
+                distributed=distributed,
+            )
+            self._static_pos = 0
+            self.cache = self._llm_runner.cache
+        return self._llm_runner
+
     @torch.no_grad()
     def feed(self, embeds: torch.Tensor, return_logits: bool = False):
         """
@@ -2269,12 +2289,7 @@ class StreamDecoder:
 
         from .opt_flags import OPT as _OPT
         if bool(_OPT.get("llm_graph")):
-            if getattr(self, "_llm_runner", None) is None:
-                from .llm_graph import LLMGraphRunner
-                self._llm_runner = LLMGraphRunner(self.m.model, self.m.lm_head, max_cache_len=int(os.environ.get("O5_LLM_CACHE", "8192")))
-                self._static_pos = 0
-                self.cache = self._llm_runner.cache
-            _r = self._llm_runner
+            _r = self.ensure_llm_graph_runner()
             _pos = self._static_pos
             if _pos + L > _r.max_cache_len:
                 # Session exceeds the graph StaticCache ceiling. StaticLayer auto-advances its own write
