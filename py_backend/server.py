@@ -45,9 +45,9 @@ _spmd_heartbeat_task: Optional[asyncio.Task] = None
 def _start_spmd_heartbeat(backend: Any) -> Optional[asyncio.Task]:
     """Keep SPMD worker ranks alive while the HTTP server is idle.
 
-    In tp2 mode rank1 blocks in SpmdMirror.worker_loop(), waiting for rank0 to
-    broadcast the next mirrored model call. A long idle gap would otherwise hit
-    the process-group timeout and tear down the whole torchrun job.
+    In tp2 mode rank1 blocks in the model-provided worker loop, waiting for
+    rank0's LLM/graph-runner command. A long idle gap would otherwise hit the
+    process-group timeout and tear down the whole torchrun job.
     """
     if not getattr(backend, "spmd_is_driver", False):
         return None
@@ -745,8 +745,9 @@ def main() -> None:
         "llm_cache_len": getattr(cfg.model, "llm_cache_len", 8192),
     })
 
-    # SPMD (multi-rank) deployment: non-driver ranks build the model (participating in the
-    # build-time collectives) then mirror the driver forever; they never start the HTTP server.
+    # SPMD (multi-rank) deployment: non-driver ranks build the model
+    # (participating in build-time collectives), then enter the model-provided
+    # LLM/graph worker loop. They never start the HTTP server.
     import os as _os
     if int(_os.environ.get("RANK", "0")) != 0:
         _be = create_backend(SERVER_CONFIG); _be.load_model()
@@ -756,10 +757,7 @@ def main() -> None:
             logger.info("[spmd] rank %s: entering model worker_loop (no HTTP)", _os.environ.get("RANK"))
             _worker_loop()
             return
-        _mir = getattr(_m, "_spmd_mirror", None)
-        if _mir is not None:
-            logger.info("[spmd] rank %s: entering worker_loop (no HTTP)", _os.environ.get("RANK"))
-            _mir.worker_loop()
+        logger.error("[spmd] rank %s: model does not provide _spmd_worker_loop", _os.environ.get("RANK"))
         return
 
     uvicorn.run(

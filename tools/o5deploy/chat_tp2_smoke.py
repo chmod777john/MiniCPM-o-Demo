@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
 """Minimal TP2 turn-based chat smoke.
 
-Runs inside torchrun with both ranks executing the same chat prefill/generate
-calls. This isolates TP2 chat model behavior from gateway/worker WebSocket
-serving and from SpmdMirror scheduling. Set MODE=tp2_llm to exercise the
-experimental LLM-boundary synchronization path.
+Runs inside torchrun with rank 0 driving chat prefill/generate and rank 1
+waiting in the model-provided LLM/graph worker loop. This isolates TP2 chat
+model behavior from gateway/worker WebSocket serving.
 """
 import json
 import os

@@ -11,7 +11,7 @@ found in the demo's model.benchmark():
      by the tail, not avg. [HIGH]
   5. cross-rank MAX per unit (the slower rank sets the deadline) via all_reduce(MAX). [2-rank]
   6. measures the SAME deployed opt engine the 2-card server would run (batched_mm + graphs +
-     vocoder bucketing + token broadcast), and records it. [CRITICAL: don't measure a config the
+     vocoder bucketing + LLM/graph-boundary TP sync), and records it. [CRITICAL: don't measure a config the
      server doesn't run.]
 Runs the REAL duplex pipeline (duplex_prefill/duplex_generate/duplex_finalize == server path).
 Env: MODE(voice/omni) FORCE(listen/speak/natural) UNITS WARMUP OUT_DIR."""
@@ -85,7 +85,7 @@ def main():
     elif FORCE == "speak":
         for _lid in (getattr(model.duplex, "listen_token_id", None), getattr(dec, "listen_id", None)):
             if _lid is not None and _lid not in dec.forbidden_token_ids: dec.forbidden_token_ids.append(_lid)
-    # SPMD token broadcast (both ranks feed rank-0's token -> identical collective stream)
+    # TP sync is owned by the LLM/graph runner.
     _od = dec.decode
     def _sd(*a, **k):
         t = _od(*a, **k)
