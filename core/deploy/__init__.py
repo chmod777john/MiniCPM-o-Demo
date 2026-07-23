@@ -8,11 +8,10 @@ builder and registering it — nothing else in the serving stack changes.
 Shipped modes (see modes.py):
   - single_eager : 1 GPU, trusted eager path (current production default).
   - single_opt   : 1 GPU, CUDA-graph optimization engine (batched_mm + tts/llm/vocoder graphs).
-  - tp2          : 2 GPU tensor-parallel backbone (SPMD/torchrun) + graphs + token broadcast.
+  - tp2          : 2 GPU tensor-parallel backbone with LLM/graph-boundary SPMD sync.
 """
 from .base import DeploymentMode, BuildResult
 from .registry import register_mode, get_mode, list_modes
-from .spmd import SpmdMirror
 from . import modes as _modes  # noqa: F401  (registers the shipped modes on import)
 
-__all__ = ["DeploymentMode", "BuildResult", "register_mode", "get_mode", "list_modes", "SpmdMirror"]
+__all__ = ["DeploymentMode", "BuildResult", "register_mode", "get_mode", "list_modes"]

@@ -74,7 +74,7 @@ python tools/o5deploy/extract_backbone.py
   O5_BACKBONE_DIR=/path/to/o5_backbone_hf bash core/deploy/launch_tp2.sh \
       --model-path $MODEL_PATH --pt-path $PT_PATH --port 22500
   ```
-  rank0 起 HTTP(对外 `/backend` WebSocket),rank1 自动进 `worker_loop`(不起 HTTP,镜像 rank0 的模型计算)。gateway / 客户端只连 rank0,**协议不变**。
+  rank0 起 HTTP(对外 `/backend` WebSocket),rank1 自动进模型提供的 `worker_loop`(不起 HTTP,只参与 LLM/graph TP 计算)。gateway / 客户端只连 rank0,**协议不变**。
 
 ---
 
@@ -108,6 +108,6 @@ python tools/o5deploy/extract_backbone.py
 
 ## 8. 代码位置
 
-- 框架:`core/deploy/{base,registry,modes,spmd}.py`;接线:`core/processors/{unified,backend_factory}.py`、`py_backend/server.py`、`config.py`。
-- 工具:`tools/o5deploy/{extract_backbone,deploybench,live_client,test_backend_spmd,test_spmd_serving,bench_2card,grid_2card}.py`。
+- 框架:`core/deploy/{base,registry,modes,llm_wrapper}.py`;接线:`core/processors/{unified,backend_factory}.py`、`py_backend/server.py`、`config.py`。
+- 工具:`tools/o5deploy/{extract_backbone,deploybench,live_client,bench_2card,grid_2card}.py`。
 - 启动:`core/deploy/launch_tp2.sh`。

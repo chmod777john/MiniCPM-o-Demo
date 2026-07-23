@@ -82,7 +82,7 @@ def main():
     else:
         for _lid in (getattr(model.duplex, "listen_token_id", None), getattr(dec, "listen_id", None)):
             if _lid is not None and _lid not in dec.forbidden_token_ids: dec.forbidden_token_ids.append(_lid)
-    # SPMD token broadcast (both ranks feed rank-0's token -> identical collective stream)
+    # TP sync is owned by the LLM/graph runner.
     _od = dec.decode
     def _sd(*a, **k):
         t = _od(*a, **k)

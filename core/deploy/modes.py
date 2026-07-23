@@ -98,9 +98,10 @@ def _surgery_tp(
     return model
 
 
-def _enable_engine(model, *, tp: bool, cfg: Dict[str, Any], token_broadcast: bool = True):
+def _enable_engine(model, *, tp: bool, cfg: Dict[str, Any]):
     """Enable the deployed CUDA-graph optimization engine. Returns an engine-info dict.
-    tp=True additionally installs the token-broadcast SPMD sync on the decoder."""
+    TP synchronization is handled by the LLM/graph runner, not by decoder-level
+    decoder-level sampling synchronization or backend method mirroring."""
     from MiniCPMO45.opt_flags import OPT
     # deployed MoE on both paths
     experts_impl = _experts_impl()
@@ -122,10 +123,7 @@ def _enable_engine(model, *, tp: bool, cfg: Dict[str, Any], token_broadcast: boo
     os.environ["O5_LLM_CACHE"] = str(cfg.get("llm_cache_len", 8192))
     eng = {"experts": experts_impl, "tts_fast": True, "lmhead": True, "tts_graph": True,
            "fuse_vision_audio": True, "llm_graph": llm_graph, "llm_cache": cfg.get("llm_cache_len", 8192)}
-    if tp and token_broadcast:
-        _install_token_broadcast(model)
-        eng["tp"] = 2; eng["token_broadcast"] = True
-    elif tp:
+    if tp:
         eng["tp"] = 2; eng["token_broadcast"] = False
     return eng
 
@@ -137,24 +135,6 @@ def _enable_vocoder_bucket(model):
         vg.enable_bucketed(model, lambda *a: logger.info("%s", " ".join(str(x) for x in a)), bucket=50)
     except Exception as e:
         logger.warning("[deploy] vocoder bucketing failed (staying eager): %s", e)
-
-
-def _install_token_broadcast(model):
-    """SPMD: broadcast rank-0's chosen token to all ranks so every rank feeds the SAME token ->
-    identical per-layer NCCL all_reduce stream (non-deterministic MoE kernels would otherwise
-    diverge at near-ties and desync the collectives)."""
-    import torch.distributed as dist
-    dec = model.duplex.decoder
-    if getattr(dec, "_tp_broadcast_installed", False):
-        return
-    _orig = dec.decode
-    def _synced(*a, **k):
-        t = _orig(*a, **k)
-        if torch.is_tensor(t):
-            t = t.contiguous(); dist.broadcast(t, src=0)
-        return t
-    dec.decode = _synced
-    dec._tp_broadcast_installed = True
 
 
 def _init_unified(model, cfg: Dict[str, Any]):
@@ -196,40 +176,11 @@ def build_tp2(cfg, rank=0, world_size=2) -> BuildResult:
         )
     rank = dist.get_rank(); world_size = dist.get_world_size()
     dev = f"cuda:{rank}"
-    model = _surgery_tp(cfg, dev, rank=rank, world_size=world_size)
-    _init_unified(model, cfg)
-    eng = _enable_engine(model, tp=True, cfg=cfg); eng["mode"] = "tp2"
-
-    from .spmd import SpmdMirror
-    model._spmd_mirror = SpmdMirror(model, is_driver=(rank == 0), rank=rank, world_size=world_size)
-    if hasattr(model.llm, "mirror"):
-        model.llm.mirror = model._spmd_mirror
-
-    def broadcast_input(obj):
-        box = [obj]; dist.broadcast_object_list(box, src=0); return box[0]
-
-    return BuildResult(model=model, world_size=world_size, rank=rank, is_driver=(rank == 0),
-                       engine=eng, broadcast_input=broadcast_input)
-
-
-def build_tp2_llm(cfg, rank=0, world_size=2) -> BuildResult:
-    import torch.distributed as dist
-    from datetime import timedelta
-    rank = int(os.environ.get("LOCAL_RANK", os.environ.get("RANK", rank)))
-    torch.cuda.set_device(rank)
-    if not dist.is_initialized():
-        dist.init_process_group(
-            "nccl",
-            timeout=timedelta(seconds=int(cfg.get("nccl_timeout_s", 120))),
-            device_id=torch.device(f"cuda:{rank}"),
-        )
-    rank = dist.get_rank(); world_size = dist.get_world_size()
-    dev = f"cuda:{rank}"
     llm_graph = os.environ.get("O5_LLM_GRAPH", "1") not in {"0", "false", "False"}
     sync_llm_calls = True
     model = _surgery_tp(cfg, dev, rank=rank, world_size=world_size, sync_llm_calls=sync_llm_calls)
     _init_unified(model, cfg)
-    eng = _enable_engine(model, tp=True, cfg=cfg, token_broadcast=False); eng["mode"] = "tp2_llm"
+    eng = _enable_engine(model, tp=True, cfg=cfg); eng["mode"] = "tp2"
     if llm_graph:
         runner = model.duplex.decoder.ensure_llm_graph_runner()
         model._spmd_worker_loop = runner.worker_loop
@@ -246,7 +197,7 @@ register_mode(DeploymentMode("single_eager", 1, False, build_single_eager,
                              "1 GPU, trusted eager path (production default)."))
 register_mode(DeploymentMode("single_opt", 1, False, build_single_opt,
                              "1 GPU, CUDA-graph optimization engine (batched_mm + tts/llm/vocoder graphs)."))
-register_mode(DeploymentMode("tp2", 2, True, build_tp2_llm,
+register_mode(DeploymentMode("tp2", 2, True, build_tp2,
                              "2 GPU tensor-parallel backbone with LLM/graph-boundary SPMD synchronization."))
-register_mode(DeploymentMode("tp2_llm", 2, True, build_tp2_llm,
-                             "Experimental 2 GPU TP mode with synchronization at the LLM object boundary."))
+register_mode(DeploymentMode("tp2_llm", 2, True, build_tp2,
+                             "Alias for tp2."))
