@@ -1360,6 +1360,15 @@ async def realtime_page():
     return HTMLResponse("<h1>Realtime API</h1><p>Page not found</p>")
 
 
+@app.get("/fc-demo", response_class=HTMLResponse)
+async def fc_demo_page():
+    """TauVoice FC audio duplex demo."""
+    page_path = os.path.join(static_dir, "fc-demo", "fc-demo.html")
+    if os.path.exists(page_path):
+        return FileResponse(page_path)
+    return HTMLResponse("<h1>FC Demo</h1><p>Page not found</p>")
+
+
 # ============ Docs Hosting ============
 
 docs_static_dir = os.path.join(static_dir, "docs")
