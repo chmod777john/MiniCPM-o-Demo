@@ -2395,6 +2395,7 @@ class UnifiedProcessor(BaseProcessor):
             self._chat_view = ChatView(self.model, self.ref_audio_path)
             self._half_duplex_view = HalfDuplexView(self.model, self.ref_audio_path)
             self._duplex_view = DuplexView(self.model, self.ref_audio_path, self.duplex_config)
+            self._fc_duplex_view = FcDuplexView(self.model)
             logger.info("[deploy] built via framework: mode=%s world=%d rank=%d engine=%s",
                         _dep_mode, _br.world_size, _br.rank, _br.engine)
             return
@@ -2580,6 +2581,8 @@ class UnifiedProcessor(BaseProcessor):
     def set_fc_duplex_mode(self) -> FcDuplexView:
         """Switch to FC Duplex mode."""
         self.set_duplex_mode()
+        if self._fc_duplex_view is None:
+            self._fc_duplex_view = FcDuplexView(self.model)
         return self._fc_duplex_view
 
     # ==================== KV Cache State ====================
