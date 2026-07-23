@@ -20,6 +20,7 @@ LOG_DIR="${LOG_DIR:-${PROJECT_DIR}/run-logs/o5_tp2_cctl}"
 ENABLE_FRP="${ENABLE_FRP:-1}"
 FRPC_BIN="${FRPC_BIN:-frpc}"
 FRPC_CONFIG="${FRPC_CONFIG:-}"
+GATEWAY_HTTPS="${GATEWAY_HTTPS:-1}"
 O5_LLM_CACHE="${O5_LLM_CACHE:-32768}"
 O5_SPMD_HEARTBEAT_INTERVAL="${O5_SPMD_HEARTBEAT_INTERVAL:-30}"
 
@@ -70,11 +71,19 @@ echo "[tp2-start] project=${PROJECT_DIR}"
 echo "[tp2-start] model=${MODEL_PATH}"
 echo "[tp2-start] pt=${PT_PATH}"
 echo "[tp2-start] backbone=${BACKBONE_DIR} llm_cache=${O5_LLM_CACHE} spmd_heartbeat=${O5_SPMD_HEARTBEAT_INTERVAL}"
-echo "[tp2-start] gateway=https://${GATEWAY_HOST}:${GATEWAY_PORT} backend=${BACKEND_URL} worker=${WORKER_ENDPOINT}"
+if [ "${GATEWAY_HTTPS}" = "1" ]; then
+    gateway_scheme="https"
+    gateway_args=(--https --ssl-certfile certs/cert.pem --ssl-keyfile certs/key.pem)
+else
+    gateway_scheme="http"
+    gateway_args=(--http)
+fi
+
+echo "[tp2-start] gateway=${gateway_scheme}://${GATEWAY_HOST}:${GATEWAY_PORT} backend=${BACKEND_URL} worker=${WORKER_ENDPOINT}"
 
 "${PYTHON}" gateway.py \
     --host "${GATEWAY_HOST}" --port "${GATEWAY_PORT}" --internal-port "${GATEWAY_INTERNAL_PORT}" \
-    --https --ssl-certfile certs/cert.pem --ssl-keyfile certs/key.pem \
+    "${gateway_args[@]}" \
     > "${LOG_DIR}/gateway.log" 2>&1 &
 gateway_pid=$!
 wait_http "http://127.0.0.1:${GATEWAY_INTERNAL_PORT}/health" 120 "gateway-internal"
@@ -97,7 +106,7 @@ payload="{\"endpoint\":\"${WORKER_ENDPOINT}\",\"gpu_group\":\"${WORKER_GPU_GROUP
 curl -sf -X PUT -H "content-type: application/json" --data "${payload}" "${GATEWAY_REGISTRY_URL}" >/dev/null
 echo "[tp2-start] registered ${WORKER_ID} endpoint=${WORKER_ENDPOINT}"
 
-curl -sk "https://127.0.0.1:${GATEWAY_PORT}/health" >/dev/null
+curl -sk "${gateway_scheme}://127.0.0.1:${GATEWAY_PORT}/health" >/dev/null
 echo "[tp2-start] service ready"
 
 if [ "${ENABLE_FRP}" = "1" ]; then
