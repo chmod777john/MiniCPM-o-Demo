@@ -2424,10 +2424,23 @@ class UnifiedProcessor(BaseProcessor):
             config.name_or_path = self.model_path
             from accelerate import init_empty_weights
 
+            state_dict = self._load_state_dict_from_pt(self.pt_path)
+            embed_key = "llm.model.embed_tokens.weight"
+            if embed_key in state_dict:
+                checkpoint_vocab_size = int(state_dict[embed_key].shape[0])
+                configured_vocab_size = int(getattr(config, "vocab_size", checkpoint_vocab_size))
+                if checkpoint_vocab_size != configured_vocab_size:
+                    logger.warning(
+                        "Checkpoint/config vocabulary mismatch: checkpoint=%d, config=%d. "
+                        "Building the O5 LLM with the checkpoint vocabulary size before assign=True load.",
+                        checkpoint_vocab_size,
+                        configured_vocab_size,
+                    )
+                    config.vocab_size = checkpoint_vocab_size
+
             with init_empty_weights():
                 self.model = MiniCPMO(config)
 
-            state_dict = self._load_state_dict_from_pt(self.pt_path)
             info = self.model.load_state_dict(state_dict, strict=False, assign=True)
             logger.info(
                 "PT weights loaded — missing: %d, unexpected: %d",
