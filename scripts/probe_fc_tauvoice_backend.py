@@ -78,6 +78,8 @@ async def main() -> None:
     parser.add_argument("--extra-silence-units", type=int, default=8)
     parser.add_argument("--non-spoken-budget", type=int, default=30)
     parser.add_argument("--max-spoken-tokens", type=int, default=24)
+    parser.add_argument("--final-idle-timeout", type=float, default=20.0)
+    parser.add_argument("--final-max-wait", type=float, default=180.0)
     args = parser.parse_args()
 
     case_path = Path(args.case)
@@ -119,22 +121,37 @@ async def main() -> None:
         }, ensure_ascii=False))
         events.append(json.loads(await ws.recv()))
 
+        async def handle_event(event: Dict[str, Any]) -> None:
+            events.append(event)
+            if event.get("type") == "response.tool_call.args.raw":
+                raw_call = event.get("raw") or {}
+                result = convert_decimal_to_binary(json.loads(raw_call.get("arguments") or "{}"))
+                pending_tool_results.append({
+                    "type": "tool_result",
+                    "tool_call_id": event.get("tool_call_id"),
+                    "content": result,
+                })
+
         async def drain_until_idle(timeout_s: float = 0.2) -> None:
             while True:
                 try:
                     raw = await asyncio.wait_for(ws.recv(), timeout=timeout_s)
                 except asyncio.TimeoutError:
                     return
-                event = json.loads(raw)
-                events.append(event)
-                if event.get("type") == "response.tool_call.args.raw":
-                    raw_call = event.get("raw") or {}
-                    result = convert_decimal_to_binary(json.loads(raw_call.get("arguments") or "{}"))
-                    pending_tool_results.append({
-                        "type": "tool_result",
-                        "tool_call_id": event.get("tool_call_id"),
-                        "content": result,
-                    })
+                await handle_event(json.loads(raw))
+
+        async def drain_final() -> None:
+            deadline = asyncio.get_running_loop().time() + args.final_max_wait
+            while asyncio.get_running_loop().time() < deadline:
+                timeout = min(args.final_idle_timeout, max(0.1, deadline - asyncio.get_running_loop().time()))
+                try:
+                    raw = await asyncio.wait_for(ws.recv(), timeout=timeout)
+                except asyncio.TimeoutError:
+                    return
+                await handle_event(json.loads(raw))
+                while pending_tool_results:
+                    item = pending_tool_results.pop(0)
+                    await ws.send(json.dumps({"type": "input.append", "input": item}, ensure_ascii=False))
 
         for idx, samples in enumerate(chunks):
             payload = {
@@ -155,6 +172,7 @@ async def main() -> None:
             await ws.send(json.dumps(payload, ensure_ascii=False))
             await drain_until_idle()
 
+        await drain_final()
         await ws.send(json.dumps({"type": "session.close", "reason": "probe_done"}))
         with contextlib.suppress(Exception):
             events.append(json.loads(await asyncio.wait_for(ws.recv(), timeout=5)))

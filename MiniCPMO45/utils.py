@@ -2275,17 +2275,23 @@ class StreamDecoder:
 
         if not bool(_OPT.get("llm_graph")):
             return None
+        raw_llm = getattr(self.m, "inner", self.m)
+        shared_runner = getattr(raw_llm, "_shared_llm_graph_runner", None)
+        if shared_runner is not None:
+            self._llm_runner = shared_runner
+            self.cache = shared_runner.cache
+            return self._llm_runner
         if getattr(self, "_llm_runner", None) is None:
             from .llm_graph import LLMGraphRunner
 
             distributed = self.m if bool(getattr(self.m, "sync_calls", False)) else None
-            raw_llm = getattr(self.m, "inner", self.m)
             self._llm_runner = LLMGraphRunner(
                 raw_llm.model,
                 raw_llm.lm_head,
                 max_cache_len=int(os.environ.get("O5_LLM_CACHE", "8192")),
                 distributed=distributed,
             )
+            raw_llm._shared_llm_graph_runner = self._llm_runner
             self._static_pos = 0
             self.cache = self._llm_runner.cache
         return self._llm_runner
