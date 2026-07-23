@@ -381,3 +381,163 @@ af041e4c3a54b019a386e80bf54debe66232fbe8  # GT response replay 与 timing probe
 - 明确哪些参数只是 debug / eval 对齐用，例如 `force_listen_units`。
 - 将 per-unit budget、tool response schedule、silent tail 等参数设计成正式 eval/probe protocol，而不是普通 demo 默认行为。
 - 如果后续还出现不一致，再升级到 tensor 级插桩，按 prepare、prefill、spoken generate、non-spoken generate 的 input/output token 和 logits 逐层比较。
+
+## 前端 Demo 与 Live 行为观察
+
+后续又在同一分支上增加了一个最小 TauVoice FC 音频 demo：
+
+```text
+static/fc-demo/fc-demo.html
+static/fc-demo/fc-demo.js
+static/fc-demo/fc-demo.css
+static/fc-demo/cases/tauvoice_01029_user.wav
+```
+
+对应提交：
+
+```text
+b92f26778d3ed50f5a87669984a47e335fbf8202  # Add TauVoice FC audio demo
+```
+
+页面走正式 API：
+
+```text
+/v1/realtime?mode=audio
+```
+
+它支持两种输入方式：
+
+- 麦克风实时输入。
+- `发送 Case 音频`：前端直接播放并发送 `01029` 的 user wav，按 1 秒 chunk 切分，经同一条 WebSocket API 发送。
+
+页面展示四类内容：
+
+- spoken 回复文本与音频。
+- non-spoken / think / tool-args delta。
+- tool call 与前端执行结果。
+- session / timing / unit 事件。
+
+### Non-spoken 的语义
+
+这次确认了页面展示的 non-spoken 不是前端伪造的 debug 文本，而是真实模型轨道的一部分。它能产生可执行工具调用，也能在 tool result 插回后继续基于结果推理。
+
+例如 live session 中 non-spoken 生成：
+
+```text
+<function name="convert_decimal_to_binary"><param name="decimal_number">255</param></function>
+<function name="convert_decimal_to_binary"><param name="decimal_number">128</param></function>
+```
+
+后端解析为真实 tool call，前端执行工具并回传 `tool_result.contents` 后，后续 non-spoken 能看到：
+
+```text
+- 255 in binary = 11111111
+- 128 in binary = 10000000
+```
+
+因此当前 FC demo 中：
+
+```text
+non-spoken = 模型内部可执行 / 可记忆 / 可驱动工具的思考与调度轨道
+spoken     = 用户真正看到和听到的回复轨道
+```
+
+这两个轨道不是等价的。non-spoken 可以已经算出答案，但 spoken 未必会把答案完整说出来。
+
+### 静音输入问题
+
+用前端空点“开始”以及脚本直接发送全零静音音频都复现了相同现象：即使没有用户语音，non-spoken 也可能 hallucinate 一个 Fibonacci 任务。
+
+静音 probe：
+
+```text
+run-logs/fc_silence_https_gateway_3s_20260723_154445.json
+```
+
+输入为 3 秒全零 float32 PCM，配置与页面一致：
+
+```text
+non_spoken_budget_per_unit = 30
+non_spoken_scheduling = quality
+```
+
+non-spoken 开头为：
+
+```text
+The user is asking me to predict the next 3 terms of a sequence: 1, 1, 2, 3, 5, ...
+Looking at this sequence, I can see it's the Fibonacci sequence ...
+```
+
+因此这不是麦克风权限或前端展示问题，而是当前 live FC runtime 在 listen / 静音输入下仍给 non-spoken 较大 budget 后，模型会基于先验 hallucinate 任务。普通实时麦克风模式尤其容易被启动阶段的静音或环境声污染上下文。
+
+短期规避方向：
+
+- 前端在用户真正说话前不要发送静音。
+- 或后端在 listen 且无有效语音时压低 / 禁用 non-spoken budget。
+- 或引入 VAD / energy gate，只有检测到有效语音后才进入 FC non-spoken 生成。
+
+### Case 音频经前端发送的行为
+
+用脚本走公网 HTTPS gateway、按 1 秒 chunk 发送 `01029` case 音频，验证链路是通的：
+
+```text
+run-logs/fc_tauvoice_01029_https_gateway_1s_20260723_152317.json
+```
+
+结果：
+
+```text
+tool call:
+  unit_013: convert_decimal_to_binary(383)
+
+spoken_text:
+  Hi! Sure, I can help with that. First, let's add 255 and 128 together. That gives us 383.
+```
+
+说明：
+
+- 公网 HTTPS gateway 正常。
+- `/v1/realtime?mode=audio` 正常。
+- 1 秒切片本身正常。
+- TauVoice 工具调用链路正常。
+
+但前端 `发送 Case 音频` 的 live session 不一定逐次复现相同 planning。最新观察到的一次 session 中，模型没有先算 `255 + 128 = 383` 再调用工具，而是改成：
+
+```text
+convert_decimal_to_binary(255)
+convert_decimal_to_binary(128)
+```
+
+然后在 non-spoken 里手算二进制加法，得到：
+
+```text
+So the result is 101111111
+```
+
+但是 spoken 轨道没有把最终答案完整说出来，后续持续静音输入下变成 listen / no_action。
+
+对应 session 观察：
+
+```text
+unit_030 到 unit_045:
+  n_audio = 10
+  is_listen = true
+  is_speaking = false
+  non_spoken_terminator = no_action
+```
+
+结论是：补充更长静音能避免前端过早截断，但不能保证模型一定把 non-spoken 中的最终结论外化为 spoken。这个问题更接近 FC duplex 的策略 / 训练行为：内部轨道已经完成推理，spoken gate 后续选择了 listen/no_action。
+
+### 与 offline / probe 对齐的关系
+
+前端 demo 是面向交互体验的 live 路径，不等价于 offline-like 对齐 probe。主要差异包括：
+
+- 前端按 wall-clock 发送 chunk，tool result 插入时机受浏览器事件和模型返回时机影响。
+- case 音频结束后可以持续发送静音，可能改变后续 spoken / non-spoken 决策。
+- live duplex 本身存在逐 unit 的调度不确定性，planning 可能从 `convert(383)` 漂移到 `convert(255), convert(128)`。
+
+因此：
+
+- 要验证 FC primitive 与权重能力，优先看 offline / offline-like API probe。
+- 要验证 demo 体验，前端 case 模式能覆盖真实 API、真实 tool call、真实 tool result 插入和音频播放。
+- 要修复实时体验，需要重点处理静音输入下 non-spoken hallucination，以及 non-spoken 答案未外化为 spoken 的策略问题。
