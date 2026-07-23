@@ -28,8 +28,8 @@ DEFAULT_CASE = (
 )
 
 
-def ws_url(base_url: str) -> str:
-    parsed = urlsplit(base_url.rstrip("/") + "/backend")
+def ws_url(base_url: str, path: str) -> str:
+    parsed = urlsplit(base_url.rstrip("/") + path)
     scheme = "ws" if parsed.scheme == "http" else "wss"
     return urlunsplit((scheme, parsed.netloc, parsed.path, parsed.query, parsed.fragment))
 
@@ -70,6 +70,7 @@ def convert_decimal_to_binary(arguments: Any) -> str:
 async def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--backend", default="http://127.0.0.1:22512")
+    parser.add_argument("--path", default="/backend")
     parser.add_argument("--case", default=DEFAULT_CASE)
     parser.add_argument("--out", default="run-logs/fc_tauvoice_probe.json")
     parser.add_argument("--extra-silence-units", type=int, default=8)
@@ -91,7 +92,7 @@ async def main() -> None:
     events: List[Dict[str, Any]] = []
     pending_tool_results: List[Dict[str, Any]] = []
 
-    async with websockets.connect(ws_url(args.backend), max_size=128 * 1024 * 1024, ping_interval=None) as ws:
+    async with websockets.connect(ws_url(args.backend, args.path), max_size=128 * 1024 * 1024, ping_interval=None) as ws:
         await ws.send(json.dumps({
             "type": "session.init",
             "payload": {
