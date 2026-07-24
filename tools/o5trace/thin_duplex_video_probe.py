@@ -108,6 +108,66 @@ def load_state_dict(path: Path) -> dict:
     return state_dict
 
 
+def set_experts_implementation(model: Any, implementation: str) -> int:
+    seen: set[int] = set()
+    count = 0
+    for module in model.modules():
+        config = getattr(module, "config", None)
+        if config is None or id(config) in seen:
+            continue
+        seen.add(id(config))
+        if hasattr(config, "_experts_implementation"):
+            config._experts_implementation = implementation
+            count += 1
+    return count
+
+
+def enable_probe_o5_optimizations(model: Any, args: argparse.Namespace) -> dict[str, Any]:
+    from MiniCPMO45.opt_flags import OPT
+
+    info: dict[str, Any] = {}
+    if args.skip_o5_vocoder_graph:
+        n_moe = set_experts_implementation(model, args.experts_implementation or "batched_mm")
+        n_tts = 0
+        for module in model.tts.model.modules():
+            config = getattr(module, "config", None)
+            if config is not None and hasattr(config, "_attn_implementation"):
+                config._attn_implementation = "eager"
+                n_tts += 1
+        OPT.update({
+            "tts_fast": True,
+            "lmhead": True,
+            "tts_graph": True,
+            "fuse_vision_audio": True,
+            "llm_graph": True,
+        })
+        os.environ["O5_VISION_BATCH"] = "1"
+        info.update({
+            "manual_enable": True,
+            "moe_configs": n_moe,
+            "tts_eager": n_tts,
+            "vocoder_graph": False,
+        })
+    else:
+        from MiniCPMO45.o5_enable import enable_o5_optimizations
+
+        info.update(enable_o5_optimizations(model))
+
+    if args.disable_o5_llm_graph:
+        OPT["llm_graph"] = False
+    if args.disable_o5_tts_graph:
+        OPT["tts_graph"] = False
+    if args.disable_o5_tts_fast:
+        OPT["tts_fast"] = False
+    if args.disable_o5_lmhead:
+        OPT["lmhead"] = False
+    if args.disable_o5_fuse_vision_audio:
+        OPT["fuse_vision_audio"] = False
+
+    info["flags_after_overrides"] = dict(OPT)
+    return info
+
+
 def import_raw_modeling_from_flat_code():
     for entry in sys.path:
         if not entry:
@@ -165,6 +225,70 @@ def reset_vocoder_static_state(model: Any, seed: int) -> Optional[dict[str, Any]
     }
 
 
+def token_meta(tokens: Any) -> dict[str, Any]:
+    tensor = torch.as_tensor(tokens).detach().cpu().long().contiguous()
+    flat = tensor.reshape(-1)
+    arr = flat.numpy()
+    return {
+        "shape": list(tensor.shape),
+        "numel": int(flat.numel()),
+        "sha256": sha_bytes(arr.tobytes()),
+        "tokens": [int(x) for x in arr.tolist()],
+    }
+
+
+def install_token_trace(duplex: Any, model: Any) -> dict[str, Any]:
+    trace: dict[str, Any] = {
+        "current_unit": None,
+        "generated_tts_chunks": [],
+        "token2wav_stream_inputs": [],
+    }
+
+    original_generate_waveform = duplex._generate_waveform_from_tokens
+
+    def traced_generate_waveform(
+        self,
+        new_tokens,
+        prompt_wav_path,
+        is_last_chunk: bool = False,
+        force_flush: bool = False,
+        defer_flush: bool = False,
+    ):
+        trace["generated_tts_chunks"].append({
+            "unit_id": trace["current_unit"],
+            "new_tokens": token_meta(new_tokens),
+            "is_last_chunk": bool(is_last_chunk),
+            "force_flush": bool(force_flush),
+            "defer_flush": bool(defer_flush),
+        })
+        return original_generate_waveform(
+            new_tokens,
+            prompt_wav_path,
+            is_last_chunk=is_last_chunk,
+            force_flush=force_flush,
+            defer_flush=defer_flush,
+        )
+
+    duplex._generate_waveform_from_tokens = types.MethodType(traced_generate_waveform, duplex)
+
+    audio_tokenizer = getattr(getattr(model, "tts", None), "audio_tokenizer", None)
+    original_stream = getattr(audio_tokenizer, "stream", None)
+    if original_stream is not None:
+
+        def traced_stream(tokens, *args, **kwargs):
+            trace["token2wav_stream_inputs"].append({
+                "unit_id": trace["current_unit"],
+                "tokens": token_meta(tokens),
+                "last_chunk": bool(kwargs.get("last_chunk", False)),
+                "return_waveform": bool(kwargs.get("return_waveform", False)),
+            })
+            return original_stream(tokens, *args, **kwargs)
+
+        audio_tokenizer.stream = traced_stream
+
+    return trace
+
+
 def load_model(args: argparse.Namespace):
     if args.mode == "raw":
         try:
@@ -199,12 +323,30 @@ def load_model(args: argparse.Namespace):
         "force_listen_count": args.force_listen_count,
         "n_timesteps": args.n_timesteps,
     }
+    opt_info = None
     if args.mode == "raw":
         duplex = MiniCPMODuplex.from_existing_model(model, device=args.device, **duplex_cfg)
     else:
         model.init_unified(preload_both_tts=False, duplex_config=duplex_cfg, device=args.device)
         duplex = model.duplex
-    return model, duplex, {"missing": len(info.missing_keys), "unexpected": len(info.unexpected_keys)}
+
+    if args.enable_o5_opt:
+        if args.mode != "unified":
+            raise RuntimeError("--enable-o5-opt is currently supported only with --mode unified")
+        opt_info = enable_probe_o5_optimizations(model, args)
+
+    if args.experts_implementation:
+        n_experts = set_experts_implementation(model, args.experts_implementation)
+        if opt_info is None:
+            opt_info = {}
+        opt_info["experts_override"] = args.experts_implementation
+        opt_info["experts_override_count"] = n_experts
+
+    return model, duplex, {
+        "missing": len(info.missing_keys),
+        "unexpected": len(info.unexpected_keys),
+        "o5_opt": opt_info,
+    }
 
 
 def argmax_multinomial(input_tensor, num_samples, replacement=False, *, generator=None, out=None):
@@ -252,8 +394,22 @@ def main() -> int:
     parser.add_argument("--max-new-speak-tokens-per-chunk", type=int, default=20)
     parser.add_argument("--n-timesteps", type=int, default=5)
     parser.add_argument("--tts-argmax", action="store_true")
+    parser.add_argument("--enable-o5-opt", action="store_true")
+    parser.add_argument("--batch-vision-feed", action=argparse.BooleanOptionalAction, default=None)
+    parser.add_argument("--o5-llm-cache", type=int, default=None)
+    parser.add_argument("--experts-implementation", choices=("eager", "batched_mm"), default=None)
+    parser.add_argument("--disable-o5-llm-graph", action="store_true")
+    parser.add_argument("--disable-o5-tts-graph", action="store_true")
+    parser.add_argument("--disable-o5-tts-fast", action="store_true")
+    parser.add_argument("--disable-o5-lmhead", action="store_true")
+    parser.add_argument("--disable-o5-fuse-vision-audio", action="store_true")
+    parser.add_argument("--skip-o5-vocoder-graph", action="store_true")
+    parser.add_argument("--trace-token2wav", action="store_true")
     parser.add_argument("--overwrite", action="store_true")
     args = parser.parse_args()
+
+    if args.o5_llm_cache is not None:
+        os.environ["O5_LLM_CACHE"] = str(args.o5_llm_cache)
 
     out_dir = Path(args.out_dir)
     if out_dir.exists() and args.overwrite:
@@ -272,9 +428,15 @@ def main() -> int:
     if args.max_units > 0:
         num_units = min(num_units, args.max_units)
     chunks = split_audio(audio, num_units, args.chunk_ms)
+    batch_vision_feed = (
+        args.batch_vision_feed
+        if args.batch_vision_feed is not None
+        else os.environ.get("O5_VISION_BATCH", "").lower() in {"1", "true", "yes", "on"}
+    )
 
     configure_seed(args.seed)
     model, duplex, load_info = load_model(args)
+    token_trace = install_token_trace(duplex, model) if args.trace_token2wav else None
     vocoder_state = reset_vocoder_static_state(model, args.seed)
     ref_audio = load_ref(Path(args.prompt_wav))
 
@@ -297,6 +459,8 @@ def main() -> int:
 
     units = []
     for idx in range(num_units):
+        if token_trace is not None:
+            token_trace["current_unit"] = idx
         frame = Image.open(frames[min(idx, len(frames) - 1)]).convert("RGB") if frames else None
         frame_list = [frame] if frame is not None else None
         if args.mode == "raw":
@@ -304,7 +468,7 @@ def main() -> int:
                 audio_waveform=chunks[idx],
                 frame_list=frame_list,
                 max_slice_nums=1,
-                batch_vision_feed=False,
+                batch_vision_feed=batch_vision_feed,
             )
             result = generate_with_optional_argmax(
                 lambda: duplex.streaming_generate(
@@ -323,7 +487,7 @@ def main() -> int:
                 audio_waveform=chunks[idx],
                 frame_list=frame_list,
                 max_slice_nums=1,
-                batch_vision_feed=False,
+                batch_vision_feed=batch_vision_feed,
             )
             result = generate_with_optional_argmax(
                 lambda: model.duplex_generate(
@@ -352,6 +516,8 @@ def main() -> int:
             "n_tts_tokens": result.get("n_tts_tokens"),
             "audio": meta,
         })
+        if token_trace is not None:
+            token_trace["current_unit"] = None
 
     summary = {
         "mode": args.mode,
@@ -360,10 +526,21 @@ def main() -> int:
         "video": args.video,
         "prompt_wav": args.prompt_wav,
         "seed": args.seed,
+        "enable_o5_opt": args.enable_o5_opt,
+        "batch_vision_feed": batch_vision_feed,
+        "o5_llm_cache": args.o5_llm_cache or os.environ.get("O5_LLM_CACHE"),
         "load_info": load_info,
         "vocoder_state": vocoder_state,
+        "token_trace": "token_trace.json" if token_trace is not None else None,
         "units": units,
     }
+    if token_trace is not None:
+        trace_to_write = dict(token_trace)
+        trace_to_write.pop("current_unit", None)
+        (out_dir / "token_trace.json").write_text(
+            json.dumps(trace_to_write, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
     (out_dir / "summary.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
     (out_dir / "canonical_units.json").write_text(json.dumps(units, ensure_ascii=False, indent=2), encoding="utf-8")
     print(json.dumps({"out_dir": str(out_dir), "units": len(units), "text": "".join(u["text"] for u in units)}, ensure_ascii=False))
