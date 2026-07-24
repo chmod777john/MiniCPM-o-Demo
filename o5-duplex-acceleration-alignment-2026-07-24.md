@@ -6,8 +6,10 @@
 
 - 分支：`wt/o5-no-fc-speedup-tp2-thin-unified-2026-07-24`
 - 工具提交：`2fa7076bc2be65e058cf30b07600e23b8693f50b`
+- TP2 probe：随本报告当前提交提交，具体以 `git log -1` 为准
 - worktree：`/user/weihongliang/MiniCPM-o-Demo-wt-o5-no-fc-speedup-tp2-thin-unified-2026-07-24`
 - probe：`tools/o5trace/thin_duplex_video_probe.py`
+- TP2 probe：`tools/o5trace/tp2_duplex_video_probe.py`
 
 ## 测试口径
 
@@ -58,6 +60,49 @@ llm_graph = off
 | `vocoder_graph` | token 级通过，wav bitwise 不通过 | 8-unit 完全一致；36-unit 的 TTS token 和 token2wav 输入完全一致，但 unit 13 开始音频 hash 不同。 |
 | `batched_mm` | 单卡不可用 | 进入 MoE `batched_mm_experts_forward` 时 OOM，需要额外约 4.66 GiB。 |
 | `llm_graph + batched_mm` | 单卡不可用 | 同样在 MoE `batched_mm_experts_forward` OOM。 |
+
+## TP2 双卡安全子集
+
+新增 TP2 backend mirror probe 后，按单卡 strict-alignment 的安全子集测试：
+
+```text
+deployment_mode = tp2
+call_path = backend
+o5_llm_cache = 32768
+experts_implementation = eager
+llm_graph = off
+tts_graph = off
+batch_vision_feed = off
+tts_fast/lmhead/fuse_vision_audio = on
+decode_mode = greedy
+tts_argmax = on
+```
+
+8-unit 结果：
+
+- 单卡安全子集仍和 baseline 完全一致：hash `d68ab9fb5695b62e6815493e214f9654c783d307612327e6d39e370423920a36`。
+- TP2 backend mirror 可运行，32K StaticCache 下没有 OOM。
+- TP2 backend mirror 两次自洽复现：
+  - `tp2_backend_safe_video01_max8_20260724_01`
+  - `tp2_backend_safe_video01_max8_20260724_02`
+  - 两次 hash 都是 `4f6a86fbbff18f6bee25a9284fba209719432c0bbcf997830c5001707da182fd`。
+- TP2 文本和单卡一致：`好的，现在电梯已经到 20层了，还有 4层`。
+- TP2 没有和单卡 strict bitwise 对齐：first diff 在 unit 5 音频 hash。
+- trace 显示差异已经发生在生成的 TTS token，不是只发生在 waveform/vocoder 末端。
+
+unit 5 的第一段 TTS token diff：
+
+```text
+single-card: ..., 1517, 1735, 2031, 4299, 4299, ..., 5485, ..., 4382, ...
+tp2       : ..., 4492, 3972, 4299, 6486, 6486, ..., 5486, ..., 2195, ...
+```
+
+补充观察：
+
+- `tp2_llm` 和 `tp2 backend mirror` 的 generated TTS token / token2wav stream input 一致，说明 backend mirror 本身没有额外改变 TTS token 序列。
+- 但两者 waveform hash 仍不同，说明在 token2wav/vocoder 状态或数值路径上还存在 bitwise 差异。
+
+结论：TP2 路径已经证明 32K cache + 安全开关可以跑通且自身可复现，因此此前单卡 OOM 的配置有继续在双卡上实验的价值；但当前不能声称 TP2 和单卡 strict-alignment 已通过。下一步如果继续推进双卡，需要优先解释 TP LLM hidden state / TTS conditioning 的数值差异如何影响 TTS token。
 
 ## Trace 结果
 
