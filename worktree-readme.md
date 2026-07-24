@@ -14,3 +14,9 @@
 - API video probe passed against local SSH service on `https://127.0.0.1:8051`, session `sess_fc907dbda1f4`.
 - API audio probe passed against the same service.
 - Service startup needed `O5_ATTN_IMPLEMENTATION=sdpa` for this single-card validation; `auto` selected FlashAttention2 and hit a single-card startup OOM.
+- Full 36-unit offline raw/thin-unified canonical hash:
+  `97a673b3acfd05f6fefa75be92eacf94092c32c153875cdc387c34db11f289a6`.
+- Acceleration strict-alignment report:
+  `o5-duplex-acceleration-alignment-2026-07-24.md`.
+- Strict-aligned acceleration subset on the 36-unit probe:
+  `tts_fast + lmhead + fuse_vision_audio`, with `tts_graph/vocoder_graph/batch_vision_feed/batched_mm/llm_graph` disabled.
