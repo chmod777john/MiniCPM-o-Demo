@@ -104,6 +104,61 @@ tp2       : ..., 4492, 3972, 4299, 6486, 6486, ..., 5486, ..., 2195, ...
 
 结论：TP2 路径已经证明 32K cache + 安全开关可以跑通且自身可复现，因此此前单卡 OOM 的配置有继续在双卡上实验的价值；但当前不能声称 TP2 和单卡 strict-alignment 已通过。下一步如果继续推进双卡，需要优先解释 TP LLM hidden state / TTS conditioning 的数值差异如何影响 TTS token。
 
+## TP2 单因素拆解
+
+为了避免把 backend API、deployment builder 和 TP2 混在一起，补跑 all-off 矩阵：
+
+```text
+decode_mode = greedy
+tts_argmax = on
+experts_implementation = eager
+llm_graph = off
+tts_graph = off
+tts_fast = off
+lmhead = off
+fuse_vision_audio = off
+batch_vision_feed = off
+o5_llm_cache = 32768
+```
+
+结果路径：
+
+- direct baseline：`unified_trace_baseline_video01_max8_20260724_01`
+- backend single eager：`backend_single_eager_alloff_video01_max8_20260724_01`
+- backend single opt all-off：`backend_single_opt_alloff_video01_max8_20260724_01`
+- backend TP2 all-off：`backend_tp2_alloff_video01_max8_20260724_01`
+
+对比结果：
+
+| 对比 | canonical | TTS token / token2wav input | 结论 |
+| --- | --- | --- | --- |
+| direct baseline vs backend single eager | wav hash 不同，first diff unit 5 | 完全一致 | backend API 不改变文字/TTS token；wav bitwise 仍可能因 token2wav/vocoder 数值路径不同而变化。 |
+| backend single eager vs backend single opt all-off | 完全一致 | 完全一致 | deployment builder 与 `_enable_engine()` 在所有优化 flag 关闭时不引入差异。 |
+| backend single opt all-off vs backend TP2 all-off | 不一致，first diff unit 5 | unit 5 开始不同 | 关闭其他优化后，TP2 路径仍会改变 TTS token。 |
+| backend TP2 safe-on vs backend TP2 all-off | 完全一致 | 完全一致 | `tts_fast/lmhead/fuse_vision_audio` 不是这次 TP2 分叉的原因。 |
+
+hash：
+
+```text
+direct baseline              d68ab9fb5695b62e6815493e214f9654c783d307612327e6d39e370423920a36
+backend single eager all-off b6c80c5916b189a91ee58defd7a68c5450107b2eb297422eb4777535a184f089
+backend single opt all-off   b6c80c5916b189a91ee58defd7a68c5450107b2eb297422eb4777535a184f089
+backend TP2 all-off          4f6a86fbbff18f6bee25a9284fba209719432c0bbcf997830c5001707da182fd
+```
+
+TP2 all-off 的 unit 5 TTS token diff：
+
+```text
+single opt all-off: ..., 1517, 1735, 2031, 4299, 4299, ..., 5485, ..., 4382, ...
+tp2 all-off       : ..., 4492, 3972, 4299, 6486, 6486, ..., 5486, ..., 2195, ...
+```
+
+补充观察：
+
+- all-off 下，TP2 和单卡的整体拼接文本一致：`好的，现在电梯已经到 20层了，还有 4层`。
+- 但 unit 边界也已经有差异：单卡 unit 6/7 是 `已经到 20层了，` / `还有 4层`；TP2 是 `已经到 20层` / `了，还有 4层`。
+- 因此本轮更接近“只看 TP2 影响”的结论是：在 backend/deployment builder 已排除的情况下，TP2 相关路径仍会影响 LLM hidden state 或 chunk-level token 边界，进而改变 TTS token。
+
 ## Trace 结果
 
 `vocoder_graph` full trace：

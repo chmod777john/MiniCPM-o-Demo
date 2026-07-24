@@ -68,6 +68,7 @@ def _duplex_sampling_config(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def _engine_summary(args: argparse.Namespace) -> dict[str, Any]:
+    tp = 2 if args.deployment_mode in {"tp2", "tp2_llm"} else 1
     return {
         "experts": args.experts_implementation,
         "tts_fast": args.tts_fast,
@@ -77,7 +78,7 @@ def _engine_summary(args: argparse.Namespace) -> dict[str, Any]:
         "batch_vision_feed": args.batch_vision_feed,
         "llm_graph": args.llm_graph,
         "llm_cache": args.o5_llm_cache,
-        "tp": 2,
+        "tp": tp,
         "token_broadcast": args.deployment_mode == "tp2",
         "mode": args.deployment_mode,
     }
@@ -111,6 +112,8 @@ def _build_tp2_model(args: argparse.Namespace):
 def _build_backend(args: argparse.Namespace):
     from core.processors.backend_factory import create_backend
 
+    os.environ["O5_DEPLOY_MODE"] = args.deployment_mode
+    os.environ["O5_BACKBONE_DIR"] = args.backbone_dir
     rank = int(os.environ.get("LOCAL_RANK", os.environ.get("RANK", "0")))
     backend = create_backend({
         "deployment_mode": args.deployment_mode,
@@ -124,7 +127,29 @@ def _build_backend(args: argparse.Namespace):
         "duplex_config": _duplex_sampling_config(args),
     })
     backend.load_model()
+    _apply_backend_duplex_runtime_config(backend, args)
     return backend
+
+
+def _apply_backend_duplex_runtime_config(backend: object, args: argparse.Namespace) -> None:
+    model = getattr(getattr(backend, "processor", None), "model", None)
+    duplex = getattr(model, "duplex", None)
+    if duplex is None:
+        return
+    for name, value in {
+        "generate_audio": True,
+        "ls_mode": "explicit",
+        "force_listen_count": args.force_listen_count,
+        "max_new_speak_tokens_per_chunk": args.max_new_speak_tokens_per_chunk,
+        "temperature": args.temperature,
+        "top_k": args.top_k,
+        "top_p": args.top_p,
+        "listen_prob_scale": args.listen_prob_scale,
+        "text_repetition_penalty": args.text_repetition_penalty,
+        "text_repetition_window_size": args.text_repetition_window_size,
+    }.items():
+        if hasattr(duplex, name):
+            setattr(duplex, name, value)
 
 
 def _run_backend_worker_loop(backend: object) -> None:
@@ -181,8 +206,8 @@ def _shutdown_backend(backend: object) -> None:
 
 
 def _run_backend_probe(args: argparse.Namespace, out_dir: Path) -> int:
-    if args.deployment_mode != "tp2":
-        raise RuntimeError("--call-path backend is only valid with --deployment-mode tp2")
+    if args.deployment_mode == "tp2_llm":
+        raise RuntimeError("--call-path backend is not valid with --deployment-mode tp2_llm")
 
     configure_seed(args.seed)
     backend = _build_backend(args)
@@ -278,7 +303,11 @@ def _run_backend_probe(args: argparse.Namespace, out_dir: Path) -> int:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--deployment-mode", choices=("tp2", "tp2_llm"), default="tp2_llm")
+    parser.add_argument(
+        "--deployment-mode",
+        choices=("single_eager", "single_opt", "tp2", "tp2_llm"),
+        default="tp2_llm",
+    )
     parser.add_argument("--call-path", choices=("model", "backend"), default="model")
     parser.add_argument("--model-path", required=True)
     parser.add_argument("--ckpt-path", required=True)
