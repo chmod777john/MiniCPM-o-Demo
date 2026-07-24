@@ -159,6 +159,62 @@ tp2 all-off       : ..., 4492, 3972, 4299, 6486, 6486, ..., 5486, ..., 2195, ...
 - 但 unit 边界也已经有差异：单卡 unit 6/7 是 `已经到 20层了，` / `还有 4层`；TP2 是 `已经到 20层` / `了，还有 4层`。
 - 因此本轮更接近“只看 TP2 影响”的结论是：在 backend/deployment builder 已排除的情况下，TP2 相关路径仍会影响 LLM hidden state 或 chunk-level token 边界，进而改变 TTS token。
 
+## TP2 分布差异
+
+继续对 `backend single opt all-off` 与 `backend TP2 all-off` 补跑 distribution trace，只跑到 first-diff unit：
+
+- single：`dist_backend_single_opt_alloff_video01_max6_20260724_01`
+- TP2：`dist_backend_tp2_alloff_video01_max6_20260724_01`
+
+trace 记录：
+
+- `flush_hidden` 里的 LLM token hidden。
+- `projector_semantic` 后的 projected/normalized hidden。
+- 最终进入 TTS 的 `tts_condition`。
+- TTS 每次 `torch.multinomial(scores)` 前的 top-k 概率、top1/top2 margin、entropy。
+
+unit 5 文本都相同：`现在电梯`，LLM text token 也相同：`[96846, 108976]`。
+
+进入 TTS 前的 condition 差异：
+
+| 张量 | cosine | relative L2 | max abs |
+| --- | ---: | ---: | ---: |
+| raw LLM hidden | 0.9973098 | 0.07334 | 0.875 |
+| projected hidden | 0.9983301 | 0.05822 | 0.34375 |
+| normalized hidden | 0.9982976 | 0.05834 | 0.007568 |
+| final `tts_condition` | 0.9999970 | 0.002458 | 0.015625 |
+
+这说明 TP2 与单卡在 LLM hidden 上已经有可测差异；经过 TTS embedding 相加后，最终 condition 非常接近，但不是 bitwise 相同。
+
+TTS 自回归分布：
+
+- unit 5 一共有 26 次 TTS multinomial call，前 7 次 top1 token 相同。
+- call 4 已经出现边界迹象：单卡 top1/top2 margin `0.118394`，TP2 margin `0.0`，但 argmax 仍相同。
+- call 7 首次翻转：
+
+```text
+single top: 1517=0.54235452, 4492=0.39679500, 1514=0.06085049
+tp2 top   : 4492=0.55135888, 1517=0.40338278, 1514=0.04525829
+```
+
+call 7 的分布距离：
+
+```text
+L1 = 0.309128
+TV = 0.154564
+JS = 0.012026 nats
+single margin = 0.145560
+tp2 margin    = 0.147976
+```
+
+判断：
+
+- 这不是“最后 wav hash 轻微不同”，而是 TTS audio token 分布已经改变。
+- 也不是单纯 top1/top2 极小 margin 的瞬间随机抖动；翻转时两边各自的 top1/top2 margin 约 0.15。
+- 但它也不是灾难性发散：前 7 步 top1 相同，JS 距离较小，condition cosine 非常高。更像是 TP2 带来的 LLM hidden 微小差异，在 TTS 自回归链路里被放大。
+
+因此，如果验收口径是 strict token/hash 对齐，TP2 当前不通过；如果验收口径是实际 demo 听感或 CER，需要额外做人耳/ASR/CER 评估，不能只凭 hash 判坏。
+
 ## Trace 结果
 
 `vocoder_graph` full trace：

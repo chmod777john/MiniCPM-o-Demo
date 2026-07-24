@@ -8,6 +8,7 @@ import base64
 import json
 import os
 import sys
+import types
 from pathlib import Path
 from typing import Any
 
@@ -48,6 +49,118 @@ def _apply_safe_engine_env(args: argparse.Namespace) -> None:
 
 def _install_global_argmax_multinomial() -> None:
     torch.multinomial = argmax_multinomial
+
+
+def _tensor_stats(tensor: torch.Tensor) -> dict[str, Any]:
+    data = tensor.detach().float().cpu()
+    flat = data.reshape(-1)
+    return {
+        "shape": list(data.shape),
+        "mean": float(flat.mean()) if flat.numel() else 0.0,
+        "std": float(flat.std(unbiased=False)) if flat.numel() else 0.0,
+        "min": float(flat.min()) if flat.numel() else 0.0,
+        "max": float(flat.max()) if flat.numel() else 0.0,
+        "absmax": float(flat.abs().max()) if flat.numel() else 0.0,
+        "l2": float(torch.linalg.vector_norm(flat)) if flat.numel() else 0.0,
+    }
+
+
+def _tensor_topk_distribution(scores: torch.Tensor, k: int = 5) -> dict[str, Any]:
+    data = scores.detach().float().cpu()
+    rows = data.reshape(-1, data.shape[-1])
+    top_k = min(k, rows.shape[-1])
+    vals, idx = torch.topk(rows, k=top_k, dim=-1)
+    top1 = vals[:, 0]
+    top2 = vals[:, 1] if top_k > 1 else torch.zeros_like(top1)
+    margin = top1 - top2
+    entropy = -(rows.clamp_min(1e-45) * rows.clamp_min(1e-45).log()).sum(dim=-1)
+    return {
+        "shape": list(data.shape),
+        "topk_indices": [[int(x) for x in row] for row in idx.tolist()],
+        "topk_values": [[float(x) for x in row] for row in vals.tolist()],
+        "top1": [float(x) for x in top1.tolist()],
+        "top2": [float(x) for x in top2.tolist()],
+        "margin": [float(x) for x in margin.tolist()],
+        "min_margin": float(margin.min()) if margin.numel() else 0.0,
+        "entropy": [float(x) for x in entropy.tolist()],
+    }
+
+
+def install_distribution_trace(duplex: Any, model: Any, out_dir: Path) -> tuple[dict[str, Any], Any]:
+    trace: dict[str, Any] = {
+        "current_unit": None,
+        "tts_conditions": [],
+        "multinomial_calls": [],
+    }
+    tensor_dir = out_dir / "tensor_trace"
+    tensor_dir.mkdir(parents=True, exist_ok=True)
+
+    original_convert = duplex._convert_results_to_tts_input
+
+    def traced_convert(self, results):
+        unit_id = trace["current_unit"]
+        call_id = len(trace["tts_conditions"])
+        record: dict[str, Any] = {
+            "unit_id": unit_id,
+            "call_id": call_id,
+            "result_len": len(results),
+            "tokens": [int(item[0]) for item in results],
+            "end_of_turn": [bool(item[2]) for item in results],
+        }
+        arrays: dict[str, np.ndarray] = {}
+        if results:
+            raw_hidden = torch.cat([item[1].squeeze(0) for item in results], dim=0)
+            token_tensor = torch.tensor(record["tokens"], device=self.device, dtype=torch.long)
+            llm_embeds = self.model.tts.emb_text(token_tensor)
+            projected = self.model.tts.projector_semantic(raw_hidden)
+            normalized = torch.nn.functional.normalize(projected, p=2, dim=-1)
+            tts_embeds = llm_embeds + normalized
+            record.update({
+                "raw_hidden": _tensor_stats(raw_hidden),
+                "projected_hidden": _tensor_stats(projected),
+                "normalized_hidden": _tensor_stats(normalized),
+                "llm_embeds": _tensor_stats(llm_embeds),
+                "tts_embeds_no_bos": _tensor_stats(tts_embeds),
+            })
+            arrays.update({
+                "raw_hidden": raw_hidden.detach().float().cpu().numpy(),
+                "projected_hidden": projected.detach().float().cpu().numpy(),
+                "normalized_hidden": normalized.detach().float().cpu().numpy(),
+                "llm_embeds": llm_embeds.detach().float().cpu().numpy(),
+                "tts_embeds_no_bos": tts_embeds.detach().float().cpu().numpy(),
+            })
+        output = original_convert(results)
+        record["tts_condition"] = _tensor_stats(output)
+        arrays["tts_condition"] = output.detach().float().cpu().numpy()
+        npz_name = f"unit_{int(unit_id) if unit_id is not None else -1:03d}_tts_condition_{call_id:02d}.npz"
+        np.savez_compressed(tensor_dir / npz_name, **arrays)
+        record["npz"] = f"tensor_trace/{npz_name}"
+        trace["tts_conditions"].append(record)
+        return output
+
+    duplex._convert_results_to_tts_input = types.MethodType(traced_convert, duplex)
+
+    original_multinomial = torch.multinomial
+
+    def traced_multinomial(input_tensor, num_samples, replacement=False, *, generator=None, out=None):
+        if num_samples == 1:
+            record = {
+                "unit_id": trace["current_unit"],
+                "call_id": len(trace["multinomial_calls"]),
+                "distribution": _tensor_topk_distribution(input_tensor),
+            }
+            trace["multinomial_calls"].append(record)
+            return argmax_multinomial(input_tensor, num_samples, replacement=replacement, generator=generator, out=out)
+        return original_multinomial(
+            input_tensor,
+            num_samples,
+            replacement=replacement,
+            generator=generator,
+            out=out,
+        )
+
+    torch.multinomial = traced_multinomial
+    return trace, original_multinomial
 
 
 def _duplex_sampling_config(args: argparse.Namespace) -> dict[str, Any]:
@@ -223,6 +336,11 @@ def _run_backend_probe(args: argparse.Namespace, out_dir: Path) -> int:
     chunks = split_audio(audio, num_units, args.chunk_ms)
 
     token_trace = install_token_trace(model.duplex, model) if args.trace_token2wav else None
+    distribution_trace, original_multinomial = (
+        install_distribution_trace(model.duplex, model, out_dir)
+        if args.trace_distribution
+        else (None, None)
+    )
     vocoder_state = reset_vocoder_static_state(model, args.seed)
 
     configure_seed(args.seed)
@@ -239,6 +357,8 @@ def _run_backend_probe(args: argparse.Namespace, out_dir: Path) -> int:
         for idx in range(num_units):
             if token_trace is not None:
                 token_trace["current_unit"] = idx
+            if distribution_trace is not None:
+                distribution_trace["current_unit"] = idx
             frame = Image.open(frames[min(idx, len(frames) - 1)]).convert("RGB") if frames else None
             frame_list = [frame] if frame is not None else None
             prefill = backend.duplex_prefill(
@@ -264,6 +384,8 @@ def _run_backend_probe(args: argparse.Namespace, out_dir: Path) -> int:
             })
             if token_trace is not None:
                 token_trace["current_unit"] = None
+            if distribution_trace is not None:
+                distribution_trace["current_unit"] = None
 
         summary = {
             "deployment_mode": args.deployment_mode,
@@ -279,12 +401,20 @@ def _run_backend_probe(args: argparse.Namespace, out_dir: Path) -> int:
             "o5_llm_cache": args.o5_llm_cache,
             "vocoder_state": vocoder_state,
             "token_trace": "token_trace.json" if token_trace is not None else None,
+            "distribution_trace": "distribution_trace.json" if distribution_trace is not None else None,
             "units": units,
         }
         if token_trace is not None:
             trace_to_write = dict(token_trace)
             trace_to_write.pop("current_unit", None)
             (out_dir / "token_trace.json").write_text(
+                json.dumps(trace_to_write, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+        if distribution_trace is not None:
+            trace_to_write = dict(distribution_trace)
+            trace_to_write.pop("current_unit", None)
+            (out_dir / "distribution_trace.json").write_text(
                 json.dumps(trace_to_write, ensure_ascii=False, indent=2),
                 encoding="utf-8",
             )
@@ -298,6 +428,8 @@ def _run_backend_probe(args: argparse.Namespace, out_dir: Path) -> int:
         }, ensure_ascii=False), flush=True)
         return 0
     finally:
+        if original_multinomial is not None:
+            torch.multinomial = original_multinomial
         _shutdown_backend(backend)
 
 
@@ -332,6 +464,7 @@ def main() -> int:
     parser.add_argument("--n-timesteps", type=int, default=5)
     parser.add_argument("--tts-argmax", action="store_true")
     parser.add_argument("--trace-token2wav", action="store_true")
+    parser.add_argument("--trace-distribution", action="store_true")
     parser.add_argument("--experts-implementation", choices=("eager", "batched_mm"), default="eager")
     parser.add_argument("--o5-llm-cache", type=int, default=32768)
     parser.add_argument("--llm-graph", action=argparse.BooleanOptionalAction, default=False)
@@ -347,7 +480,7 @@ def main() -> int:
     os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
     os.environ.setdefault("HF_HUB_OFFLINE", "1")
     _apply_safe_engine_env(args)
-    if args.tts_argmax:
+    if args.tts_argmax and not args.trace_distribution:
         _install_global_argmax_multinomial()
 
     out_dir = Path(args.out_dir)
@@ -375,6 +508,11 @@ def main() -> int:
     chunks = split_audio(audio, num_units, args.chunk_ms)
 
     token_trace = install_token_trace(model.duplex, model) if args.trace_token2wav else None
+    distribution_trace, original_multinomial = (
+        install_distribution_trace(model.duplex, model, out_dir)
+        if args.trace_distribution
+        else (None, None)
+    )
     vocoder_state = reset_vocoder_static_state(model, args.seed)
     ref_audio = load_ref(Path(args.prompt_wav))
 
@@ -392,6 +530,8 @@ def main() -> int:
         for idx in range(num_units):
             if token_trace is not None:
                 token_trace["current_unit"] = idx
+            if distribution_trace is not None:
+                distribution_trace["current_unit"] = idx
             frame = Image.open(frames[min(idx, len(frames) - 1)]).convert("RGB") if frames else None
             frame_list = [frame] if frame is not None else None
             prefill = model.duplex_prefill(
@@ -429,6 +569,8 @@ def main() -> int:
             })
             if token_trace is not None:
                 token_trace["current_unit"] = None
+            if distribution_trace is not None:
+                distribution_trace["current_unit"] = None
 
         summary = {
             "deployment_mode": args.deployment_mode,
@@ -443,12 +585,20 @@ def main() -> int:
             "o5_llm_cache": args.o5_llm_cache,
             "vocoder_state": vocoder_state,
             "token_trace": "token_trace.json" if token_trace is not None else None,
+            "distribution_trace": "distribution_trace.json" if distribution_trace is not None else None,
             "units": units,
         }
         if token_trace is not None:
             trace_to_write = dict(token_trace)
             trace_to_write.pop("current_unit", None)
             (out_dir / "token_trace.json").write_text(
+                json.dumps(trace_to_write, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+        if distribution_trace is not None:
+            trace_to_write = dict(distribution_trace)
+            trace_to_write.pop("current_unit", None)
+            (out_dir / "distribution_trace.json").write_text(
                 json.dumps(trace_to_write, ensure_ascii=False, indent=2),
                 encoding="utf-8",
             )
@@ -462,6 +612,8 @@ def main() -> int:
         }, ensure_ascii=False), flush=True)
         return 0
     finally:
+        if original_multinomial is not None:
+            torch.multinomial = original_multinomial
         _shutdown_tp2(model)
 
 
