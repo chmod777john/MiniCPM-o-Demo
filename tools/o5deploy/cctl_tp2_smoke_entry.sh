@@ -28,6 +28,9 @@ export WORKER_GPU_GROUP="${WORKER_GPU_GROUP:-cctl-a100-tp2-smoke}"
 
 VIDEO_PATH="${VIDEO_PATH:-/user/weihongliang/omni_demo_duplex_01.mp4}"
 AUDIO_WAV_PATH="${AUDIO_WAV_PATH:-${PROJECT_DIR}/examples/realtime/assets/test.wav}"
+FC_CASE_PATH="${FC_CASE_PATH:-/user/heweiquan/dataset/O5_Dubplex_FC/overfit100/tau_function_call_sft_v13_think_cleaned_sample_2_colloquialize_tts_atom_export_relation_01029.json}"
+FC_BUDGET_UNITS_INFO="${FC_BUDGET_UNITS_INFO:-/user/weihongliang/fc_align_case_01029/ours_iter1500_auto_rerun_20260723_134745/units_info.json}"
+FC_FORCE_LISTEN_UNITS="${FC_FORCE_LISTEN_UNITS:-14}"
 MAX_SESSION_S="${MAX_SESSION_S:-90}"
 PROBE_MODE="${PROBE_MODE:-video}"
 VIDEO_REPEAT="${VIDEO_REPEAT:-1}"
@@ -42,12 +45,15 @@ echo "[smoke] pt=${PT_PATH}"
 echo "[smoke] backbone=${BACKBONE_DIR}"
 echo "[smoke] video=${VIDEO_PATH}"
 echo "[smoke] audio=${AUDIO_WAV_PATH}"
+echo "[smoke] fc_case=${FC_CASE_PATH}"
 echo "[smoke] probe_mode=${PROBE_MODE} video_repeat=${VIDEO_REPEAT} audio_repeat=${AUDIO_REPEAT}"
 echo "[smoke] out=${OUT_DIR}"
 
 if [ ! -x "${PYTHON}" ]; then echo "[smoke] missing python: ${PYTHON}" >&2; exit 1; fi
 if [ ! -f "${VIDEO_PATH}" ]; then echo "[smoke] missing video: ${VIDEO_PATH}" >&2; exit 1; fi
 if [ ! -f "${AUDIO_WAV_PATH}" ]; then echo "[smoke] missing audio: ${AUDIO_WAV_PATH}" >&2; exit 1; fi
+if [ "${PROBE_MODE}" = "fc" ] && [ ! -f "${FC_CASE_PATH}" ]; then echo "[smoke] missing FC case: ${FC_CASE_PATH}" >&2; exit 1; fi
+if [ "${PROBE_MODE}" = "fc" ] && [ ! -f "${FC_BUDGET_UNITS_INFO}" ]; then echo "[smoke] missing FC budget trace: ${FC_BUDGET_UNITS_INFO}" >&2; exit 1; fi
 
 bash scripts/start_o5_tp2_cctl_service.sh > "${OUT_DIR}/service.log" 2>&1 &
 service_pid=$!
@@ -109,6 +115,44 @@ run_audio_probe() {
     cat "${result}"
 }
 
+run_fc_probe() {
+    local result="${OUT_DIR}/fc_tauvoice_probe.json"
+    local summary="${OUT_DIR}/fc_tauvoice_summary.json"
+    echo "[smoke] running TauVoice FC alignment probe"
+    "${PYTHON}" scripts/probe_fc_tauvoice_backend.py \
+        --backend "https://127.0.0.1:${GATEWAY_PORT}" \
+        --path "/v1/realtime?mode=audio" \
+        --insecure \
+        --case "${FC_CASE_PATH}" \
+        --out "${result}" \
+        --normalize-tools \
+        --budget-units-info "${FC_BUDGET_UNITS_INFO}" \
+        --force-listen-units "${FC_FORCE_LISTEN_UNITS}" \
+        --no-generate-audio \
+        > "${summary}"
+    cat "${summary}"
+    "${PYTHON}" - "${result}" <<'PY'
+import json
+import sys
+
+payload = json.load(open(sys.argv[1], encoding="utf-8"))
+calls = []
+for event in payload.get("events", []):
+    if event.get("type") != "response.tool_call.args.raw":
+        continue
+    raw = event.get("raw") or {}
+    calls.append((raw.get("name"), json.loads(raw.get("arguments") or "{}")))
+
+expected = [
+    ("convert_decimal_to_binary", {"decimal_number": 255}),
+    ("convert_decimal_to_binary", {"decimal_number": 383}),
+]
+if calls != expected:
+    raise SystemExit(f"unexpected TauVoice FC calls: {calls!r}")
+print(json.dumps({"fc_alignment": "passed", "tool_calls": calls}, ensure_ascii=False))
+PY
+}
+
 echo "[smoke] service ready; running realtime probes"
 case "${PROBE_MODE}" in
     video)
@@ -121,8 +165,11 @@ case "${PROBE_MODE}" in
         for idx in $(seq 1 "${VIDEO_REPEAT}"); do run_video_probe "${idx}"; done
         for idx in $(seq 1 "${AUDIO_REPEAT}"); do run_audio_probe "${idx}"; done
         ;;
+    fc)
+        run_fc_probe
+        ;;
     *)
-        echo "[smoke] invalid PROBE_MODE=${PROBE_MODE}; expected video, audio, or both" >&2
+        echo "[smoke] invalid PROBE_MODE=${PROBE_MODE}; expected video, audio, both, or fc" >&2
         exit 1
         ;;
 esac
