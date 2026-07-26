@@ -82,3 +82,13 @@ Purpose: integrate O5 FC duplex API on top of the cleaned TP2/LLMGraphRunner bas
 - Source commit: `da8918efcf3829d5c116af6a0fcaa1bf0ec8112a`
 - Reason: add the FC Board MVP demo surface on top of the O5 FC + TP2 runtime and run it with the `job616069` O5 FC MVP checkpoint.
 - Checkpoint: `/user/heweiquan/models/MiniCPM-o5/trained_model/20260724/job616069/iter_0000500_o5.pt`.
+
+## FC Board Validation
+
+- Current branch validation commit: `900cfd5cf0621278bad2457fa966405aba096580`.
+- cctl deploy task `622959` passed the API same-schedule probe for Board case `04702` with TP2 and the `job616069 iter500` checkpoint.
+- The GT and API tool calls were semantically identical: `display_object_on_board({"name":"红外感应相机"})`.
+- The API emitted the call at `unit_037`; the GT tool result was replayed successfully at `unit_039`, with no unsent or remaining responses.
+- Result: `/user/weihongliang/fc_board_api_runs/board_api_same_schedule_04702_20260726_133856/board_same_schedule.json`.
+- Full experiment record: `o5-fc-api-offline-alignment-report-2026-07-23.md`, section `FC Board API 同调度对齐（2026-07-26）`.
+- This run did not enable audio and did not rerun the offline batch evaluator on the current HEAD.

@@ -541,3 +541,96 @@ unit_030 到 unit_045:
 - 要验证 FC primitive 与权重能力，优先看 offline / offline-like API probe。
 - 要验证 demo 体验，前端 case 模式能覆盖真实 API、真实 tool call、真实 tool result 插入和音频播放。
 - 要修复实时体验，需要重点处理静音输入下 non-spoken hallucination，以及 non-spoken 答案未外化为 spoken 的策略问题。
+
+## FC Board API 同调度对齐（2026-07-26）
+
+### 实验定位
+
+- 分支：`wt/o5-no-fc-speedup-tp2-thin-unified-clean-llmgraph-narrow-no-tts-fix-fc-api-fc-board-job616069-2026-07-26`
+- 实验时 HEAD：`900cfd5cf0621278bad2457fa966405aba096580`
+- cctl 任务：`622959`
+- 资源：`deploy` 池，`2 x A100`、32 CPU、256 GiB 内存
+- 部署模式：TP2，`O5_LLM_CACHE=32768`，`O5_LLM_GRAPH=1`
+- 模型代码：`/user/weihongliang/MiniCPM-o-4_6`
+- checkpoint：`/user/weihongliang/o5_weights/job616069_iter0000500/iter_0000500_o5.pt`
+- backbone safetensors：`/user/weihongliang/o5_backbones/job616069_iter0000500_hf`
+- case：`dob_midtrain_v1_20260628_animal_seed_ct01_and_04702.json`
+- probe：`scripts/probe_fc_board_backend.py`
+- 调度：按 train-data arrangement 重放 1 秒 unit、non-spoken budget 和 GT tool response 时机
+- decode：`greedy`
+- `generate_audio=false`
+
+这是当前合并分支上的真实 backend API 实验，不是只调用离线模型方法。任务共发送 45 个 unit，收到 326 个 API 事件。
+
+### Tool-call 对齐结果
+
+GT tool call：
+
+```json
+{
+  "name": "display_object_on_board",
+  "arguments": {"name": "红外感应相机"}
+}
+```
+
+API 在 `unit_037` 产生：
+
+```json
+{
+  "name": "display_object_on_board",
+  "arguments": {"name": "红外感应相机"}
+}
+```
+
+比较结果：
+
+```text
+tool_calls_semantic_exact = true
+API tool_call_id           = tc_000001
+GT tool response unit      = 39
+unsent_gt_tool_responses   = []
+remaining_tool_responses   = {}
+```
+
+`unit_039` 已使用 API tool-call id 回灌训练数据中的工具结果，内容为成功展示“红外感应相机”。因此这次实验覆盖了：
+
+```text
+train-data unit scheduling
+  -> backend FC duplex inference
+  -> display_object_on_board tool call
+  -> GT tool result replay
+  -> subsequent duplex units
+```
+
+结果文件：
+
+```text
+/user/weihongliang/fc_board_api_runs/board_api_same_schedule_04702_20260726_133856/board_same_schedule.json
+```
+
+### Spoken 与 think 输出
+
+拼接后的 spoken text：
+
+```text
+没问题，那种环境布设的观测设备我帮你盯着，提到就放画板上。
+```
+
+Spoken 文本不是整轮结束后一次返回，而是在 `unit_011` 到 `unit_015` 分成 5 个 `response.output.delta(kind=text)` 发送。
+
+本次 think 的模型计算按 `max_tokens=1` 逐 token 推进，中间逐 token 事件以 `debug.fc_non_spoken.delta` 发出。但正式 API 事件中 `token_strs=[]`、`block_kind=unknown`，runtime 直到 closed span 才知道它是 think，因此最终表现为：
+
+```text
+response.think.begin
+response.think.delta  # 一次携带完整 think 文本
+response.think.end
+```
+
+这说明当前 `duplex -> FC runtime` 返回契约没有暴露进行中的 `block_kind`。推理是逐 token 的，但正式 think delta 尚未实现真正的逐 token 流式发送。
+
+### 验证边界
+
+- 当前 HEAD 已验证 API 同调度的 Board tool-call 语义与 tool-result 回灌。
+- 本次没有开启音频生成，不覆盖 Board 场景的 TTS 音频输出。
+- 本次不包含前端图片搜索、下载结果或页面像素级验证。
+- 源 Board 分支在 2026-07-25 留有离线批量结果；当前 `900cfd5` 尚未重新运行离线批量评测，不能把源分支结果记作当前 HEAD 的验证。
