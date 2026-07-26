@@ -137,6 +137,7 @@ run_fc_probe() {
         > "${summary}"
     cat "${summary}"
     "${PYTHON}" - "${result}" <<'PY'
+import base64
 import json
 import os
 import sys
@@ -158,7 +159,7 @@ if not generate_audio and calls != expected:
     raise SystemExit(f"unexpected TauVoice FC alignment calls: {calls!r}")
 if generate_audio:
     valid_numbers = {128, 255, 383}
-    if not calls or any(
+    if any(
         name != "convert_decimal_to_binary" or arguments.get("decimal_number") not in valid_numbers
         for name, arguments in calls
     ):
@@ -169,6 +170,8 @@ audio_events = [
 ]
 if generate_audio and not audio_events:
     raise SystemExit("FC generate_audio=true produced no audio events")
+if generate_audio and any(not base64.b64decode(event.get("audio") or "") for event in audio_events):
+    raise SystemExit("FC generate_audio=true produced an empty audio event")
 print(json.dumps({"fc_alignment": "passed", "tool_calls": calls, "audio_events": len(audio_events)}, ensure_ascii=False))
 PY
 }
