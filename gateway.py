@@ -27,6 +27,7 @@ from urllib.parse import urlencode
 
 import zipfile
 from io import BytesIO
+from pathlib import Path
 
 import httpx
 import numpy as np
@@ -62,6 +63,86 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
 logger = logging.getLogger("gateway")
+
+
+_FC_BOARD_CASE_FOLDER_CANDIDATES = [
+    os.environ.get("FC_BOARD_CASE_FOLDER"),
+    "/home/weihongliang/o45_fc_assets/training/delivery_train_data",
+    "/user/weihongliang/o45_fc_assets/training/delivery_train_data",
+]
+
+_FC_BOARD_LIVE_IMAGE_DIR = (
+    Path(__file__).resolve().parent
+    / "demos"
+    / "fc_board"
+    / "tools"
+    / "display_object_on_board"
+    / "live_image_downloads"
+)
+_FC_BOARD_TOOL_SERVICE = None
+
+
+def _fc_board_tool_service():
+    global _FC_BOARD_TOOL_SERVICE
+    if _FC_BOARD_TOOL_SERVICE is None:
+        from demos.fc_board.tools.display_object_on_board.service import (
+            DisplayObjectOnBoardService,
+        )
+
+        _FC_BOARD_TOOL_SERVICE = DisplayObjectOnBoardService(download_dir=_FC_BOARD_LIVE_IMAGE_DIR)
+    return _FC_BOARD_TOOL_SERVICE
+
+
+def _display_object_tool_default() -> Dict[str, Any]:
+    return {
+        "type": "function",
+        "function": {
+            "name": "display_object_on_board",
+            "description": (
+                "Display a named concrete object on the visual board so the user can see it. "
+                "Use only for concrete, visualizable objects mentioned in user speech."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {"name": {"type": "string"}},
+                "required": ["name"],
+            },
+        },
+    }
+
+
+def _extract_fc_board_defaults_from_case(case_path: str) -> Dict[str, Any]:
+    with open(case_path, "r", encoding="utf-8") as fp:
+        structure = json.load(fp)
+
+    data_root = os.path.dirname(case_path)
+    system_prompt_parts: List[str] = []
+    ref_audio_path: Optional[str] = None
+    for segment in (structure.get("system", {}) or {}).get("segments", []) or []:
+        kind = segment.get("kind")
+        if kind == "text":
+            text = segment.get("text") or ""
+            if text:
+                system_prompt_parts.append(text)
+        elif kind == "audio":
+            file_path = (segment.get("audio") or {}).get("file_path")
+            if file_path:
+                candidate = os.path.realpath(os.path.join(data_root, file_path))
+                if os.path.exists(candidate):
+                    ref_audio_path = candidate
+
+    return {
+        "system_prompt": "\n".join(system_prompt_parts) or None,
+        "ref_audio_path": ref_audio_path,
+        "tools": structure.get("tools") or [_display_object_tool_default()],
+    }
+
+
+def _fc_board_case_folder() -> Optional[str]:
+    for candidate in _FC_BOARD_CASE_FOLDER_CANDIDATES:
+        if candidate and os.path.isdir(candidate):
+            return candidate
+    return None
 
 
 def _ws_debug_enabled() -> bool:
@@ -1294,6 +1375,13 @@ static_dir = os.path.join(os.path.dirname(__file__), "static")
 if os.path.exists(static_dir):
     app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
+_FC_BOARD_LIVE_IMAGE_DIR.mkdir(parents=True, exist_ok=True)
+app.mount(
+    "/live-image-downloads",
+    StaticFiles(directory=str(_FC_BOARD_LIVE_IMAGE_DIR)),
+    name="fc_board_live_image_downloads",
+)
+
 
 @app.get("/", response_class=HTMLResponse)
 async def index():
@@ -1367,6 +1455,75 @@ async def fc_demo_page():
     if os.path.exists(page_path):
         return FileResponse(page_path)
     return HTMLResponse("<h1>FC Demo</h1><p>Page not found</p>")
+
+
+@app.get("/fc_board", response_class=HTMLResponse)
+async def fc_board_page():
+    """FC tool-calling board demo over the formal Realtime API."""
+    page_path = os.path.join(static_dir, "fc-board", "fc_board.html")
+    if os.path.exists(page_path):
+        return FileResponse(page_path)
+    return HTMLResponse("<h1>FC Board</h1><p>Page not found</p>")
+
+
+@app.get("/api/fc_board/defaults")
+async def fc_board_defaults():
+    """Training-aligned defaults for the FC board API demo."""
+    case_folder = _fc_board_case_folder()
+    default_case_path = None
+    defaults: Dict[str, Any] = {
+        "system_prompt": None,
+        "ref_audio_path": None,
+        "tools": [_display_object_tool_default()],
+    }
+    if case_folder:
+        cases = sorted(
+            os.path.join(case_folder, name)
+            for name in os.listdir(case_folder)
+            if name.endswith(".json")
+        )
+        if cases:
+            default_case_path = cases[0]
+            try:
+                defaults.update(_extract_fc_board_defaults_from_case(default_case_path))
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "[fc_board_defaults] failed to extract defaults from %s: %s: %s",
+                    default_case_path,
+                    type(exc).__name__,
+                    exc,
+                )
+    return {
+        "case_folder": case_folder,
+        "default_case_path": default_case_path,
+        "default_system_prompt": defaults.get("system_prompt"),
+        "default_ref_audio_path": defaults.get("ref_audio_path"),
+        "default_tools": defaults.get("tools") or [_display_object_tool_default()],
+    }
+
+
+@app.post("/api/fc_board/tools/display_object_on_board")
+async def fc_board_display_object_tool(payload: Dict[str, Any] = Body(...)):
+    """Execute the board display tool outside the model runtime."""
+
+    query = str(payload.get("name") or payload.get("query") or "").strip()
+    tool_call_id = payload.get("tool_call_id")
+    if not query:
+        raise HTTPException(status_code=400, detail="display_object_on_board requires name/query")
+
+    from demos.fc_board.tools.display_object_on_board.service import (
+        board_image_result_from_tool_result,
+    )
+
+    result = await asyncio.to_thread(_fc_board_tool_service().search, query)
+    image = board_image_result_from_tool_result(result, tool_call_id=str(tool_call_id or query))
+    image_payload = image.model_dump() if hasattr(image, "model_dump") else image.dict()
+    return {
+        "query": result.query,
+        "image": image_payload,
+        "error": result.error,
+        "tool_response_content": result.tool_response_content,
+    }
 
 
 # ============ Docs Hosting ============

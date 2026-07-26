@@ -1,3 +1,13 @@
+# Worktree: o5-no-fc-speedup-tp2-thin-unified-clean-llmgraph-narrow-no-tts-fix-fc-api-fc-board-job616069-2026-07-26
+
+- Created: 2026-07-26
+- Base branch: `wt/o5-no-fc-speedup-tp2-thin-unified-clean-llmgraph-narrow-no-tts-fix-fc-api-2026-07-26`
+- Base commit: `6065a28eb10900ec54b24e133201979e41013fcf`
+- Reason: merge the existing FC Board MVP into the clean thin-unified FC branch while preserving the original Board commits and implementation.
+- FC Board source branch: `o5-no-fc-speedup-tp2-llmgraph-narrow-2026-07-23-fc-api-2026-07-23-fc-board-job616069-2026-07-24`
+- FC Board source commit: `da8918efcf3829d5c116af6a0fcaa1bf0ec8112a`
+- Integration policy: use a real `--no-ff` Git merge; retain the four source commit hashes without reimplementation or squashing.
+
 # Worktree: o5-no-fc-speedup-tp2-thin-unified-clean-llmgraph-narrow-no-tts-fix-fc-api-2026-07-26
 
 - Created: 2026-07-26
@@ -62,3 +72,13 @@ Purpose: integrate O5 FC duplex API on top of the cleaned TP2/LLMGraphRunner bas
 - Strict result: `run-logs/cctl_tp2_smoke_20260726_124248/fc_tauvoice_probe.json`.
 - Audio result: `run-logs/cctl_tp2_smoke_20260726_125704/fc_tauvoice_probe.json`.
 - Live audio planning is intentionally not required to reproduce the strict two-call sequence. The source FC report documents drift between direct spoken answers, a single `383` call, and multiple calls; live audio validation requires non-empty audio and validates any emitted TauVoice calls.
+
+## Merged FC Board Source
+
+- Created: 2026-07-24
+- Base branch: `o5-no-fc-speedup-tp2-llmgraph-narrow-2026-07-23-fc-api-2026-07-23`
+- Base commit: `a6da42ff9b0625eddfbab59fbc0266bba6eb1a0a`
+- Source branch: `o5-no-fc-speedup-tp2-llmgraph-narrow-2026-07-23-fc-api-2026-07-23-fc-board-job616069-2026-07-24`
+- Source commit: `da8918efcf3829d5c116af6a0fcaa1bf0ec8112a`
+- Reason: add the FC Board MVP demo surface on top of the O5 FC + TP2 runtime and run it with the `job616069` O5 FC MVP checkpoint.
+- Checkpoint: `/user/heweiquan/models/MiniCPM-o5/trained_model/20260724/job616069/iter_0000500_o5.pt`.
