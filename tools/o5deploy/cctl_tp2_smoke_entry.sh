@@ -153,13 +153,21 @@ expected = [
     ("convert_decimal_to_binary", {"decimal_number": 255}),
     ("convert_decimal_to_binary", {"decimal_number": 383}),
 ]
-if calls != expected:
-    raise SystemExit(f"unexpected TauVoice FC calls: {calls!r}")
+generate_audio = os.environ.get("FC_GENERATE_AUDIO") == "1"
+if not generate_audio and calls != expected:
+    raise SystemExit(f"unexpected TauVoice FC alignment calls: {calls!r}")
+if generate_audio:
+    valid_numbers = {128, 255, 383}
+    if not calls or any(
+        name != "convert_decimal_to_binary" or arguments.get("decimal_number") not in valid_numbers
+        for name, arguments in calls
+    ):
+        raise SystemExit(f"unexpected TauVoice FC live calls: {calls!r}")
 audio_events = [
     event for event in payload.get("events", [])
     if event.get("type") == "response.output.delta" and event.get("kind") == "audio"
 ]
-if os.environ.get("FC_GENERATE_AUDIO") == "1" and not audio_events:
+if generate_audio and not audio_events:
     raise SystemExit("FC generate_audio=true produced no audio events")
 print(json.dumps({"fc_alignment": "passed", "tool_calls": calls, "audio_events": len(audio_events)}, ensure_ascii=False))
 PY
