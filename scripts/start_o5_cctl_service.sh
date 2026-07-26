@@ -20,6 +20,7 @@ CHECKPOINT_PROFILE_ID="${CHECKPOINT_PROFILE_ID:-unprofiled}"
 WORKER_ID="${WORKER_ID:-${FC_MODEL_FAMILY}-cctl-worker}"
 WORKER_GPU_GROUP="${WORKER_GPU_GROUP:-cctl-a100-${GPU_ID}}"
 LOG_DIR="${LOG_DIR:-${PROJECT_DIR}/run-logs/o5_cctl}"
+O5_TOKEN_TRACE_DIR="${O5_TOKEN_TRACE_DIR:-${PROJECT_DIR}/data/sessions}"
 ENABLE_FRP="${ENABLE_FRP:-1}"
 FRPC_BIN="${FRPC_BIN:-frpc}"
 FRPC_CONFIG="${FRPC_CONFIG:-}"
@@ -29,6 +30,7 @@ cd "${PROJECT_DIR}"
 
 export PYTHONPATH="${PROJECT_DIR}:${PYTHONPATH:-}"
 export TOKENIZERS_PARALLELISM="${TOKENIZERS_PARALLELISM:-false}"
+export O5_TOKEN_TRACE_DIR
 
 PYTHON="${VENV_DIR}/bin/python"
 BACKEND_URL="http://${BACKEND_HOST}:${BACKEND_PORT}"
@@ -84,6 +86,7 @@ wait_http() {
 echo "[start] project=${PROJECT_DIR}"
 echo "[start] model=${MODEL_PATH}"
 echo "[start] pt=${PT_PATH}"
+echo "[start] token_trace_dir=${O5_TOKEN_TRACE_DIR}"
 echo "[start] gateway=https://${GATEWAY_HOST}:${GATEWAY_PORT} internal=:${GATEWAY_INTERNAL_PORT}"
 echo "[start] backend=${BACKEND_URL} worker=${WORKER_ENDPOINT}"
 

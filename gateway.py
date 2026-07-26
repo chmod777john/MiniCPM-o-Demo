@@ -1323,6 +1323,7 @@ async def get_session_recording(session_id: str):
 
 _MIME_MAP = {
     ".wav": "audio/wav",
+    ".f32": "application/octet-stream",
     ".jpg": "image/jpeg",
     ".jpeg": "image/jpeg",
     ".png": "image/png",

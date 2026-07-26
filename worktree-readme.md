@@ -50,7 +50,6 @@ The original FC and speedup worktrees are not modified by this worktree.
 - Integration policy: use a real Git merge. Do not replace source FC behavior with a separately reimplemented equivalent.
 
 # Worktree: o5-no-fc-speedup-tp2-thin-unified-clean-llmgraph-narrow-no-tts-fix-2026-07-26
-
 - Created: 2026-07-26
 - Base branch: `wt/o5-no-fc-speedup-tp2-thin-unified-2026-07-24`
 - Base commit: `c0bb591cc9a37b465548b2ae13ba2f63e579873d`

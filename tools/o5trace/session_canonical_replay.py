@@ -413,7 +413,6 @@ def main() -> int:
         "cnn_redundancy_ms": args.cnn_redundancy_ms,
         "sample_rate": int(config_value(config, "sample_rate", INPUT_SAMPLE_RATE)),
     }
-
     configure_seed(seed)
     if args.device.startswith("cuda"):
         torch.cuda.set_device(torch.device(args.device))

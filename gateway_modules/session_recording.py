@@ -6,7 +6,7 @@
 落盘结构 `data/sessions/<session_id>/`:
   - meta.json      会话级元信息(收尾补全 ended_at/duration/close_reason)
   - stream.jsonl   忠实事件流,每行一个帧 {seq, ts, dir, frame};frame 为协议帧原样
-  - blob/NNN.ext   大块 base64 二进制外置(audio→.wav, jpeg→.jpg),stream.jsonl 里用 "@blob/NNN.ext" 指针引用
+  - blob/NNN.ext   大块 base64 二进制外置(audio→.wav+.f32, jpeg→.jpg),stream.jsonl 里用 "@blob/NNN.ext" 指针引用
 
 设计要点:
   - JSONL append-only,边录边写,进程崩溃不丢已录部分,不在内存攒整会话。
@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import os
 import struct
@@ -53,8 +54,24 @@ def _write_wav(path: str, pcm_float32: np.ndarray, sample_rate: int) -> None:
         f.write(pcm16.tobytes())
 
 
-def _decode_f32(b64: str) -> np.ndarray:
-    return np.frombuffer(base64.b64decode(b64), dtype=np.float32)
+def _audio_payload_meta(raw: bytes, *, sample_rate: int, wav_rel: str, f32_rel: str) -> Dict[str, Any]:
+    return {
+        "sha256": hashlib.sha256(raw).hexdigest(),
+        "nbytes": len(raw),
+        "samples": len(raw) // 4,
+        "dtype": "float32-le",
+        "sample_rate": sample_rate,
+        "blob_f32": f32_rel,
+        "blob_wav": wav_rel,
+    }
+
+
+def _jpeg_payload_meta(raw: bytes, *, jpg_rel: str) -> Dict[str, Any]:
+    return {
+        "sha256": hashlib.sha256(raw).hexdigest(),
+        "nbytes": len(raw),
+        "blob_jpg": jpg_rel,
+    }
 
 
 class SessionRecorder:
@@ -107,11 +124,11 @@ class SessionRecorder:
                 seq = self._seq
                 self._seq += 1
                 # 深拷贝 + 二进制外置(在锁内分配 blob_idx,保证编号单调)
-                externalized = self._externalize(frame)
-            line = json.dumps(
-                {"seq": seq, "ts": ts, "dir": direction, "frame": externalized},
-                ensure_ascii=False,
-            )
+                externalized, payload_trace = self._externalize(frame)
+            event = {"seq": seq, "ts": ts, "dir": direction, "frame": externalized}
+            if payload_trace is not None:
+                event["payload_trace"] = payload_trace
+            line = json.dumps(event, ensure_ascii=False)
             _io_pool.submit(self._append_line, line)
         except Exception:
             # 录制是旁路,绝不影响转发
@@ -134,63 +151,115 @@ class SessionRecorder:
         self._blob_idx += 1
         return rel
 
-    def _externalize(self, frame: Dict[str, Any]) -> Dict[str, Any]:
+    def _next_blob_stem(self) -> str:
+        stem = f"@blob/{self._blob_idx:04d}"
+        self._blob_idx += 1
+        return stem
+
+    def _externalize(self, frame: Dict[str, Any]) -> tuple[Dict[str, Any], Optional[Dict[str, Any]]]:
         """把帧里的大块 base64 二进制抽到 blob/,字段值换成 @blob 指针。返回新 dict(不改原帧)。"""
         ftype = frame.get("type")
 
         # 上行 input.append:input.audio(f32) + input.video_frames(jpeg[])
         if ftype == "input.append" and isinstance(frame.get("input"), dict):
             inp = dict(frame["input"])
+            payload_trace: Dict[str, Any] = {
+                "force_listen": bool(inp.get("force_listen", False)),
+                "max_slice_nums": int(inp.get("max_slice_nums", 1) or 1),
+            }
             audio = inp.get("audio")
             if isinstance(audio, str) and audio:
-                inp["audio"] = self._stash_audio(audio, _USER_AUDIO_SR)
+                audio_meta = self._stash_audio(audio, _USER_AUDIO_SR)
+                inp["audio"] = audio_meta["blob_wav"]
+                payload_trace["audio"] = audio_meta
             frames = inp.get("video_frames")
             if isinstance(frames, list) and frames:
-                inp["video_frames"] = [
-                    self._stash_jpeg(fr) if isinstance(fr, str) and fr else fr
-                    for fr in frames
-                ]
-            return {**frame, "input": inp}
+                out_frames = []
+                frame_meta = []
+                for fr in frames:
+                    if isinstance(fr, str) and fr:
+                        meta = self._stash_jpeg(fr)
+                        out_frames.append(meta["blob_jpg"])
+                        frame_meta.append(meta)
+                    else:
+                        out_frames.append(fr)
+                        frame_meta.append(None)
+                inp["video_frames"] = out_frames
+                payload_trace["video_frames"] = frame_meta
+            return {**frame, "input": inp}, payload_trace
 
         # 下行 response.output.delta kind=audio:audio(f32)
         if ftype == "response.output.delta" and frame.get("kind") == "audio":
             audio = frame.get("audio")
             if isinstance(audio, str) and audio:
-                return {**frame, "audio": self._stash_audio(audio, _AI_AUDIO_SR)}
+                audio_meta = self._stash_audio(audio, _AI_AUDIO_SR)
+                return {**frame, "audio": audio_meta["blob_wav"]}, {"audio": audio_meta}
 
         # response.done 可能带 audio(非流式)
         if ftype == "response.done":
             audio = frame.get("audio")
             if isinstance(audio, str) and audio:
-                return {**frame, "audio": self._stash_audio(audio, _AI_AUDIO_SR)}
+                audio_meta = self._stash_audio(audio, _AI_AUDIO_SR)
+                return {**frame, "audio": audio_meta["blob_wav"]}, {"audio": audio_meta}
 
         # 其它帧(session.init/created/text/listen/closed 等)原样
-        return frame
-
-    def _stash_audio(self, b64: str, sr: int) -> str:
-        rel = self._next_blob("wav")  # 持锁中调用
-        abs_path = os.path.join(self._dir, rel[1:])  # 去掉前导 '@'
-        _io_pool.submit(self._write_audio_blob, abs_path, b64, sr)
-        return rel
-
-    def _stash_jpeg(self, b64: str) -> str:
-        rel = self._next_blob("jpg")
-        abs_path = os.path.join(self._dir, rel[1:])
-        _io_pool.submit(self._write_jpeg_blob, abs_path, b64)
-        return rel
+        init_trace = self._session_init_trace(frame) if ftype == "session.init" else None
+        return frame, init_trace
 
     @staticmethod
-    def _write_audio_blob(path: str, b64: str, sr: int) -> None:
+    def _session_init_trace(frame: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        payload = frame.get("payload")
+        if not isinstance(payload, dict):
+            return None
+        trace: Dict[str, Any] = {}
+        for key in ("ref_audio_base64", "tts_ref_audio_base64"):
+            value = payload.get(key)
+            if not isinstance(value, str) or not value:
+                continue
+            try:
+                raw = base64.b64decode(value)
+                trace[key] = {
+                    "sha256": hashlib.sha256(raw).hexdigest(),
+                    "nbytes": len(raw),
+                    "samples": len(raw) // 4,
+                    "dtype": "float32-le",
+                    "sample_rate": _USER_AUDIO_SR,
+                }
+            except Exception:
+                trace[key] = {"decode_error": True}
+        return trace or None
+
+    def _stash_audio(self, b64: str, sr: int) -> Dict[str, Any]:
+        stem = self._next_blob_stem()  # 持锁中调用
+        wav_rel = f"{stem}.wav"
+        f32_rel = f"{stem}.f32"
+        wav_path = os.path.join(self._dir, wav_rel[1:])  # 去掉前导 '@'
+        f32_path = os.path.join(self._dir, f32_rel[1:])
+        raw = base64.b64decode(b64)
+        _io_pool.submit(self._write_audio_blob, wav_path, f32_path, raw, sr)
+        return _audio_payload_meta(raw, sample_rate=sr, wav_rel=wav_rel, f32_rel=f32_rel)
+
+    def _stash_jpeg(self, b64: str) -> Dict[str, Any]:
+        rel = self._next_blob("jpg")
+        abs_path = os.path.join(self._dir, rel[1:])
+        raw = base64.b64decode(b64)
+        _io_pool.submit(self._write_jpeg_blob, abs_path, raw)
+        return _jpeg_payload_meta(raw, jpg_rel=rel)
+
+    @staticmethod
+    def _write_audio_blob(wav_path: str, f32_path: str, raw: bytes, sr: int) -> None:
         try:
-            _write_wav(path, _decode_f32(b64), sr)
+            with open(f32_path, "wb") as f:
+                f.write(raw)
+            _write_wav(wav_path, np.frombuffer(raw, dtype="<f4"), sr)
         except Exception:
             pass
 
     @staticmethod
-    def _write_jpeg_blob(path: str, b64: str) -> None:
+    def _write_jpeg_blob(path: str, raw: bytes) -> None:
         try:
             with open(path, "wb") as f:
-                f.write(base64.b64decode(b64))
+                f.write(raw)
         except Exception:
             pass
 
