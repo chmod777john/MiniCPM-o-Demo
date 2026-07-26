@@ -6,6 +6,7 @@ cd "${PROJECT_DIR}"
 
 VENV_DIR="${VENV_DIR:-/user/weihongliang/MiniCPM-o-Demo-wt-o5-inference-refactor-2026-06-30/.venv-accel}"
 PYTHON="${VENV_DIR}/bin/python"
+export VENV_DIR
 
 export MODEL_PATH="${MODEL_PATH:-/user/weihongliang/MiniCPM-o-4_6}"
 export PT_PATH="${PT_PATH:-/user/weihongliang/o5_weights/houyueran_o5_MB_omni-sft2-8k-hyr_a2_i2_0722_iter_0002800.pt}"
