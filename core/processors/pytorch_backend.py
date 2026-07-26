@@ -6,9 +6,13 @@ import asyncio
 import base64
 import gc
 import io
+import json
 import logging
+import os
+import random
 import types
 import time
+from pathlib import Path
 from typing import Any, Dict, Iterator, List, Optional
 
 import numpy as np
@@ -59,6 +63,7 @@ class PyTorchBackend:
         compile: bool = False,
         chat_vocoder: str = "token2wav",
         attn_implementation: str = "auto",
+        preload_both_tts: bool = True,
     ):
         self.model_path = model_path
         self.gpu_id = gpu_id
@@ -68,11 +73,14 @@ class PyTorchBackend:
         self.compile = compile
         self.chat_vocoder = chat_vocoder
         self.attn_implementation = attn_implementation
+        self.preload_both_tts = preload_both_tts
 
         self.status = "loading"
         self.processor = None
         self.spmd_is_driver = False
         self.spmd_is_worker = False
+        self._token_trace: Optional[Dict[str, Any]] = None
+        self._token_trace_path: Optional[Path] = None
 
         # Duplex 暂停超时监控 task
         self._duplex_timeout_task: Optional[asyncio.Task] = None
@@ -81,6 +89,10 @@ class PyTorchBackend:
         """加载模型（同步，在启动时调用）"""
         self.status = "loading"
         logger.info(f"[GPU {self.gpu_id}] Loading model from {self.model_path}...")
+        startup_seed = os.environ.get("O5_STARTUP_SEED")
+        if startup_seed is not None:
+            self._seed_process(int(startup_seed))
+            logger.info("[GPU %s] Startup seed set to %s", self.gpu_id, startup_seed)
 
         from core.processors.unified import UnifiedProcessor
 
@@ -88,6 +100,7 @@ class PyTorchBackend:
             model_path=self.model_path,
             pt_path=self.pt_path,
             ref_audio_path=self.ref_audio_path,
+            preload_both_tts=self.preload_both_tts,
             compile=self.compile,
             chat_vocoder=self.chat_vocoder,
             attn_implementation=self.attn_implementation,
@@ -100,9 +113,121 @@ class PyTorchBackend:
         logger.info(f"[GPU {self.gpu_id}] Model loaded successfully")
 
         self._install_spmd_method_wrappers()
+        self._install_token_trace_if_requested()
 
         # 检查模型各组件的 device 分布
         self._log_device_map()
+
+    @staticmethod
+    def _seed_process(seed: int) -> None:
+        os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
+        os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
+        random.seed(seed)
+        np.random.seed(seed)
+        torch.manual_seed(seed)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed_all(seed)
+        torch.backends.cuda.matmul.allow_tf32 = False
+        torch.backends.cudnn.allow_tf32 = False
+        torch.backends.cudnn.benchmark = False
+        torch.backends.cudnn.deterministic = True
+        if hasattr(torch, "set_float32_matmul_precision"):
+            torch.set_float32_matmul_precision("highest")
+
+    @staticmethod
+    def _token_meta(tokens: Any) -> Dict[str, Any]:
+        import hashlib
+
+        tensor = torch.as_tensor(tokens).detach().cpu().long().contiguous()
+        flat = tensor.reshape(-1)
+        data = flat.numpy().tobytes()
+        return {
+            "shape": list(tensor.shape),
+            "numel": int(flat.numel()),
+            "sha256": hashlib.sha256(data).hexdigest(),
+            "tokens": [int(x) for x in flat.numpy().tolist()],
+        }
+
+    def _write_token_trace(self) -> None:
+        if self._token_trace_path is None or self._token_trace is None:
+            return
+        self._token_trace_path.parent.mkdir(parents=True, exist_ok=True)
+        self._token_trace_path.write_text(
+            json.dumps(self._token_trace, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+
+    def set_trace_unit_id(self, unit_id: Optional[str]) -> None:
+        if self._token_trace is not None:
+            self._token_trace["current_unit"] = unit_id
+            self._write_token_trace()
+
+    def _install_token_trace_if_requested(self) -> None:
+        trace_path = os.environ.get("O5_TOKEN_TRACE_PATH")
+        if not trace_path or self.processor is None:
+            return
+
+        model = getattr(self.processor, "model", None)
+        duplex = getattr(model, "duplex", None)
+        if model is None or duplex is None:
+            logger.warning("O5_TOKEN_TRACE_PATH set but duplex model is unavailable")
+            return
+
+        self._token_trace_path = Path(trace_path)
+        self._token_trace = {
+            "current_unit": None,
+            "generated_tts_chunks": [],
+            "token2wav_stream_inputs": [],
+        }
+
+        original_generate_waveform = duplex._generate_waveform_from_tokens
+
+        def traced_generate_waveform(
+            traced_self: Any,
+            new_tokens: Any,
+            prompt_wav_path: Optional[str],
+            is_last_chunk: bool = False,
+            force_flush: bool = False,
+            defer_flush: bool = False,
+        ) -> Any:
+            assert self._token_trace is not None
+            self._token_trace["generated_tts_chunks"].append({
+                "unit_id": self._token_trace.get("current_unit"),
+                "new_tokens": self._token_meta(new_tokens),
+                "is_last_chunk": bool(is_last_chunk),
+                "force_flush": bool(force_flush),
+                "defer_flush": bool(defer_flush),
+            })
+            self._write_token_trace()
+            return original_generate_waveform(
+                new_tokens,
+                prompt_wav_path,
+                is_last_chunk=is_last_chunk,
+                force_flush=force_flush,
+                defer_flush=defer_flush,
+            )
+
+        duplex._generate_waveform_from_tokens = types.MethodType(traced_generate_waveform, duplex)
+
+        audio_tokenizer = getattr(getattr(model, "tts", None), "audio_tokenizer", None)
+        original_stream = getattr(audio_tokenizer, "stream", None)
+        if original_stream is not None:
+
+            def traced_stream(tokens: Any, *args: Any, **kwargs: Any) -> Any:
+                assert self._token_trace is not None
+                self._token_trace["token2wav_stream_inputs"].append({
+                    "unit_id": self._token_trace.get("current_unit"),
+                    "tokens": self._token_meta(tokens),
+                    "last_chunk": bool(kwargs.get("last_chunk", False)),
+                    "return_waveform": bool(kwargs.get("return_waveform", False)),
+                })
+                self._write_token_trace()
+                return original_stream(tokens, *args, **kwargs)
+
+            audio_tokenizer.stream = traced_stream
+
+        self._write_token_trace()
+        logger.info("[GPU %s] Token trace enabled: %s", self.gpu_id, self._token_trace_path)
 
     def _get_spmd_mirror(self) -> Any:
         model = getattr(self.processor, "model", None)
@@ -389,6 +514,44 @@ class PyTorchBackend:
             return
         duplex_view = self.processor.set_duplex_mode()
         duplex_view.config = DuplexConfig(**config)
+        duplex_view.apply_config_to_model()
+
+    def seed_runtime(self, seed: int) -> None:
+        self._seed_process(seed)
+
+        model = getattr(self.processor, "model", None) if self.processor is not None else None
+        audio_tokenizer = getattr(getattr(model, "tts", None), "audio_tokenizer", None)
+        flow = getattr(audio_tokenizer, "flow", None)
+        decoder = getattr(flow, "decoder", None)
+        rand_noise = getattr(decoder, "rand_noise", None)
+        if decoder is not None and torch.is_tensor(rand_noise):
+            devices = [rand_noise.device] if rand_noise.is_cuda else []
+            with torch.random.fork_rng(devices=devices, enabled=True):
+                torch.manual_seed(seed)
+                if torch.cuda.is_available():
+                    torch.cuda.manual_seed_all(seed)
+                rand_noise.copy_(torch.randn_like(rand_noise))
+            for obj in (decoder, getattr(decoder, "estimator", None)):
+                if obj is None:
+                    continue
+                for attr in ("cnn_cache_buffer", "att_cache_buffer"):
+                    buf = getattr(obj, attr, None)
+                    if torch.is_tensor(buf):
+                        buf.zero_()
+
+    @staticmethod
+    def _argmax_multinomial(input_tensor: torch.Tensor, num_samples: int, replacement: bool = False, *, generator=None, out=None):
+        if num_samples != 1:
+            raise RuntimeError("O5_TTS_ARGMAX only supports num_samples=1")
+        result = torch.argmax(input_tensor, dim=-1, keepdim=True)
+        if out is not None:
+            out.copy_(result)
+            return out
+        return result
+
+    def _run_duplex_generate(self, force_listen: bool) -> DuplexGenerateResult:
+        duplex_view = self.processor.set_duplex_mode()
+        return duplex_view.generate(force_listen=force_listen)
 
     def duplex_prepare(
         self,
@@ -397,6 +560,7 @@ class PyTorchBackend:
         prompt_wav_path: Optional[str] = None,
         length_penalty: float = 1.1,
         sampling: Optional[Dict[str, Any]] = None,
+        llm_seed: Optional[int] = None,
     ) -> str:
         if sampling:
             self.set_duplex_config(sampling)
@@ -405,6 +569,7 @@ class PyTorchBackend:
             system_prompt_text=system_prompt_text,
             ref_audio_path=ref_audio_path or self.ref_audio_path,
             prompt_wav_path=prompt_wav_path,
+            llm_seed=llm_seed,
         )
 
     def duplex_prefill(
@@ -421,8 +586,15 @@ class PyTorchBackend:
         )
 
     def duplex_generate(self, force_listen: bool = False) -> DuplexGenerateResult:
-        duplex_view = self.processor.set_duplex_mode()
-        return duplex_view.generate(force_listen=force_listen)
+        if os.environ.get("O5_TTS_ARGMAX", "0").lower() not in {"1", "true", "yes", "on"}:
+            return self._run_duplex_generate(force_listen)
+
+        original_multinomial = torch.multinomial
+        torch.multinomial = self._argmax_multinomial
+        try:
+            return self._run_duplex_generate(force_listen)
+        finally:
+            torch.multinomial = original_multinomial
 
     def duplex_finalize(self) -> None:
         duplex_view = self.processor.set_duplex_mode()

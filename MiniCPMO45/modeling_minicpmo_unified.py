@@ -311,6 +311,7 @@ class MiniCPMO(BaseMiniCPMO):
 
     def duplex_generate(
         self,
+        max_new_speak_tokens_per_chunk: Optional[int] = None,
         decode_mode: str = "greedy",
         temperature: Optional[float] = None,
         top_k: Optional[int] = None,
@@ -330,6 +331,11 @@ class MiniCPMO(BaseMiniCPMO):
             self.duplex.force_listen_count = old_count + 1
             try:
                 return self.duplex.streaming_generate(
+                    max_new_speak_tokens_per_chunk=(
+                        max_new_speak_tokens_per_chunk
+                        if max_new_speak_tokens_per_chunk is not None
+                        else self.duplex.max_new_speak_tokens_per_chunk
+                    ),
                     decode_mode=decode_mode,
                     temperature=temperature if temperature is not None else self.duplex.temperature,
                     top_k=top_k if top_k is not None else self.duplex.top_k,
@@ -350,6 +356,11 @@ class MiniCPMO(BaseMiniCPMO):
             finally:
                 self.duplex.force_listen_count = old_force
         return self.duplex.streaming_generate(
+            max_new_speak_tokens_per_chunk=(
+                max_new_speak_tokens_per_chunk
+                if max_new_speak_tokens_per_chunk is not None
+                else self.duplex.max_new_speak_tokens_per_chunk
+            ),
             decode_mode=decode_mode,
             temperature=temperature if temperature is not None else self.duplex.temperature,
             top_k=top_k if top_k is not None else self.duplex.top_k,
@@ -390,4 +401,3 @@ class MiniCPMO(BaseMiniCPMO):
 
     def duplex_is_stopped(self) -> bool:
         return bool(self.duplex and self.duplex.is_session_stop_set())
-

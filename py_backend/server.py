@@ -303,6 +303,10 @@ class BackendProtocolSession:
 
     async def _init_duplex(self, params: Dict[str, Any]) -> None:
         config = _first_dict(params.get("config"), params.get("duplex"))
+        seed_value = _coalesce(params.get("seed"), config.get("seed") if config else None)
+        seed = int(seed_value) if seed_value is not None else None
+        if seed is not None and hasattr(self.backend, "seed_runtime"):
+            await asyncio.to_thread(self.backend.seed_runtime, seed)
         if "use_tts" in params:
             config = dict(config)
             config["generate_audio"] = bool(params.get("use_tts"))
@@ -335,6 +339,7 @@ class BackendProtocolSession:
                 prompt_wav_path=refs.tts_ref_audio_path,
                 length_penalty=float(config.get("length_penalty", 1.1) if config else 1.1),
                 sampling=config or None,
+                llm_seed=seed,
             )
         finally:
             refs.cleanup()
@@ -495,15 +500,21 @@ class BackendProtocolSession:
             t0 = time.perf_counter()
 
             def _duplex_step() -> tuple[Any, float, Dict[str, Any], Dict[str, Any]]:
-                prefill_t0 = time.perf_counter()
-                prefill_result = self.backend.duplex_prefill(
-                    audio_waveform=audio_waveform,
-                    frame_list=decoded_frames.frame_list,
-                    max_slice_nums=max_slice_nums,
-                )
-                prefill_ms = (time.perf_counter() - prefill_t0) * 1000
-                result = self.backend.duplex_generate(force_listen=force_listen)
-                return result, prefill_ms, prefill_result, self._safe_metrics()
+                if hasattr(self.backend, "set_trace_unit_id"):
+                    self.backend.set_trace_unit_id(input_id)
+                try:
+                    prefill_t0 = time.perf_counter()
+                    prefill_result = self.backend.duplex_prefill(
+                        audio_waveform=audio_waveform,
+                        frame_list=decoded_frames.frame_list,
+                        max_slice_nums=max_slice_nums,
+                    )
+                    prefill_ms = (time.perf_counter() - prefill_t0) * 1000
+                    result = self.backend.duplex_generate(force_listen=force_listen)
+                    return result, prefill_ms, prefill_result, self._safe_metrics()
+                finally:
+                    if hasattr(self.backend, "set_trace_unit_id"):
+                        self.backend.set_trace_unit_id(None)
 
             result, prefill_ms, prefill_result, backend_metrics = await asyncio.to_thread(_duplex_step)
             wall_clock_ms = (time.perf_counter() - t0) * 1000
@@ -740,6 +751,8 @@ def main() -> None:
         "compile": cfg.compile,
         "chat_vocoder": cfg.chat_vocoder,
         "attn_implementation": os.environ.get("O5_ATTN_IMPLEMENTATION", cfg.attn_implementation),
+        "preload_both_tts": os.environ.get("O5_PRELOAD_BOTH_TTS", "1").lower()
+        in {"1", "true", "yes", "on"},
         "deployment_mode": getattr(cfg.model, "deployment_mode", "single_eager"),
         "backbone_dir": getattr(cfg.model, "backbone_dir", None),
         "llm_cache_len": getattr(cfg.model, "llm_cache_len", 8192),

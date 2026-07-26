@@ -225,7 +225,7 @@ class ChatView(MiniCPMOProcessorMixin):
         import base64
         start_time = time.time()
         chunk_index = 0
-        
+
         try:
             iter_gen = self._model.streaming_generate(
                 session_id=session_id,
@@ -285,7 +285,7 @@ class ChatView(MiniCPMOProcessorMixin):
         generate_audio: Optional[bool] = None,
     ) -> ChatResponse:
         """执行 Chat 推理
-        
+
         Args:
             request: Chat 请求
             max_new_tokens: 最大生成 token 数
@@ -296,7 +296,7 @@ class ChatView(MiniCPMOProcessorMixin):
             ChatResponse
         """
         start_time = time.time()
-        
+
         try:
             return self._chat_impl(request, max_new_tokens, do_sample, generate_audio, start_time)
         except Exception as e:
@@ -863,12 +863,39 @@ class DuplexView:
             self._ref_audio_cache = audio
         
         return audio
+
+    def apply_config_to_model(self) -> None:
+        """Apply the current DuplexConfig to the live vendored duplex object."""
+        config_values = self.config.model_dump() if hasattr(self.config, "model_dump") else self.config.dict()
+        model_config = getattr(self._model, "_duplex_config", None)
+        if isinstance(model_config, dict):
+            model_config.update(config_values)
+
+        duplex = getattr(self._model, "duplex", None)
+        if duplex is None:
+            return
+
+        for attr in (
+            "generate_audio",
+            "ls_mode",
+            "max_new_speak_tokens_per_chunk",
+            "text_repetition_penalty",
+            "temperature",
+            "top_k",
+            "top_p",
+            "text_repetition_window_size",
+            "listen_prob_scale",
+            "force_listen_count",
+        ):
+            if hasattr(duplex, attr):
+                setattr(duplex, attr, getattr(self.config, attr))
     
     def prepare(
         self,
         system_prompt_text: Optional[str] = None,
         ref_audio_path: Optional[str] = None,
         prompt_wav_path: Optional[str] = None,
+        llm_seed: Optional[int] = None,
     ) -> str:
         """准备双工会话
         
@@ -897,6 +924,7 @@ class DuplexView:
             suffix_system_prompt=suffix_system_prompt,
             ref_audio=ref_audio,
             prompt_wav_path=prompt_wav_path or ref_audio_path or self.ref_audio_path,
+            llm_seed=llm_seed,
         )
         
         logger.info(f"双工会话准备完成")
@@ -938,15 +966,14 @@ class DuplexView:
         
         Args:
             force_listen: 前端 Force Listen 开关，强制本次生成为 listen
-            
+
         Returns:
             DuplexGenerateResult
         """
-        duplex = getattr(self._model, "duplex", None)
-        if duplex is not None and hasattr(duplex, "generate_audio"):
-            duplex.generate_audio = self.config.generate_audio
+        self.apply_config_to_model()
 
         result = self._model.duplex_generate(
+            max_new_speak_tokens_per_chunk=self.config.max_new_speak_tokens_per_chunk,
             decode_mode=self.config.decode_mode,
             temperature=self.config.temperature,
             top_k=self.config.top_k,

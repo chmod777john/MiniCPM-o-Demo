@@ -2,7 +2,15 @@
 
 from __future__ import annotations
 
+import os
 from typing import Any, Dict
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    return value.lower() in {"1", "true", "yes", "on"}
 
 
 def create_backend(config: Dict[str, Any]) -> Any:
@@ -29,4 +37,5 @@ def create_backend(config: Dict[str, Any]) -> Any:
         compile=config.get("compile", False),
         chat_vocoder=config.get("chat_vocoder", "token2wav"),
         attn_implementation=config.get("attn_implementation", "auto"),
+        preload_both_tts=_env_bool("O5_PRELOAD_BOTH_TTS", config.get("preload_both_tts", True)),
     )
