@@ -49,3 +49,16 @@
 - New branch: `o5-no-fc-speedup-tp2-llmgraph-narrow-2026-07-23-fc-api-2026-07-23`
 
 Purpose: integrate O5 FC duplex API on top of the cleaned TP2/LLMGraphRunner base. The target is TP2 with all optimization flags enabled, with FC tool-call events exposed through the realtime API and tool results fed back into the duplex stream.
+
+## FC Merge And Validation
+
+- Merge commit: `82ecedbfde799aa75a70b2c7f42f3fce50eab437`, with first parent `b761f685ad37568a576ae93f3888ca47336b93b0a` and FC source parent `a6da42ff9b0625eddfbab59fbc0266bba6eb1a0a`.
+- The FC schema, runtime, probes, report, and demo assets are byte-identical to the committed FC source. `FcDuplexCapability` is copied verbatim into the thin facade; only imports, configuration, initialization, and forwarding hooks are adapted to the thin structure.
+- Model path: `/user/weihongliang/MiniCPM-o-4_6`.
+- Checkpoint: `/user/weihongliang/o5_weights/iter_0001500_o5_with_tts.pt`.
+- TP2 backbone safetensors: `/user/weihongliang/o5_weights/o5_backbone_hf_iter1500_with_tts`.
+- Strict TauVoice FC alignment passed in cctl deploy task `622868`: the API emitted `convert_decimal_to_binary(255)` followed by `convert_decimal_to_binary(383)`, and accepted the tool results fed back by the probe.
+- Full FC audio path passed in cctl deploy task `622892`: the API emitted a valid `convert_decimal_to_binary(383)` call and returned three non-empty 1-second float32 audio events.
+- Strict result: `run-logs/cctl_tp2_smoke_20260726_124248/fc_tauvoice_probe.json`.
+- Audio result: `run-logs/cctl_tp2_smoke_20260726_125704/fc_tauvoice_probe.json`.
+- Live audio planning is intentionally not required to reproduce the strict two-call sequence. The source FC report documents drift between direct spoken answers, a single `383` call, and multiple calls; live audio validation requires non-empty audio and validates any emitted TauVoice calls.
