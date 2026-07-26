@@ -27,7 +27,11 @@ export WORKER_ID="${WORKER_ID:-o5-clean-llmgraph-smoke-worker}"
 export WORKER_GPU_GROUP="${WORKER_GPU_GROUP:-cctl-a100-tp2-smoke}"
 
 VIDEO_PATH="${VIDEO_PATH:-/user/weihongliang/omni_demo_duplex_01.mp4}"
+AUDIO_WAV_PATH="${AUDIO_WAV_PATH:-${PROJECT_DIR}/examples/realtime/assets/test.wav}"
 MAX_SESSION_S="${MAX_SESSION_S:-90}"
+PROBE_MODE="${PROBE_MODE:-video}"
+VIDEO_REPEAT="${VIDEO_REPEAT:-1}"
+AUDIO_REPEAT="${AUDIO_REPEAT:-1}"
 OUT_DIR="${OUT_DIR:-${PROJECT_DIR}/run-logs/cctl_tp2_smoke_$(date +%Y%m%d_%H%M%S)}"
 mkdir -p "${OUT_DIR}"
 export LOG_DIR="${OUT_DIR}/service"
@@ -37,10 +41,13 @@ echo "[smoke] model=${MODEL_PATH}"
 echo "[smoke] pt=${PT_PATH}"
 echo "[smoke] backbone=${BACKBONE_DIR}"
 echo "[smoke] video=${VIDEO_PATH}"
+echo "[smoke] audio=${AUDIO_WAV_PATH}"
+echo "[smoke] probe_mode=${PROBE_MODE} video_repeat=${VIDEO_REPEAT} audio_repeat=${AUDIO_REPEAT}"
 echo "[smoke] out=${OUT_DIR}"
 
 if [ ! -x "${PYTHON}" ]; then echo "[smoke] missing python: ${PYTHON}" >&2; exit 1; fi
 if [ ! -f "${VIDEO_PATH}" ]; then echo "[smoke] missing video: ${VIDEO_PATH}" >&2; exit 1; fi
+if [ ! -f "${AUDIO_WAV_PATH}" ]; then echo "[smoke] missing audio: ${AUDIO_WAV_PATH}" >&2; exit 1; fi
 
 bash scripts/start_o5_tp2_cctl_service.sh > "${OUT_DIR}/service.log" 2>&1 &
 service_pid=$!
@@ -73,15 +80,50 @@ if [ "${ready}" != "1" ]; then
     exit 1
 fi
 
-echo "[smoke] service ready; running realtime video probe"
-"${PYTHON}" examples/realtime/video_probe.py \
-    --url "https://127.0.0.1:${GATEWAY_PORT}" \
-    --video "${VIDEO_PATH}" \
-    --insecure \
-    --max-session-s "${MAX_SESSION_S}" \
-    --stop-on-end-of-turn \
-    --pretty-json \
-    > "${OUT_DIR}/video_probe_result.json"
+run_video_probe() {
+    local idx="$1"
+    local result="${OUT_DIR}/video_probe_result_${idx}.json"
+    echo "[smoke] running realtime video probe #${idx}"
+    "${PYTHON}" examples/realtime/video_probe.py \
+        --url "https://127.0.0.1:${GATEWAY_PORT}" \
+        --video "${VIDEO_PATH}" \
+        --insecure \
+        --max-session-s "${MAX_SESSION_S}" \
+        --stop-on-end-of-turn \
+        --pretty-json \
+        > "${result}"
+    cat "${result}"
+}
 
-cat "${OUT_DIR}/video_probe_result.json"
+run_audio_probe() {
+    local idx="$1"
+    local result="${OUT_DIR}/audio_probe_result_${idx}.json"
+    echo "[smoke] running realtime audio probe #${idx}"
+    "${PYTHON}" examples/realtime/audio_probe.py \
+        --url "https://127.0.0.1:${GATEWAY_PORT}" \
+        --input-wav "${AUDIO_WAV_PATH}" \
+        --insecure \
+        --max-session-s "${MAX_SESSION_S}" \
+        --pretty-json \
+        > "${result}"
+    cat "${result}"
+}
+
+echo "[smoke] service ready; running realtime probes"
+case "${PROBE_MODE}" in
+    video)
+        for idx in $(seq 1 "${VIDEO_REPEAT}"); do run_video_probe "${idx}"; done
+        ;;
+    audio)
+        for idx in $(seq 1 "${AUDIO_REPEAT}"); do run_audio_probe "${idx}"; done
+        ;;
+    both)
+        for idx in $(seq 1 "${VIDEO_REPEAT}"); do run_video_probe "${idx}"; done
+        for idx in $(seq 1 "${AUDIO_REPEAT}"); do run_audio_probe "${idx}"; done
+        ;;
+    *)
+        echo "[smoke] invalid PROBE_MODE=${PROBE_MODE}; expected video, audio, or both" >&2
+        exit 1
+        ;;
+esac
 echo "[smoke] done"
