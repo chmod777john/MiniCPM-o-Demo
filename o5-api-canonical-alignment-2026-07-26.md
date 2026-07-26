@@ -24,7 +24,7 @@ checkpoint, seed, and deterministic TTS sampling policy.
 - Model path: `/user/weihongliang/MiniCPM-o-4_6`
 - Checkpoint: `/user/weihongliang/o5_weights/houyueran_o5_MB_omni-sft2-8k-hyr_a2_i2_0722_iter_0002800.pt`
 - Prompt wav: `/user/weihongliang/MiniCPM-o-4_6/assets/audio_cases/paimon__system_ref_audio.wav`
-- Units: first 8 one-second units
+- Units: first 8 one-second units, then full 36 one-second units
 
 Media parity was checked directly:
 
@@ -49,7 +49,7 @@ offline `--tts-argmax` canonical probe.
 
 ## Runs
 
-Offline current canonical argmax run:
+Offline current canonical argmax run, first 8 units:
 
 ```text
 /user/weihongliang/thin_unified_runs/unified_trace_current_video01_max8_ttsargmax_20260726_02
@@ -61,7 +61,7 @@ API argmax run:
 /user/weihongliang/o5_alignment_runs/api_vs_current_noaccel_video01_max8_ttsargmax_20260726_11
 ```
 
-Compare result:
+First-8 compare result:
 
 ```json
 {
@@ -72,6 +72,38 @@ Compare result:
   "diff_count": 0,
   "text_a": "好的，现在电梯已经到 20层了，还有 4层",
   "text_b": "好的，现在电梯已经到 20层了，还有 4层"
+}
+```
+
+Full-36 canonical baseline:
+
+```text
+/user/weihongliang/thin_unified_runs/unified_trace_baseline_video01_full_20260724_01
+```
+
+Full-36 API run:
+
+```text
+/user/weihongliang/o5_alignment_runs/api_vs_baseline_noaccel_video01_full36_ttsargmax_20260726_01
+```
+
+cctl task:
+
+```text
+622380
+```
+
+Full-36 compare result:
+
+```json
+{
+  "equal": true,
+  "num_a": 36,
+  "num_b": 36,
+  "first_diff": null,
+  "diff_count": 0,
+  "text_a": "好的，现在电梯已经到 20层了，还有 4层就到 24层了。到 24层了，可以出电梯了。你刚才开门了，但是没有完全打开。",
+  "text_b": "好的，现在电梯已经到 20层了，还有 4层就到 24层了。到 24层了，可以出电梯了。你刚才开门了，但是没有完全打开。"
 }
 ```
 
@@ -94,9 +126,14 @@ The token slices entering `token2wav.stream()` also match:
 | 6 | `09ebdc089a4f52a2d74c6cedcadf8aa2342086b64bdb53a75864b6e0f7877831` |
 | 7 | `27616ee87ba02ac6dd9d03edd5f8b71958b6c6e6fa39b6dd235aee4e8e8241a4` |
 
+For the full-36 run, token trace comparison also passed:
+
+- generated TTS chunks: `13 / 13`, all matching
+- `token2wav.stream()` inputs: `13 / 13`, all matching
+
 ## Conclusion
 
-For the first 8 units of `omni_demo_duplex_01.mp4`, realtime API video duplex
+For the full 36 units of `omni_demo_duplex_01.mp4`, realtime API video duplex
 and offline canonical thin-unified are exactly aligned under deterministic TTS
 argmax evaluation:
 
@@ -111,6 +148,6 @@ difference came from TTS sampling randomness: the historical canonical run used
 deterministic argmax-style TTS sampling, while the API path was initially using
 normal stochastic `torch.multinomial` sampling.
 
-Remaining limitation: this report proves the deterministic first-8-unit case.
-A full 36-unit API run should be added if we need the same evidence over the
-entire video.
+Remaining limitation: this proves deterministic eval parity. Normal stochastic
+TTS sampling is still expected to vary unless the eval-only argmax path is
+enabled.

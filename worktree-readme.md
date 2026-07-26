@@ -18,6 +18,9 @@
 - API run: `/user/weihongliang/o5_alignment_runs/api_vs_current_noaccel_video01_max8_ttsargmax_20260726_11`.
 - Result: first 8 units match exactly under deterministic TTS argmax eval (`diff_count=0`).
 - The generated TTS token hashes and the token slices entering `token2wav.stream()` also match.
+- Full-36 API run: `/user/weihongliang/o5_alignment_runs/api_vs_baseline_noaccel_video01_full36_ttsargmax_20260726_01`.
+- Full-36 cctl task: `622380`.
+- Full-36 result: all 36 units match exactly (`diff_count=0`); generated TTS chunks and `token2wav.stream()` inputs also match.
 
 ## Inherited Baseline
 
