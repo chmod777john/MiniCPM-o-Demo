@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>O5 FC 语音工具调用 Demo</title>
+  <link rel="stylesheet" href="/static/fc-demo/fc-demo.css" />
+</head>
+<body>
+  <main class="app">
+    <section class="toolbar">
+      <div>
+        <h1>O5 FC 语音工具调用</h1>
+        <p>语音输入，模型可在双工流里调用工具并语音回复。</p>
+      </div>
+      <div class="actions">
+        <button id="startBtn" type="button">开始</button>
+        <button id="caseBtn" type="button">发送 Case 音频</button>
+        <button id="stopBtn" type="button" disabled>停止</button>
+      </div>
+    </section>
+
+    <section class="settings" aria-label="运行参数">
+      <label>
+        工具集
+        <select id="toolPreset">
+          <option value="binary">十进制转二进制</option>
+          <option value="garden">浇水与土壤湿度</option>
+        </select>
+      </label>
+      <label>
+        non-spoken budget
+        <input id="budget" type="number" min="1" max="80" value="30" />
+      </label>
+      <label>
+        spoken tokens
+        <input id="spokenTokens" type="number" min="1" max="80" value="24" />
+      </label>
+      <label class="check">
+        <input id="generateAudio" type="checkbox" checked />
+        生成语音
+      </label>
+    </section>
+
+    <section class="status-grid" aria-label="状态">
+      <div><span>连接</span><strong id="connState">idle</strong></div>
+      <div><span>音频块</span><strong id="chunkCount">0</strong></div>
+      <div><span>工具调用</span><strong id="toolCount">0</strong></div>
+      <div><span>最近 unit</span><strong id="lastUnit">-</strong></div>
+    </section>
+
+    <section class="content">
+      <div class="panel transcript">
+        <h2>回复</h2>
+        <div id="reply" class="reply"></div>
+      </div>
+      <div class="panel nonspoken">
+        <h2>Non-spoken</h2>
+        <div id="nonSpoken" class="reply debug-text"></div>
+      </div>
+      <div class="panel tools">
+        <h2>工具调用</h2>
+        <div id="toolLog" class="log"></div>
+      </div>
+      <div class="panel events">
+        <h2>事件</h2>
+        <div id="eventLog" class="log compact"></div>
+      </div>
+    </section>
+  </main>
+
+  <script type="module" src="/static/fc-demo/fc-demo.js"></script>
+</body>
+</html>
