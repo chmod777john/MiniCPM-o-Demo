@@ -1,3 +1,11 @@
+# Worktree: o5-no-fc-speedup-tp2-thin-unified-clean-llmgraph-narrow-no-tts-fix-2026-07-26
+
+- Created: 2026-07-26
+- Base branch: `wt/o5-no-fc-speedup-tp2-thin-unified-2026-07-24`
+- Base commit: `c0bb591cc9a37b465548b2ae13ba2f63e579873d`
+- Reason: build a clean replacement candidate for the thin unified O5 no-FC TP2 demo. Keep the thin unified facade, remove the later houyueran TTS behavior changes that are not trusted for this path, and then port the narrower LLMGraph/TP2 synchronization boundary from `o5-no-fc-speedup-tp2-llmgraph-narrow-2026-07-23`.
+- Guardrail: do not modify or depend on uncommitted local changes in `/user/weihongliang/MiniCPM-o-Demo-wt-o5-no-fc-speedup-tp2-thin-unified-2026-07-24-our-base-2026-07-25`.
+
 # Worktree: o5-no-fc-speedup-tp2-thin-unified-2026-07-24
 
 - Created: 2026-07-24

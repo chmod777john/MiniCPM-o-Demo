@@ -183,65 +183,6 @@ from .utils import TTSStreamingGenerator
 logger = logging.getLogger(__name__)
 
 
-_ZH_DIGIT_SYL = {"0": "零", "1": "一", "2": "二", "3": "三", "4": "四",
-                 "5": "五", "6": "六", "7": "七", "8": "八", "9": "九"}
-
-
-def _int_to_zh_reading(n: int) -> str:
-    """Spoken-Chinese reading of a non-negative integer (floors/counts domain)."""
-    if n < 10:
-        return _ZH_DIGIT_SYL[str(n)]
-    if n < 20:
-        return "十" + (_ZH_DIGIT_SYL[str(n % 10)] if n % 10 else "")
-    if n < 100:
-        t, u = divmod(n, 10)
-        return _ZH_DIGIT_SYL[str(t)] + "十" + (_ZH_DIGIT_SYL[str(u)] if u else "")
-    if n < 1000:
-        h, rem = divmod(n, 100)
-        s = _ZH_DIGIT_SYL[str(h)] + "百"
-        if rem == 0:
-            return s
-        if rem < 10:
-            return s + "零" + _ZH_DIGIT_SYL[str(rem)]
-        return s + _int_to_zh_reading(rem)
-    return "".join(_ZH_DIGIT_SYL[c] for c in str(n))
-
-
-def _spoken_syllable_count(text: str) -> int:
-    """Count spoken syllables, expanding Arabic numerals to their Chinese reading
-    first (e.g. '24楼' -> '二十四楼' = 4 syllables, not 3 alnum chars). The TTS
-    speaks numbers as multi-syllable words, so counting raw Arabic chars under-sizes
-    the per-chunk audio-token floor and lets EOS fire mid-number ('二十四'->'二室')."""
-    import re as _re
-
-    spoken = _re.sub(r"(?<=\d)\s+(?=\d)", "", text)
-    spoken = _re.sub(r"\d+", lambda m: _int_to_zh_reading(int(m.group())), spoken)
-    return sum(1 for ch in spoken if ch.isalnum())
-
-
-def _split_trailing_digit_run(hidden_list, tokenizer):
-    """Split a trailing run of digit-only tokens for synthesis with the next unit.
-
-    Duplex units are cut on a fixed time budget, so a multi-digit number can be split
-    across units (for example, ``"...2" | "4楼"``). Decoding from the token boundary
-    keeps the hidden-state split aligned with the tokenizer.
-    """
-    if not hidden_list:
-        return hidden_list, []
-
-    split_idx = len(hidden_list)
-    for i in range(len(hidden_list) - 1, -1, -1):
-        frag = tokenizer.decode([hidden_list[i][0]], skip_special_tokens=True)
-        if frag and all(ch.isdigit() for ch in frag):
-            split_idx = i
-        else:
-            break
-
-    if split_idx == len(hidden_list):
-        return hidden_list, []
-    return hidden_list[:split_idx], hidden_list[split_idx:]
-
-
 class MiniCPMOPreTrainedModel(Qwen3_5PreTrainedModel):
     config_class = MiniCPMOConfig
 
@@ -2848,9 +2789,8 @@ class MiniCPMODuplex:
         "text_repetition_window_size": 512,
         "listen_prob_scale": 1.0,
         "force_listen_count": 0,
-        "tts_temperature": 0.2,
-        "tts_repetition_penalty": 1.10,
-        "tts_model_dir": None,
+        "tts_temperature": 0.8,
+        "tts_repetition_penalty": 1.05,
         "enable_float16": False,
         "n_timesteps": 10,
         "chunk_ms": 1000,
@@ -2914,13 +2854,10 @@ class MiniCPMODuplex:
         # Ensure model has processor reference (same as __init__)
         instance.model.processor = instance.processor
 
-        # Initialize TTS/token2wav only when audio output is requested.
-        # Text-only duplex runs should not require local TTS assets.
-        tts_model_dir = get_param("tts_model_dir")
+        # Initialize TTS (same as __init__)
         enable_float16 = get_param("enable_float16")
-        n_timesteps = int(os.environ.get("TTS_N_TIMESTEPS", "") or get_param("n_timesteps"))
-        if instance.generate_audio:
-            instance.model.init_tts(model_dir=tts_model_dir, enable_float16=enable_float16, n_timesteps=n_timesteps)
+        n_timesteps = get_param("n_timesteps")
+        instance.model.init_tts(enable_float16=enable_float16, n_timesteps=n_timesteps)
 
         instance.break_event = threading.Event()
         instance.session_stop_event = threading.Event()
@@ -2935,15 +2872,10 @@ class MiniCPMODuplex:
         instance.listen_prob_scale = get_param("listen_prob_scale")
         instance.force_listen_count = get_param("force_listen_count")
 
-        # TTS generation config. Env overrides let us tune acoustic sampling for
-        # duplex text<->audio consistency (WER) without editing the checkpoint params.
-        def _env_float(name, default):
-            v = os.environ.get(name)
-            return float(v) if v not in (None, "") else float(default)
-
-        tts_temp_value = _env_float("TTS_TEMPERATURE", get_param("tts_temperature"))
+        # TTS generation config
+        tts_temp_value = get_param("tts_temperature")
         instance.tts_temperature = torch.tensor([tts_temp_value], dtype=torch.float, device=instance.device)
-        instance.tts_repetition_penalty = _env_float("TTS_REP_PENALTY", get_param("tts_repetition_penalty"))
+        instance.tts_repetition_penalty = get_param("tts_repetition_penalty")
 
         # Stream config
         instance.CHUNK_MS = get_param("chunk_ms")
@@ -3071,8 +3003,6 @@ class MiniCPMODuplex:
         self.tts_text_start_pos = 0
         self.tts_past_key_values = None
         self.tts_current_turn_start_time = None
-        self.tts_pending_hidden = None
-        self.tts_pending_text = ""
 
         # token2wav state
         self.token2wav_initialized = False
@@ -3100,7 +3030,6 @@ class MiniCPMODuplex:
         ref_audio: Optional[np.ndarray] = None,
         prompt_wav_path: Optional[str] = None,
         context_previous_marker: str = "\n\nprevious: ",
-        llm_seed: Optional[int] = None,
         **kwargs,
     ):
         prefix_system_prompt = prefix_system_prompt or "Streaming Omni Conversation."
@@ -3116,9 +3045,6 @@ class MiniCPMODuplex:
 
         self._reset_streaming_state()
         self.decoder.reset()
-        # Keep LLM sampling reproducible regardless of how much global RNG the
-        # interleaved TTS and token2wav paths consume.
-        self.decoder.set_sampling_seed(llm_seed if llm_seed is not None else torch.initial_seed())
 
         self.model.init_streaming_processor()
 
@@ -3746,118 +3672,19 @@ class MiniCPMODuplex:
 
         # TTS generate
         tts_start_time = time.time()
-
-        is_start_of_turn = self.tts_text_start_pos == 0
-
-        # A real-time unit can end in the middle of a multi-digit number. Keep that
-        # digit-only suffix in flight and synthesize it with the next unit, where the
-        # acoustic decoder has enough right context to pronounce the complete number.
-        # Existing pending content is always consumed even if the env flag changes
-        # mid-turn, so disabling the feature cannot silently drop deferred text.
-        digit_defer = os.environ.get("TTS_DIGIT_DEFER", "1") != "0"
-        pending_hidden = self.tts_pending_hidden
-        pending_text = self.tts_pending_text
-        self.tts_pending_hidden = None
-        self.tts_pending_text = ""
-
-        if pending_hidden:
-            combined_hidden_in_unit = pending_hidden + total_hidden_in_unit
-        else:
-            combined_hidden_in_unit = total_hidden_in_unit
-        combined_text = pending_text + text
-
-        tts_deferred = False
-        flush_hidden = combined_hidden_in_unit
-        tts_context_text = combined_text
-        if digit_defer and not end_of_turn:
-            flush_hidden, deferred_hidden = _split_trailing_digit_run(
-                combined_hidden_in_unit, self.tokenizer
-            )
-            if deferred_hidden:
-                deferred_text = self.tokenizer.decode(
-                    [item[0] for item in deferred_hidden], skip_special_tokens=True
-                )
-                self.tts_pending_hidden = deferred_hidden
-                self.tts_pending_text = deferred_text
-                tts_deferred = True
-                if deferred_text and combined_text.endswith(deferred_text):
-                    tts_context_text = combined_text[: -len(deferred_text)]
-
         tts_prep_start_time = time.time()
-        tts_condition = self._convert_results_to_tts_input(flush_hidden)
+        tts_condition = self._convert_results_to_tts_input(total_hidden_in_unit)
         tts_prep_end_time = time.time()
 
-        # Per-chunk acoustic budget. The TTS sampler self-targets ~1s (~25 tokens) per
-        # chunk almost regardless of content, so a unit that packs more syllables into
-        # its 1s slot gets acoustically compressed and slurs — worst on numbers
-        # ("二十四层了" -> "朱 24", "达 24 楼了" -> "24 负"). Force a floor scaled by the
-        # chunk's syllable count so dense chunks get room (~7 audio tokens ≈ 280ms each,
-        # matching the comfortable pace of lighter chunks). Estimate syllables as
-        # max(text-token count, non-punct char count) because number words collapse into
-        # few text tokens ("二十四" = 1-2 tokens) yet span several spoken syllables.
-        # Light chunks stay at the ~1s floor; a 50-token (~2s) cap keeps EOS reachable
-        # and bounds how far audio drifts behind the input cadence.
-        # Estimate spoken syllables from the number-expanded text so number-dense
-        # chunks get an adequate floor (TTS_SYL_SPOKEN=0 falls back to raw alnum).
-        if os.environ.get("TTS_SYL_SPOKEN", "1") != "0":
-            speech_chars = _spoken_syllable_count(tts_context_text)
-        else:
-            speech_chars = sum(1 for ch in tts_context_text if ch.isalnum())
-        syllable_est = max(len(flush_hidden), speech_chars)
-        TTS_TOKENS_PER_SYL = int(os.environ.get("TTS_TOKENS_PER_SYL", "7"))
-        TTS_BASE_CHUNK = int(os.environ.get("TTS_BASE_CHUNK", "26"))
-        TTS_MAX_CHUNK = int(os.environ.get("TTS_MAX_CHUNK", "50"))
-        # Floor mode controls the min_new_tokens (EOS-suppression) floor. "base" keeps
-        # the fixed ~1s base floor even for sparse chunks (forces the acoustic decoder
-        # to fill -> tail hallucination). "content" scales the floor to the chunk's own
-        # syllable count so sparse chunks can stop early, cutting forced-fill garble.
-        # Default "content": cuts the forced-fill hallucination that dominated duplex CER.
-        TTS_MIN_FLOOR_MODE = os.environ.get("TTS_MIN_FLOOR_MODE", "content")
-        content_budget = syllable_est * TTS_TOKENS_PER_SYL
-        # The cap needs enough room for slow/long pronunciations, but using the same
-        # 7-token-per-syllable rate as an EOS-suppression floor forces naturally shorter
-        # speech to fill the gap with repetitions. Route 2's min4 keeps that capacity
-        # while allowing EOS once the content has actually been spoken.
-        TTS_MIN_TOKENS_PER_SYL = int(os.environ.get("TTS_MIN_TOKENS_PER_SYL", "4"))
-        min_budget = syllable_est * TTS_MIN_TOKENS_PER_SYL
-
-        max_token_per_chunk = min(max(TTS_BASE_CHUNK, content_budget + 4), TTS_MAX_CHUNK)
-        if TTS_MIN_FLOOR_MODE == "content":
-            min_token_per_chunk = min(min_budget, max_token_per_chunk - 1)
-        else:
-            min_token_per_chunk = min(max(TTS_BASE_CHUNK, min_budget), max_token_per_chunk - 1)
-
-        force_flush = False
-        if is_start_of_turn:
-            # First unit of a turn: flush immediately for low first-audio latency.
-            min_token_per_chunk = 0  # allow decoding <1s audio for low first-audio latency
-            force_flush = True
-            # A lone leading char (e.g. "开") has no strong EOS signal at turn start and
-            # otherwise rambles to ~20 acoustic tokens for one syllable -> garbled extra
-            # syllables ("开"->"开架卵"). Cap the first unit's max to its own content pace
-            # so the acoustic decoder can't over-generate before the next unit's text
-            # arrives. TTS_FIRST_MAX_CAP=0 disables.
-            if os.environ.get("TTS_FIRST_MAX_CAP", "1") != "0":
-                first_cap = max(content_budget + 4, TTS_TOKENS_PER_SYL * 2)
-                max_token_per_chunk = min(first_cap, TTS_MAX_CHUNK)
-                min_token_per_chunk = min(min_token_per_chunk, max_token_per_chunk - 1)
+        max_token_per_chunk = 25 + 1
+        min_token_per_chunk = 25 + 1
 
         if end_of_turn:
-            # Final chunk of a turn: with near-greedy decoding EOS fires right at the
-            # min floor, so the floor must cover the full tail or the last syllable is
-            # dropped ("方的指纹锁。" -> "指纹" at floor=30). Use the SAME comfortable pace
-            # as mid-turn (7 tok/syllable) rather than a reduced rate, so the tail
-            # renders fully; the cap still bounds any over-run.
-            eot_syllables = (
-                _spoken_syllable_count(tts_context_text)
-                if os.environ.get("TTS_SYL_SPOKEN", "1") != "0"
-                else sum(1 for ch in tts_context_text if ch.isalnum())
-            )
-            eot_tokens_per_syl = int(os.environ.get("TTS_EOT_TOKENS_PER_SYL", str(TTS_TOKENS_PER_SYL)))
-            max_token_per_chunk = TTS_MAX_CHUNK
-            min_token_per_chunk = min(
-                eot_syllables * eot_tokens_per_syl, max_token_per_chunk - 1
-            )
+            min_token_per_chunk = 0
+        force_flush = False
+        if self.tts_text_start_pos == 0:  # this is the start of the turn
+            min_token_per_chunk = 0  # allow decoding <1s audio
+            force_flush = True
 
         if self.tts_current_turn_start_time is None:
             self.tts_current_turn_start_time = current_time
@@ -3882,8 +3709,6 @@ class MiniCPMODuplex:
             self.tts_text_start_pos = 0
             self.tts_past_key_values = None
             self.tts_current_turn_start_time = None
-            self.tts_pending_hidden = None
-            self.tts_pending_text = ""
         else:
             self.tts_past_key_values = old_kv
             self.tts_text_start_pos += tts_condition.shape[1] + new_tokens.shape[1]
@@ -3891,10 +3716,7 @@ class MiniCPMODuplex:
         # token2wav generation (must be before reset, otherwise tokens in the last but second chunk will be lost)
         token2wav_start_time = time.time()
         audio_waveform = self._generate_waveform_from_tokens(
-            new_tokens,
-            prompt_wav_path,
-            end_of_turn,
-            force_flush=force_flush,
+            new_tokens, prompt_wav_path, end_of_turn, force_flush=force_flush
         )
         token2wav_end_time = time.time()
 
@@ -3917,8 +3739,6 @@ class MiniCPMODuplex:
             "cost_all": end_time - start_time,
             "n_tokens": len(total_ids_in_unit),
             "n_tts_tokens": new_tokens.numel(),
-            "tts_context_text": tts_context_text,
-            "tts_deferred": tts_deferred,
         }
 
     def get_session_schema(self, include_embeddings: bool = True) -> str:
@@ -4066,7 +3886,6 @@ class MiniCPMODuplex:
         prompt_wav_path: Optional[str],
         is_last_chunk: bool = False,
         force_flush: bool = False,
-        defer_flush: bool = False,
     ) -> Optional[np.ndarray]:
         if not self.token2wav_initialized:
             logger.warning("token2wav_initialized is uninitialized")
@@ -4076,9 +3895,6 @@ class MiniCPMODuplex:
 
         token_ids = torch.reshape(new_tokens, (-1,)).tolist()
         self.token2wav_buffer += token_ids
-
-        if defer_flush and not is_last_chunk:
-            return None
 
         has_chunk_eos = any(tid in self.chunk_terminator_token_ids for tid in token_ids)
 
@@ -5270,17 +5086,8 @@ class MiniCPMTTS(PreTrainedModel):
         So, the first iteration in generation directly forward the model with inputs_embeds, and
         the last hidden states of the last position (Audio BOS) will be decoded to get the first audio token.
         """
-        # Acoustic-decoder nucleus/top-k. Tightening (env TTS_TOP_P/TTS_TOP_K below the
-        # 0.7/20 defaults) trims the low-probability tail that produces garbled wrong
-        # syllables ("开了"->"排卵", "往上升"->"往内切"), without the tail truncation that
-        # simply lowering temperature causes.
-        _tts_top_p = float(os.environ.get("TTS_TOP_P", "0.7"))
-        _tts_top_k = int(os.environ.get("TTS_TOP_K", "20"))
         logits_warpers, logits_processors = gen_logits(
-            num_code=self.config.num_audio_tokens,
-            top_p=_tts_top_p,
-            top_k=_tts_top_k,
-            repetition_penalty=repetition_penalty,
+            num_code=self.config.num_audio_tokens, repetition_penalty=repetition_penalty
         )
 
         # We only support batch size `1` for now
@@ -5410,12 +5217,6 @@ class MiniCPMTTS(PreTrainedModel):
                     logits = logitsProcessors(logits_token, logits)
 
                 del logits_token
-
-            # Apply nucleus/top-k warpers (this streaming path previously computed
-            # but never applied them, so the full low-prob tail was sampled -> garbled
-            # wrong syllables). TopP/TopK ignore the input_ids arg.
-            for logitsWarpers in logits_warpers:
-                logits = logitsWarpers(None, logits)
 
             if force_no_stop or t < min_new_tokens:
                 logits[:, eos_token] = -torch.inf

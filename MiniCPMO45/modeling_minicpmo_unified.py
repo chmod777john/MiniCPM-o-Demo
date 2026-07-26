@@ -104,8 +104,8 @@ class MiniCPMO(BaseMiniCPMO):
             "text_repetition_window_size": 512,
             "listen_prob_scale": 1.0,
             "force_listen_count": 0,
-            "tts_temperature": 0.2,
-            "tts_repetition_penalty": 1.10,
+            "tts_temperature": 0.8,
+            "tts_repetition_penalty": 1.05,
         }
 
     @property
@@ -390,4 +390,3 @@ class MiniCPMO(BaseMiniCPMO):
 
     def duplex_is_stopped(self) -> bool:
         return bool(self.duplex and self.duplex.is_session_stop_set())
-
