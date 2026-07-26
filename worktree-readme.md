@@ -1,3 +1,13 @@
+# Worktree: o5-no-fc-speedup-tp2-thin-unified-clean-llmgraph-narrow-no-tts-fix-fc-api-2026-07-26
+
+- Created: 2026-07-26
+- Base branch: `wt/o5-no-fc-speedup-tp2-thin-unified-clean-llmgraph-narrow-no-tts-fix-2026-07-26`
+- Base commit: `efb44621bd0d59c91596afca347f7186b38d799a`
+- Reason: integrate the existing FC API implementation into the clean thin-unified, no-debug-TTS, narrow-LLMGraph TP2 branch while preserving the original FC implementation and Git history.
+- FC source branch: `o5-no-fc-speedup-tp2-llmgraph-narrow-2026-07-23-fc-api-2026-07-23`
+- FC source commit: `a6da42ff9b0625eddfbab59fbc0266bba6eb1a0a`
+- Integration policy: use a real Git merge. Do not replace source FC behavior with a separately reimplemented equivalent.
+
 # Worktree: o5-no-fc-speedup-tp2-thin-unified-clean-llmgraph-narrow-no-tts-fix-2026-07-26
 
 - Created: 2026-07-26
