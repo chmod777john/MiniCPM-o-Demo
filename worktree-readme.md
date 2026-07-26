@@ -1,3 +1,13 @@
+# Worktree: o5-fc-dev
+
+- Created: 2026-07-26
+- Branch: `o5-fc-dev`
+- Base branch: `wt/o5-no-fc-speedup-tp2-thin-unified-clean-llmgraph-narrow-no-tts-fix-fc-api-fc-board-job616069-2026-07-26`
+- Base commit: `c732ae24d0d0dfd35afc151f3c968d212652c217`
+- Source worktree: `/user/weihongliang/MiniCPM-o-Demo-wt-o5-no-fc-speedup-tp2-thin-unified-2026-07-24-clean-llmgraph-narrow-no-tts-fix-2026-07-26-fc-api-2026-07-26-fc-board-job616069-2026-07-26`
+- Reason: establish the formal O5 FC development branch from the clean thin-unified TP2 implementation after FC API integration, FC Board MVP integration, TauVoice validation, and Board API same-schedule alignment.
+- Baseline validation: TauVoice tasks `622868` and `622892`; FC Board task `622959`.
+
 # Worktree: o5-no-fc-speedup-tp2-thin-unified-clean-llmgraph-narrow-no-tts-fix-fc-api-fc-board-job616069-2026-07-26
 
 - Created: 2026-07-26
