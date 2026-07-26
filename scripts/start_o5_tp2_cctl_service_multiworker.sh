@@ -22,6 +22,7 @@ TORCHRUN_MASTER_BASE_PORT="${TORCHRUN_MASTER_BASE_PORT:-29500}"
 WORKER_ID_PREFIX="${WORKER_ID_PREFIX:-o5-tp2-cctl-worker}"
 WORKER_GPU_GROUP_PREFIX="${WORKER_GPU_GROUP_PREFIX:-cctl-a100-tp2}"
 LOG_DIR="${LOG_DIR:-${PROJECT_DIR}/run-logs/o5_tp2_cctl_multiworker}"
+O5_TOKEN_TRACE_DIR="${O5_TOKEN_TRACE_DIR:-${PROJECT_DIR}/data/sessions}"
 ENABLE_FRP="${ENABLE_FRP:-1}"
 FRPC_BIN="${FRPC_BIN:-frpc}"
 FRPC_CONFIG="${FRPC_CONFIG:-}"
@@ -37,6 +38,7 @@ export TOKENIZERS_PARALLELISM="${TOKENIZERS_PARALLELISM:-false}"
 export O5_BACKBONE_DIR="${BACKBONE_DIR}"
 export O5_LLM_CACHE
 export O5_SPMD_HEARTBEAT_INTERVAL
+export O5_TOKEN_TRACE_DIR
 export TORCHRUN="${VENV_DIR}/bin/torchrun"
 
 PYTHON="${VENV_DIR}/bin/python"
@@ -110,6 +112,7 @@ visible_devices_for_worker() {
 echo "[tp2-mw-start] project=${PROJECT_DIR}"
 echo "[tp2-mw-start] model=${MODEL_PATH}"
 echo "[tp2-mw-start] pt=${PT_PATH}"
+echo "[tp2-mw-start] token_trace_dir=${O5_TOKEN_TRACE_DIR}"
 echo "[tp2-mw-start] backbone=${BACKBONE_DIR}"
 echo "[tp2-mw-start] workers=${NUM_WORKERS} gpus_per_worker=${GPUS_PER_WORKER} total_gpus=$((NUM_WORKERS * GPUS_PER_WORKER))"
 echo "[tp2-mw-start] llm_cache=${O5_LLM_CACHE} spmd_heartbeat=${O5_SPMD_HEARTBEAT_INTERVAL}"

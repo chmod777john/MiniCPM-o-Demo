@@ -239,6 +239,8 @@ class BackendProtocolSession:
     async def init(self, params: Dict[str, Any]) -> None:
         if self.initialized:
             raise RuntimeError("session is already initialized")
+        if hasattr(self.backend, "set_trace_session_id"):
+            await asyncio.to_thread(self.backend.set_trace_session_id, self.session_id)
         if self.mode == "full_duplex":
             await self._init_duplex(params)
         self.initialized = True
@@ -274,6 +276,9 @@ class BackendProtocolSession:
                 await asyncio.to_thread(self.backend.duplex_stop)
             await self._drain_finalize()
             await asyncio.to_thread(self.backend.duplex_cleanup)
+        if hasattr(self.backend, "set_trace_session_id"):
+            with suppress(Exception):
+                await asyncio.to_thread(self.backend.set_trace_session_id, None)
 
         if emit_event:
             with suppress(Exception):
@@ -299,6 +304,9 @@ class BackendProtocolSession:
                 await asyncio.to_thread(self.backend.duplex_stop)
                 await self._drain_finalize()
                 await asyncio.to_thread(self.backend.duplex_cleanup)
+        if hasattr(self.backend, "set_trace_session_id"):
+            with suppress(Exception):
+                await asyncio.to_thread(self.backend.set_trace_session_id, None)
         await self.state.forget(self.session_id)
 
     async def _init_duplex(self, params: Dict[str, Any]) -> None:

@@ -81,6 +81,7 @@ class PyTorchBackend:
         self.spmd_is_worker = False
         self._token_trace: Optional[Dict[str, Any]] = None
         self._token_trace_path: Optional[Path] = None
+        self._token_trace_dir: Optional[Path] = None
 
         # Duplex 暂停超时监控 task
         self._duplex_timeout_task: Optional[asyncio.Task] = None
@@ -162,9 +163,29 @@ class PyTorchBackend:
             self._token_trace["current_unit"] = unit_id
             self._write_token_trace()
 
+    @staticmethod
+    def _safe_trace_session_id(session_id: str) -> str:
+        safe = "".join(ch if ch.isalnum() or ch in "._-" else "_" for ch in str(session_id))
+        return safe[:128] or "session"
+
+    def set_trace_session_id(self, session_id: Optional[str]) -> None:
+        if self._token_trace is None:
+            return
+        if self._token_trace_dir is not None and session_id:
+            safe_session = self._safe_trace_session_id(session_id)
+            self._token_trace_path = self._token_trace_dir / safe_session / "token_trace.json"
+        self._token_trace.update({
+            "session_id": session_id,
+            "current_unit": None,
+            "generated_tts_chunks": [],
+            "token2wav_stream_inputs": [],
+        })
+        self._write_token_trace()
+
     def _install_token_trace_if_requested(self) -> None:
         trace_path = os.environ.get("O5_TOKEN_TRACE_PATH")
-        if not trace_path or self.processor is None:
+        trace_dir = os.environ.get("O5_TOKEN_TRACE_DIR")
+        if not (trace_path or trace_dir) or self.processor is None:
             return
 
         model = getattr(self.processor, "model", None)
@@ -173,8 +194,10 @@ class PyTorchBackend:
             logger.warning("O5_TOKEN_TRACE_PATH set but duplex model is unavailable")
             return
 
-        self._token_trace_path = Path(trace_path)
+        self._token_trace_dir = Path(trace_dir) if trace_dir else None
+        self._token_trace_path = Path(trace_path) if trace_path else None
         self._token_trace = {
+            "session_id": None,
             "current_unit": None,
             "generated_tts_chunks": [],
             "token2wav_stream_inputs": [],
@@ -227,7 +250,8 @@ class PyTorchBackend:
             audio_tokenizer.stream = traced_stream
 
         self._write_token_trace()
-        logger.info("[GPU %s] Token trace enabled: %s", self.gpu_id, self._token_trace_path)
+        target = self._token_trace_path if self._token_trace_path is not None else f"{self._token_trace_dir}/<session>/token_trace.json"
+        logger.info("[GPU %s] Token trace enabled: %s", self.gpu_id, target)
 
     def _get_spmd_mirror(self) -> Any:
         model = getattr(self.processor, "model", None)

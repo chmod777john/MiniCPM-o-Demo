@@ -17,6 +17,7 @@ GATEWAY_INTERNAL_PORT="${GATEWAY_INTERNAL_PORT:-8010}"
 WORKER_ID="${WORKER_ID:-o5-tp2-cctl-worker}"
 WORKER_GPU_GROUP="${WORKER_GPU_GROUP:-cctl-a100-tp2}"
 LOG_DIR="${LOG_DIR:-${PROJECT_DIR}/run-logs/o5_tp2_cctl}"
+O5_TOKEN_TRACE_DIR="${O5_TOKEN_TRACE_DIR:-${PROJECT_DIR}/data/sessions}"
 ENABLE_FRP="${ENABLE_FRP:-1}"
 FRPC_BIN="${FRPC_BIN:-frpc}"
 FRPC_CONFIG="${FRPC_CONFIG:-}"
@@ -31,6 +32,7 @@ export TOKENIZERS_PARALLELISM="${TOKENIZERS_PARALLELISM:-false}"
 export O5_BACKBONE_DIR="${BACKBONE_DIR}"
 export O5_LLM_CACHE
 export O5_SPMD_HEARTBEAT_INTERVAL
+export O5_TOKEN_TRACE_DIR
 export TORCHRUN="${VENV_DIR}/bin/torchrun"
 
 PYTHON="${VENV_DIR}/bin/python"
@@ -69,6 +71,7 @@ wait_http() {
 echo "[tp2-start] project=${PROJECT_DIR}"
 echo "[tp2-start] model=${MODEL_PATH}"
 echo "[tp2-start] pt=${PT_PATH}"
+echo "[tp2-start] token_trace_dir=${O5_TOKEN_TRACE_DIR}"
 echo "[tp2-start] backbone=${BACKBONE_DIR} llm_cache=${O5_LLM_CACHE} spmd_heartbeat=${O5_SPMD_HEARTBEAT_INTERVAL}"
 echo "[tp2-start] gateway=https://${GATEWAY_HOST}:${GATEWAY_PORT} backend=${BACKEND_URL} worker=${WORKER_ENDPOINT}"
 

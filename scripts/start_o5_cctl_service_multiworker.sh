@@ -19,6 +19,7 @@ BACKEND_START_STAGGER_SECONDS="${BACKEND_START_STAGGER_SECONDS:-90}"
 WORKER_ID_PREFIX="${WORKER_ID_PREFIX:-o5-cctl-worker}"
 WORKER_GPU_GROUP_PREFIX="${WORKER_GPU_GROUP_PREFIX:-cctl-a100}"
 LOG_DIR="${LOG_DIR:-${PROJECT_DIR}/run-logs/o5_cctl_multiworker}"
+O5_TOKEN_TRACE_DIR="${O5_TOKEN_TRACE_DIR:-${PROJECT_DIR}/data/sessions}"
 ENABLE_FRP="${ENABLE_FRP:-1}"
 FRPC_BIN="${FRPC_BIN:-frpc}"
 FRPC_CONFIG="${FRPC_CONFIG:-}"
@@ -29,6 +30,7 @@ cd "${PROJECT_DIR}"
 
 export PYTHONPATH="${PROJECT_DIR}:${PYTHONPATH:-}"
 export TOKENIZERS_PARALLELISM="${TOKENIZERS_PARALLELISM:-false}"
+export O5_TOKEN_TRACE_DIR
 
 PYTHON="${VENV_DIR}/bin/python"
 
@@ -106,6 +108,7 @@ start_frpc_retry_loop() {
 echo "[start] project=${PROJECT_DIR}"
 echo "[start] model=${MODEL_PATH}"
 echo "[start] pt=${PT_PATH}"
+echo "[start] token_trace_dir=${O5_TOKEN_TRACE_DIR}"
 echo "[start] workers=${NUM_WORKERS} backend_base=${BACKEND_BASE_PORT} worker_base=${WORKER_BASE_PORT}"
 echo "[start] backend_start_stagger_seconds=${BACKEND_START_STAGGER_SECONDS}"
 echo "[start] gateway=https://${GATEWAY_HOST}:${GATEWAY_PORT} internal=:${GATEWAY_INTERNAL_PORT}"
