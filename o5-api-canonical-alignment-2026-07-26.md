@@ -6,7 +6,7 @@ Code under test:
 
 - Branch: `wt/o5-no-fc-speedup-tp2-thin-unified-2026-07-24-api-canonical-align-2026-07-26`
 - Base commit: `c0bb591cc9a37b465548b2ae13ba2f63e579873d`
-- Report commit: `TBD`
+- Code commit: `04462c74cca97296b63e7c8a445fe699e0186678`
 - API probe: `tools/o5trace/api_canonical_video_probe.py`
 - Compare tool: `tools/o5trace/compare_canonical_units.py`
 - cctl runner: `scripts/run_api_canonical_align_job.sh`
