@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-cd "${PROJECT_DIR:-/user/weihongliang/MiniCPM-o-Demo-wt-o5-no-fc-speedup-tp2-llmgraph-narrow-2026-07-23}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "${PROJECT_DIR:-${SCRIPT_DIR}}"
 export PROJECT_DIR=$PWD
 export VENV_DIR="${VENV_DIR:-/user/weihongliang/MiniCPM-o-Demo-wt-o5-inference-refactor-2026-06-30/.venv-accel}"
 export MODEL_PATH="${MODEL_PATH:-/user/weihongliang/MiniCPM-o-4_6}"
