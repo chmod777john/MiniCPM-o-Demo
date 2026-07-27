@@ -66,6 +66,11 @@ def build_argument_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument("--insecure", action="store_true")
+    parser.add_argument(
+        "--generate-audio",
+        action="store_true",
+        help="要求服务端生成并返回 spoken TTS waveform",
+    )
     return parser
 
 
@@ -191,6 +196,7 @@ async def run(
         profile=profile,
         data_root=data_root,
         external_demo_root=args.external_demo_root,
+        generate_audio=args.generate_audio,
     )
     result = await evaluator.evaluate(training_data)
     run_id = (

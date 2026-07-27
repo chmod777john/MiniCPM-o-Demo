@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Protocol
+from typing import Any, Protocol
 
 from minicpm_o5_sdk import O5DuplexTrainingData
 
@@ -21,6 +21,24 @@ from .training_data_scenario import (
     REQUIRED_SDK_VERSION,
     build_training_data_scenario,
 )
+
+
+def set_session_generate_audio(
+    session_init: dict[str, Any],
+    *,
+    enabled: bool,
+) -> None:
+    """设置嵌套 ``session.init.payload.generate_audio``。
+
+    参数:
+        session_init: 完整上行 ``session.init`` 事件。
+        enabled: 是否要求服务端生成 TTS waveform。
+    """
+
+    session_payload = session_init.get("payload")
+    if not isinstance(session_payload, dict):
+        raise ValueError("session.init 缺少 object payload")
+    session_payload["generate_audio"] = enabled
 
 
 class FcApiSemanticClientProtocol(Protocol):
@@ -46,6 +64,7 @@ class FcApiTrainingDataEvaluator:
             "/user/sunweiyue/lib/"
             "minicpm-o-4_5-pytorch-simple-demo-merge-add-api"
         ),
+        generate_audio: bool = False,
     ) -> None:
         """初始化 evaluator。
 
@@ -54,11 +73,13 @@ class FcApiTrainingDataEvaluator:
             profile: endpoint 的 checkpoint/Profile 元信息。
             data_root: TrainingData 媒体相对路径根目录。
             external_demo_root: 提供官方 resume canonicalizer 的外部 Demo 根目录。
+            generate_audio: 是否要求服务端生成 spoken TTS waveform。
         """
 
         self.client = client
         self.profile = profile
         self.data_root = data_root
+        self.generate_audio = generate_audio
         self.reconstructor = FcApiTokenReconstructor(
             external_demo_root=external_demo_root
         )
@@ -93,6 +114,10 @@ class FcApiTrainingDataEvaluator:
                 training_data=training_data,
                 profile=self.profile,
                 data_root=self.data_root,
+            )
+            set_session_generate_audio(
+                scenario.session_init,
+                enabled=self.generate_audio,
             )
         except Exception as exc:
             category = _classify_scenario_error(exc)
