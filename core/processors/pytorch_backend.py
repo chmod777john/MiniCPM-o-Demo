@@ -387,18 +387,39 @@ class PyTorchBackend:
         ref_audio_path: Optional[str] = None,
         prompt_wav_path: Optional[str] = None,
         generate_audio: bool = False,
+        fixed_tool_call_ids: Optional[List[str]] = None,
     ) -> Any:
+        """初始化 FC Duplex View，并按需注入评测固定工具调用 ID。
+
+        参数:
+            system_prompt: 模型 Session 的系统提示词。
+            tools: 可供模型调用的工具定义。
+            ref_audio_path: FC TTS 条件参考音频路径。
+            prompt_wav_path: Token2Wav 使用的提示音频路径。
+            generate_audio: 是否生成 spoken waveform。
+            fixed_tool_call_ids: 评测专用的确定性内部工具调用 ID；None 使用默认生成器。
+
+        返回:
+            FC Duplex View 的初始化结果。
+        """
+
+        from core.processors.unified import FixedToolCallIdGenerator
+
         fc_view = self.processor.set_fc_duplex_mode()
-        effective_ref_audio_path = ref_audio_path or (self.ref_audio_path if generate_audio else None)
-        effective_prompt_wav_path = prompt_wav_path or ref_audio_path or (self.ref_audio_path if generate_audio else None)
+        tool_call_id_generator = (
+            FixedToolCallIdGenerator(fixed_tool_call_ids)
+            if fixed_tool_call_ids is not None
+            else None
+        )
         return fc_view.prepare(
             FcDuplexPrepareRequest(
                 system_prompt=system_prompt,
                 tools=tools,
-                ref_audio_path=effective_ref_audio_path,
-                prompt_wav_path=effective_prompt_wav_path,
+                ref_audio_path=ref_audio_path or (self.ref_audio_path if generate_audio else None),
+                prompt_wav_path=prompt_wav_path or ref_audio_path or (self.ref_audio_path if generate_audio else None),
                 generate_audio=generate_audio,
-            )
+            ),
+            tool_call_id_generator=tool_call_id_generator,
         )
 
     def fc_duplex_prefill(
@@ -449,6 +470,68 @@ class PyTorchBackend:
     def fc_duplex_finalize(self) -> Any:
         fc_view = self.processor.set_fc_duplex_mode()
         return fc_view.finalize_unit(FcFinalizeUnitRequest())
+
+    def fc_duplex_resume_boundary_status(self) -> Dict[str, Any]:
+        """Return the View's public-history resume eligibility at the Unit boundary."""
+
+        fc_view = self.processor.set_fc_duplex_mode()
+        return fc_view.resume_boundary_status()
+
+    def fc_duplex_terminate_non_spoken_text_stream(self, *, reason: str) -> Any:
+        """Terminate one View text stream without advancing model/KV state."""
+
+        fc_view = self.processor.set_fc_duplex_mode()
+        return fc_view.terminate_non_spoken_text_stream(reason)
+
+    def fc_duplex_resume_identity(self) -> Dict[str, Any]:
+        """Return current model/tokenizer identity for public resume metadata."""
+
+        fc_view = self.processor.set_fc_duplex_mode()
+        return fc_view.resume_identity()
+
+    def fc_duplex_replay_completed_unit(
+        self,
+        *,
+        audio_data: Optional[str],
+        frame_list: Optional[List[Any]],
+        tool_responses: Optional[List[Any]],
+        sample_rate: int,
+        spoken_token_ids: List[int],
+        non_spoken_token_ids: List[int],
+        deferred_non_spoken_close: bool,
+    ) -> Any:
+        """Deterministically feed one historical FC Duplex Unit."""
+
+        fc_view = self.processor.set_fc_duplex_mode()
+        return fc_view.replay_completed_unit(
+            audio_data=audio_data,
+            frame_list=frame_list,
+            tool_responses=tool_responses,
+            sample_rate=sample_rate,
+            spoken_token_ids=spoken_token_ids,
+            non_spoken_token_ids=non_spoken_token_ids,
+            deferred_non_spoken_close=deferred_non_spoken_close,
+        )
+
+    def fc_duplex_restore_generation_stream_sequence(
+        self,
+        *,
+        next_stream_sequence: int,
+    ) -> None:
+        """Advance View stream IDs after stateless replay."""
+
+        fc_view = self.processor.set_fc_duplex_mode()
+        fc_view.restore_generation_stream_sequence(next_stream_sequence)
+
+    def fc_duplex_restore_tool_call_sequence(
+        self,
+        *,
+        tool_call_count: int,
+    ) -> None:
+        """Advance View/internal tool-call IDs after stateless replay."""
+
+        fc_view = self.processor.set_fc_duplex_mode()
+        fc_view.restore_tool_call_sequence(tool_call_count)
 
     def fc_duplex_dump_trace(self, *, path: str, session_id: Optional[str] = None, reason: Optional[str] = None) -> Any:
         if self.processor is None:

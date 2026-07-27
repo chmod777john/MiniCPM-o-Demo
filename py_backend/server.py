@@ -28,6 +28,7 @@ from core.processors.backend_factory import create_backend
 from py_backend.media import decode_audio_base64, decode_frame_base64_list
 from py_backend.voice import resolve_duplex_voice_refs
 from py_backend.fc_duplex_runtime import FcDuplexSessionRuntime, fc_duplex_enabled
+from core.fc_duplex_resume import FcDuplexResumeError
 from py_backend.chat_util import (
     convert_to_model_msgs,
     parse_raw_messages,
@@ -248,8 +249,29 @@ class BackendProtocolSession:
             "session.created",
             session_id=self.session_id,
             mode=self.mode,
+            resume=(
+                self._fc_runtime.resume_identity
+                if self._fc_runtime is not None
+                else None
+            ),
             metrics=self._safe_metrics(),
         )
+
+    async def resume(self, params: Dict[str, Any]) -> None:
+        """Initialize a new backend Session by statelessly replaying public history."""
+
+        if self.initialized:
+            raise RuntimeError("session is already initialized")
+        if self.mode != "full_duplex":
+            raise RuntimeError("session.resume only supports full_duplex")
+        self._fc_runtime = FcDuplexSessionRuntime(
+            session_id=self.session_id,
+            backend=self.backend,
+            send=self.send,
+            on_fatal=self._handle_fc_runtime_fatal,
+        )
+        await self._fc_runtime.resume(params)
+        self.initialized = True
 
     async def push(self, message: Dict[str, Any]) -> None:
         if self.closed:
@@ -309,12 +331,30 @@ class BackendProtocolSession:
                     await asyncio.to_thread(self.backend.duplex_cleanup)
         await self.state.forget(self.session_id)
 
+    async def _handle_fc_runtime_fatal(self, error: Exception) -> None:
+        """Close the protocol connection from the detached FC queue worker."""
+
+        if self.closed:
+            return
+        self.closed = True
+        with suppress(Exception):
+            await self.send(
+                "session.closed",
+                session_id=self.session_id,
+                reason="backend_error",
+                diagnostic={"message": str(error)},
+            )
+        with suppress(Exception):
+            await self.ws.close(code=1011, reason="backend_error")
+        await self.state.forget(self.session_id)
+
     async def _init_duplex(self, params: Dict[str, Any]) -> None:
         if fc_duplex_enabled(params):
             self._fc_runtime = FcDuplexSessionRuntime(
                 session_id=self.session_id,
                 backend=self.backend,
                 send=self.send,
+                on_fatal=self._handle_fc_runtime_fatal,
             )
             await self._fc_runtime.prepare(params)
             return
@@ -672,11 +712,16 @@ async def backend_ws(ws: WebSocket) -> None:
     session: Optional[BackendProtocolSession] = None
     try:
         first = json.loads(await ws.receive_text())
-        if _message_type(first) != "session.init":
-            raise RuntimeError("first message must be session.init")
+        first_type = _message_type(first)
+        if first_type not in {"session.init", "session.resume"}:
+            raise RuntimeError("first message must be session.init or session.resume")
 
         params = _payload(first)
-        mode = str(params.get("mode") or "full_duplex")
+        mode = (
+            "full_duplex"
+            if first_type == "session.resume"
+            else str(params.get("mode") or "full_duplex")
+        )
         # session identity 由 backend 分配，不接受客户端建议的 session_id（见协议 schema §3.1）
         session_id = f"sess_{uuid.uuid4().hex[:12]}"
         session = BackendProtocolSession(
@@ -687,7 +732,10 @@ async def backend_ws(ws: WebSocket) -> None:
             state=_server_state,
         )
         await _server_state.register(session)
-        await session.init(params)
+        if first_type == "session.resume":
+            await session.resume(params)
+        else:
+            await session.init(params)
 
         while not session.closed:
             message = json.loads(await ws.receive_text())
@@ -696,8 +744,8 @@ async def backend_ws(ws: WebSocket) -> None:
                 await session.push(message)
                 continue
             if msg_type in {"input.tool_result", "input.tool_result.delta", "input.tool_result.done"}:
-                payload = _payload(message)
-                payload["type"] = msg_type.replace("input.", "")
+                payload = dict(message)
+                payload["type"] = msg_type.removeprefix("input.")
                 await session.push({"type": "input.append", "input": payload})
                 continue
             # close 只走 HTTP unary 控制通道（见协议 network §3.2），WS 上不接受 close
@@ -706,6 +754,21 @@ async def backend_ws(ws: WebSocket) -> None:
     except WebSocketDisconnect:
         if session is not None:
             await session.close(reason="client_disconnected", emit_event=False)
+    except FcDuplexResumeError as exc:
+        if session is not None:
+            with suppress(Exception):
+                await session.send(
+                    "session.resume.failed",
+                    code=exc.code,
+                    unit_index=exc.unit_index,
+                    stream_id=exc.stream_id,
+                    pending_from_step=exc.pending_from_step,
+                    message=str(exc),
+                )
+            await session.close(reason="resume_failed", emit_event=False)
+        else:
+            with suppress(Exception):
+                await ws.close(code=1008, reason="resume_failed")
     except Exception as exc:
         if session is not None:
             await session.fatal("backend_error", message=str(exc))

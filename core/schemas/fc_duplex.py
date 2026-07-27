@@ -6,12 +6,78 @@ execution logic.
 """
 
 from enum import Enum
-from typing import Any, Dict, List, Literal, Optional
+from typing import Annotated, Any, Dict, List, Literal, Optional, Union
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 FcNonSpokenCloseReason = Literal["eos", "no_action", "budget_reached", "hold", "abort"]
+FcGenerationTrack = Literal["spoken", "non_spoken"]
+
+
+class FcGenerationTextPendingOutput(BaseModel):
+    """一个 ordinary generation step 尚未产生安全 Unicode。"""
+
+    kind: Literal["text_pending"] = "text_pending"
+
+
+class FcGenerationTextDeltaOutput(BaseModel):
+    """一个 safe text delta 及其覆盖的 stream-local token step 数量。"""
+
+    kind: Literal["text_delta"] = "text_delta"
+    text: str = Field(..., min_length=1)
+    source_step_count: int = Field(..., ge=1)
+
+
+class FcGenerationProtocolOutput(BaseModel):
+    """一个 protocol structural token 的稳定语义 key。"""
+
+    kind: Literal["protocol"] = "protocol"
+    semantic_key: str = Field(..., min_length=1)
+    deferred_model_feed: bool = Field(
+        False,
+        description="Whether this protocol token enters model KV at next Unit prefill",
+    )
+
+
+FcGenerationStepOutput = Annotated[
+    Union[
+        FcGenerationTextPendingOutput,
+        FcGenerationTextDeltaOutput,
+        FcGenerationProtocolOutput,
+    ],
+    Field(discriminator="kind"),
+]
+
+
+class FcViewGenerationStep(BaseModel):
+    """View 输出的逐 token generation step。
+
+    ``token_id`` 只供内部测试、诊断与 runtime 组装 canonical 日志，公共 API
+    step 不得包含该字段。
+    """
+
+    token_id: int
+    stream_id: str
+    track: FcGenerationTrack
+    output: FcGenerationStepOutput
+
+
+class FcGenerationWarning(BaseModel):
+    """Non-fatal public warning produced at a lossy text stream boundary."""
+
+    code: Literal["incomplete_bpe_at_stream_end"]
+    stream_id: str
+    track: FcGenerationTrack
+    reason: str
+    message: str
+
+
+class FcGenerationStreamTerminationResult(BaseModel):
+    """View result for an externally-triggered stream boundary."""
+
+    generation_steps: List[FcViewGenerationStep] = Field(default_factory=list)
+    warnings: List[FcGenerationWarning] = Field(default_factory=list)
 
 
 class NonSpokenStepGenerationFlag(str, Enum):
@@ -30,9 +96,76 @@ class FcDuplexConfig(BaseModel):
     unit_sec: float = Field(1.0, gt=0.0, description="Seconds per duplex unit")
     sample_rate: int = Field(16000, gt=0, description="Input audio sample rate")
     max_spoken_tokens: int = Field(24, ge=1, description="Max spoken tokens per unit")
-    non_spoken_budget_per_unit: int = Field(12, ge=0, description="Offline non-spoken budget per unit")
-    extra_response_units: int = Field(0, ge=0, description="Extra silent units after input audio")
+    non_spoken_budget_per_unit: Optional[int] = Field(
+        None,
+        ge=1,
+        description="Explicit legacy offline budget override; checkpoint deployments should use per-state budgets",
+    )
+    extra_response_units: int = Field(4, ge=0, description="Extra silent units after input audio")
     decode_mode: str = Field("greedy", description="Decode mode: greedy or sampling")
+
+
+class FcDuplexEvaluationConfig(BaseModel):
+    """Semantic Realtime API v2 的评测专用配置。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    fixed_tool_call_ids: Optional[List[str]] = Field(
+        None,
+        description=(
+            "评测时按顺序分配给 View 的内部 tool_call_id；普通 Session 不设置。"
+        ),
+    )
+
+    @field_validator("fixed_tool_call_ids")
+    @classmethod
+    def validate_fixed_tool_call_ids(
+        cls,
+        value: Optional[List[str]],
+    ) -> Optional[List[str]]:
+        """校验固定工具调用 ID 列表非空、元素非空且互不重复。
+
+        参数:
+            value: Session 传入的固定工具调用 ID 列表；None 表示使用默认生成器。
+
+        返回:
+            已校验且保持原顺序的 ID 列表，或 None。
+
+        异常:
+            ValueError: 显式列表为空、包含空白 ID 或包含重复 ID。
+        """
+
+        if value is None:
+            return None
+        if not value:
+            raise ValueError("fixed_tool_call_ids 显式提供时不能为空")
+        invalid_ids = [
+            tool_call_id
+            for tool_call_id in value
+            if not tool_call_id or tool_call_id != tool_call_id.strip()
+        ]
+        if invalid_ids:
+            raise ValueError(
+                "fixed_tool_call_ids 每一项必须是非空且无首尾空白的字符串"
+            )
+        if len(set(value)) != len(value):
+            raise ValueError("fixed_tool_call_ids 不能包含重复 ID")
+        return value
+
+
+class FcDuplexInfrastructureConfig(BaseModel):
+    """FC Duplex runtime 的独立基础设施安全上限。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    max_non_spoken_steps: int = Field(
+        4096,
+        ge=1,
+        description=(
+            "单 Unit 最多执行的 non-spoken decode step；达到时抛 RuntimeError，"
+            "不得伪装为协议 budget_reached。"
+        ),
+    )
 
 
 class FcToolResponse(BaseModel):
@@ -85,6 +218,10 @@ class FcDuplexPrefillResult(BaseModel):
     is_listen: Optional[bool] = Field(None, description="Current unit listen state if already known")
     is_speaking: bool = Field(False, description="Current unit speaking state if already known")
     inserted_token_ids: List[int] = Field(default_factory=list, description="Token ids inserted by this prefill, if tracked")
+    tool_events: List[Dict[str, Any]] = Field(
+        default_factory=list,
+        description="Actual internal tool events attributed to this processed Unit",
+    )
 
 
 class FcSpokenGenerateRequest(BaseModel):
@@ -133,7 +270,17 @@ class FcDuplexStepResult(BaseModel):
     terminated: bool = Field(False, description="Whether the current slot naturally or forcibly terminated")
     close_reason: Optional[str] = Field(None, description="Close reason if the slot was closed")
     closed_spans: List[FcClosedSpan] = Field(default_factory=list, description="Spans closed by this step")
-    text: str = Field("", description="Decoded text produced by this step")
+    text: str = Field("", description="BPE-merged decode of token_ids")
+    text_delta: str = Field("", description="Safe incremental Unicode produced by View")
+    span_started: Optional[Literal["think", "tool_call"]] = Field(
+        None,
+        description="Semantic span created by this View step, including implicit post-budget continuation",
+    )
+    generation_steps: List[FcViewGenerationStep] = Field(
+        default_factory=list,
+        description="Per-token View steps used by resumable generation logging",
+    )
+    warnings: List[FcGenerationWarning] = Field(default_factory=list)
     audio_waveform: Optional[Any] = Field(None, description="Generated 24kHz audio waveform, if requested")
     audio_sample_rate: Optional[int] = Field(None, description="Sample rate of audio_waveform")
     n_tts_tokens: int = Field(0, description="Number of generated TTS audio tokens")
@@ -146,7 +293,17 @@ class FcSpokenGenerateResult(BaseModel):
     is_listen: bool = Field(False, description="Whether the model chose listen")
     is_speaking: bool = Field(False, description="Whether the model chose speak")
     spoken_token_ids: List[int] = Field(default_factory=list, description="Spoken slot token ids")
-    spoken_text: str = Field("", description="Decoded spoken text")
+    spoken_text: str = Field("", description="Decoded spoken text (BPE merged)")
+    spoken_text_delta: str = Field("", description="Safe incremental spoken Unicode produced by View")
+    spoken_full_text: Optional[str] = Field(
+        None,
+        description="Complete spoken turn text emitted only at spoken_turn_eos",
+    )
+    generation_steps: List[FcViewGenerationStep] = Field(
+        default_factory=list,
+        description="Per-token View steps used by resumable generation logging",
+    )
+    warnings: List[FcGenerationWarning] = Field(default_factory=list)
     spoken_turn_eos: bool = Field(False, description="Whether this unit ended the spoken turn")
     audio_waveform: Optional[Any] = Field(None, description="Generated 24kHz waveform, if requested")
     audio_sample_rate: Optional[int] = Field(None, description="Sample rate of audio_waveform")
@@ -156,7 +313,6 @@ class FcSpokenGenerateResult(BaseModel):
     cost_tts_prep: float = Field(0.0, description="TTS condition preparation cost in seconds")
     cost_tts: float = Field(0.0, description="TTS token generation cost in seconds")
     cost_token2wav: float = Field(0.0, description="Token2Wav cost in seconds")
-    metadata: Dict[str, Any] = Field(default_factory=dict, description="Additional implementation details")
 
 
 class FcNonSpokenGenerateResult(FcDuplexStepResult):
@@ -177,11 +333,6 @@ class FcDuplexUnitInfo(BaseModel):
     is_listen: Optional[bool] = Field(None, description="Whether this unit chose listen")
     is_speaking: bool = Field(False, description="Whether this unit chose speak")
     spoken_ids: List[int] = Field(default_factory=list, description="Spoken slot token ids")
-    spoken_slot_terminated: bool = Field(False, description="Whether the spoken slot ended with a model-predicted terminator")
-    spoken_slot_unterminated: bool = Field(False, description="Whether the framework closed the slot boundary without a spoken slot terminator")
-    spoken_generation_reached_max_tokens: bool = Field(False, description="Whether spoken generation reached max_tokens without a slot terminator")
-    spoken_termination_reason: Optional[str] = Field(None, description="Model-predicted spoken slot termination reason")
-    spoken_termination_token_id: Optional[int] = Field(None, description="Model-predicted spoken slot termination token id")
     non_spoken_ids: List[int] = Field(default_factory=list, description="Non-spoken slot token ids")
     non_spoken_terminator: Optional[str] = Field(None, description="Non-spoken close reason")
     closed_spans: List[FcClosedSpan] = Field(default_factory=list, description="Spans closed in this unit")
@@ -257,7 +408,7 @@ class FcDuplexOfflineInput(BaseModel):
     )
     tool_responses_by_call_id: Dict[str, Any] = Field(
         default_factory=dict,
-        description="Tool responses keyed by tool call id; auto scheduling injects them after predicted calls close",
+        description="Tool responses keyed by tool call id; offline inference sends them in the next unit after a call closes",
     )
     non_spoken_budgets_while_listening: Optional[List[Optional[int]]] = Field(
         None,
@@ -318,19 +469,11 @@ class FcDuplexTrainDataRequest(BaseModel):
     config: FcDuplexConfig = Field(default_factory=FcDuplexConfig, description="Offline inference config")
     non_spoken_budget_per_unit: Optional[int] = Field(None, description="Override non-spoken budget per unit")
     generate_audio: bool = Field(False, description="Whether to generate and optionally save TTS audio")
-    ref_audio_path: Optional[str] = Field(None, description="Optional reference audio path for FC TTS conditioning")
+    ref_audio_path: Optional[str] = Field(None, description="Reference audio path; defaults to sample user audio")
     prompt_wav_path: Optional[str] = Field(None, description="Token2Wav prompt path; defaults to ref_audio_path")
     output_artifact_dir: Optional[str] = Field(None, description="Directory to write source, streams, and audio artifacts")
     use_train_tool_call_ids: bool = Field(True, description="Use GT tool call ids for deterministic evaluation")
     inject_train_tool_responses: bool = Field(True, description="Inject GT tool responses after matching tool calls close")
-    tool_response_schedule: Literal["gt", "auto"] = Field(
-        "gt",
-        description=(
-            "Tool response scheduling strategy: 'gt' injects responses at the "
-            "unit indices from the train-data arrangement; 'auto' injects after "
-            "predicted tool calls using the runtime delay."
-        ),
-    )
 
 
 class FcDuplexTrainDataResult(BaseModel):
