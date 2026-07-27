@@ -44,6 +44,16 @@ run-logs/o45_semantic_v2_exact/
 o45_fc_board_overfit100_sdk005_step100/result.json
 ```
 
+O45 Full4850 TTS Profile validation also passed:
+
+```text
+profile: o45_fc_board_tts_full4850_sdk005_step400
+training Job: 624224
+embedding/lm_head rows: 151772
+checkpoint SHA256:
+d7e8c539c935eed8a64cef95b7015599ff8425795ca7a02875b978253aec750f
+```
+
 ## O5 checkpoint conversion
 
 The current Demo runtime accepts a dense PT plus a paired TP2 HF backbone.
