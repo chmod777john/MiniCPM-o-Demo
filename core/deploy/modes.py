@@ -42,17 +42,36 @@ def _mk_config(cfg: Dict[str, Any]):
     return c
 
 
+def _load_o5_processor(model_path: str):
+    """只使用仓库内 O5 processor/tokenizer 代码加载外部资产。"""
+
+    from modeling.o5.processing_minicpmo import (
+        MiniCPMAAudioProcessor,
+        MiniCPMOProcessor,
+        MiniCPMVImageProcessor,
+    )
+    from modeling.o5.tokenization_minicpmo_fast import MiniCPMOTokenizerFast
+
+    image_processor = MiniCPMVImageProcessor.from_pretrained(model_path)
+    audio_processor = MiniCPMAAudioProcessor.from_pretrained(model_path)
+    tokenizer = MiniCPMOTokenizerFast.from_pretrained(model_path)
+    return MiniCPMOProcessor(
+        image_processor=image_processor,
+        audio_processor=audio_processor,
+        tokenizer=tokenizer,
+    )
+
+
 def _load_full(cfg: Dict[str, Any], device: str):
     """Single-card: build MiniCPMO, load the full .pt, place on `device`, init_unified."""
     from accelerate import init_empty_weights
     from modeling.o5.modeling_minicpmo_unified import MiniCPMO
-    from modeling.o5.processing_minicpmo import MiniCPMOProcessor
     with init_empty_weights():
         model = MiniCPMO(_mk_config(cfg))
     sd = torch.load(cfg["pt_path"], map_location="cpu", weights_only=True, mmap=True)
     model.load_state_dict(sd, strict=False, assign=True); del sd
     model.bfloat16().eval().to(device)
-    model.processor = MiniCPMOProcessor.from_pretrained(cfg["model_path"])
+    model.processor = _load_o5_processor(cfg["model_path"])
     return model
 
 
@@ -69,7 +88,6 @@ def _surgery_tp(
     from transformers import AutoConfig, AutoModelForCausalLM
     from .llm_wrapper import DistributedTPLLM
     from modeling.o5.modeling_minicpmo_unified import MiniCPMO
-    from modeling.o5.processing_minicpmo import MiniCPMOProcessor
     with init_empty_weights():
         model = MiniCPMO(_mk_config(cfg))
     sd = torch.load(cfg["pt_path"], map_location="cpu", weights_only=True, mmap=True)
@@ -102,7 +120,7 @@ def _surgery_tp(
         world_size=world_size,
         sync_calls=sync_llm_calls,
     )
-    model.processor = MiniCPMOProcessor.from_pretrained(cfg["model_path"])
+    model.processor = _load_o5_processor(cfg["model_path"])
     return model
 
 

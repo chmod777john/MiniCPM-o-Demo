@@ -1,5 +1,5 @@
 {
-  "profile_id": "o45_board_overfit100_sdk005",
+  "profile_id": "o45_fc_board_overfit100_sdk005_step100",
   "model_family": "o45",
   "sdk_version": "0.0.5",
   "tokenizer_target": "o45_fc",

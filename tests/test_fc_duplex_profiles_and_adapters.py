@@ -214,6 +214,17 @@ def test_o5_adapter_exposes_matching_tokenizer_and_defers_resume() -> None:
         adapter.replay_completed_unit()
 
 
+def test_o5_adapter_accepts_existing_private_sdk_tokenizer_slot() -> None:
+    """现有 O5 Capability 的 ``_sdk_tokenizer`` 应由 Adapter 隔离兼容。"""
+
+    model = _FakeModel(O5TokenizerID.O5)
+    model.fc_duplex._sdk_tokenizer = model.fc_duplex.protocol_tokenizer
+    del model.fc_duplex.protocol_tokenizer
+    adapter = O5FcDuplexModelAdapter(model)
+
+    assert adapter.protocol_tokenizer.target == "o5"
+
+
 def test_adapter_factory_never_guesses_model_family() -> None:
     """Factory 只接受 DeploymentProfile 已明确声明的模型族。"""
 

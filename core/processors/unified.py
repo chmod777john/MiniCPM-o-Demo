@@ -1543,6 +1543,32 @@ class FcDuplexView:
             token_id = int(raw_token_id)
             if tokenizer.is_ordinary_token_id(token_id):
                 if stream is None:
+                    if (
+                        track == "non_spoken"
+                        and self._adapter.drops_unclassified_non_spoken_tokens
+                    ):
+                        self._resume_text_roundtrip_valid = False
+                        self._resume_text_roundtrip_error = {
+                            "status": "unavailable",
+                            "reason": "unclassified_non_spoken_token",
+                        }
+                        if not any(
+                            warning.code == "unclassified_non_spoken_token"
+                            for warning in warnings
+                        ):
+                            warnings.append(
+                                FcGenerationWarning(
+                                    code="unclassified_non_spoken_token",
+                                    stream_id="non_spoken_unclassified",
+                                    track="non_spoken",
+                                    reason="ordinary_before_opener",
+                                    message=(
+                                        "模型在 think/tool_call opener 前生成 ordinary token；"
+                                        "公共 Semantic API 无法无损归类，已显式丢弃该文本 step"
+                                    ),
+                                )
+                            )
+                        continue
                     raise RuntimeError(
                         f"FC {track} ordinary token arrived before stream opener: "
                         f"{token_id}"

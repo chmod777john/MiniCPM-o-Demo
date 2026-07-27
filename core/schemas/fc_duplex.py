@@ -66,7 +66,10 @@ class FcViewGenerationStep(BaseModel):
 class FcGenerationWarning(BaseModel):
     """Non-fatal public warning produced at a lossy text stream boundary."""
 
-    code: Literal["incomplete_bpe_at_stream_end"]
+    code: Literal[
+        "incomplete_bpe_at_stream_end",
+        "unclassified_non_spoken_token",
+    ]
     stream_id: str
     track: FcGenerationTrack
     reason: str

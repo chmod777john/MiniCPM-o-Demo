@@ -378,6 +378,32 @@ def test_pending_bpe_crosses_budget_without_warning_or_replacement() -> None:
     assert view.resume_boundary_status() == {"status": "available"}
 
 
+def test_unclassified_non_spoken_token_is_warned_and_dropped_for_o5() -> None:
+    """O5 非法 ordinary-before-opener 不应炸 Session，也不能伪装成 Think。"""
+
+    model = _FakeFcModel()
+    tokenizer = model.fc_duplex.protocol_tokenizer
+    model.non_spoken_results = [
+        {"token_ids": tokenizer.encode_ordinary("未分类文本")}
+    ]
+    adapter = O45FcDuplexModelAdapter(model)
+    adapter.drops_unclassified_non_spoken_tokens = True
+    view = FcDuplexView(adapter)
+    view.prepare(FcDuplexPrepareRequest())
+
+    result = view.streaming_non_spoken_generate(
+        FcNonSpokenGenerateRequest()
+    )
+
+    assert result.generation_steps == []
+    assert [warning.code for warning in result.warnings] == [
+        "unclassified_non_spoken_token"
+    ]
+    assert view.resume_boundary_status()["reason"] == (
+        "unclassified_non_spoken_token"
+    )
+
+
 def test_pending_bpe_at_explicit_end_emits_warning_instead_of_runtime_error() -> None:
     """Matching end 遇到 incomplete BPE 时关闭 stream 并返回 warning。"""
 

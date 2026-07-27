@@ -14,6 +14,7 @@ from tools.checkpoint.convert_mcore_to_pt import (
     _runtime_key,
     convert_model_only_dcp_to_pt,
 )
+from tools.checkpoint.extract_o5_tp2_backbone import build_o5_text_config
 from tools.checkpoint.validate_fc_checkpoint import validate_fc_checkpoint
 
 
@@ -128,24 +129,78 @@ def test_mcore_model_only_dcp_converts_to_runtime_pt(tmp_path: Path) -> None:
     source_dir = tmp_path / "dcp"
     dcp.save(
         {
-            "model.module.llm.model.embed_tokens.weight": torch.ones(4, 2),
-            "model.module.llm.lm_head.weight": torch.ones(4, 2),
+            "model.module.language_model.embedding.word_embeddings.weight": torch.ones(
+                4, 2
+            ),
+            "model.module.language_model.output_layer.weight": torch.ones(4, 2),
+            "model.module.language_model.decoder.final_layernorm.weight": torch.ones(
+                2
+            ),
             "model.module.apm.weight": torch.ones(2, 2),
             "optimizer.state": torch.ones(1),
         },
         checkpoint_id=source_dir,
     )
     output_pt = tmp_path / "dense.pt"
+    model_path = tmp_path / "model"
+    model_path.mkdir()
+    (model_path / "config.json").write_text(
+        json.dumps(
+            {
+                "layer_types": [],
+                "num_experts": 0,
+                "num_attention_heads": 1,
+                "num_key_value_heads": 1,
+                "head_dim": 2,
+                "linear_num_key_heads": 1,
+                "linear_key_head_dim": 1,
+                "linear_num_value_heads": 1,
+                "linear_value_head_dim": 1,
+            }
+        ),
+        encoding="utf-8",
+    )
 
     manifest = convert_model_only_dcp_to_pt(
         source_dir=source_dir,
+        model_path=model_path,
         output_pt=output_pt,
     )
     state = torch.load(output_pt, map_location="cpu", weights_only=True)
 
-    assert manifest.tensor_count == 3
+    assert manifest.tensor_count == 4
     assert manifest.embedding_rows == 4
     assert manifest.lm_head_rows == 4
     assert "llm.model.embed_tokens.weight" in state
     assert "optimizer.state" not in state
     assert _runtime_key("model.foo") == "foo"
+
+
+def test_o5_backbone_config_strips_multimodal_remote_code_fields() -> None:
+    """TP2 backbone 必须保存纯 text config，不能继续引用外部 modeling。"""
+
+    config = build_o5_text_config(
+        {
+            "auto_map": {"AutoConfig": "configuration_minicpmo.MiniCPMOConfig"},
+            "model_type": "minicpmo",
+            "text_config": {"vocab_size": 999999},
+            "vision_config": {"hidden_size": 1},
+            "hidden_size": 2048,
+            "num_hidden_layers": 40,
+            "num_attention_heads": 16,
+            "num_key_value_heads": 2,
+            "head_dim": 256,
+            "num_experts": 256,
+            "num_experts_per_tok": 8,
+            "moe_intermediate_size": 512,
+            "shared_expert_intermediate_size": 512,
+        },
+        expected_rows=248168,
+    )
+    serialized = config.to_dict()
+
+    assert config.model_type == "qwen3_5_moe_text"
+    assert config.vocab_size == 248168
+    assert "auto_map" not in serialized
+    assert "text_config" not in serialized
+    assert "vision_config" not in serialized

@@ -16,6 +16,7 @@ class FcDuplexModelAdapter(Protocol):
     model_family: Literal["o45", "o5"]
     tokenizer_target: Literal["o45_fc", "o5"]
     supports_stateless_resume: bool
+    drops_unclassified_non_spoken_tokens: bool
 
     @property
     def protocol_tokenizer(self) -> Any:
@@ -82,7 +83,10 @@ class _BasePassthroughFcDuplexModelAdapter:
         capability = getattr(self._model, "fc_duplex", None)
         if capability is None:
             raise RuntimeError("FC duplex capability is not initialized")
-        tokenizer = getattr(capability, "protocol_tokenizer", None)
+        tokenizer = (
+            getattr(capability, "protocol_tokenizer", None)
+            or getattr(capability, "_sdk_tokenizer", None)
+        )
         if tokenizer is None:
             raise RuntimeError("FC duplex capability has no protocol_tokenizer")
         target = getattr(tokenizer, "target", None)
@@ -187,6 +191,7 @@ class O45FcDuplexModelAdapter(_BasePassthroughFcDuplexModelAdapter):
     model_family: Literal["o45"] = "o45"
     tokenizer_target: Literal["o45_fc"] = "o45_fc"
     supports_stateless_resume = True
+    drops_unclassified_non_spoken_tokens = False
 
 
 class O5FcDuplexModelAdapter(_BasePassthroughFcDuplexModelAdapter):
@@ -195,6 +200,7 @@ class O5FcDuplexModelAdapter(_BasePassthroughFcDuplexModelAdapter):
     model_family: Literal["o5"] = "o5"
     tokenizer_target: Literal["o5"] = "o5"
     supports_stateless_resume = False
+    drops_unclassified_non_spoken_tokens = True
 
 
 def create_fc_duplex_model_adapter(

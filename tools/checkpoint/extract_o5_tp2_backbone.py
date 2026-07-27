@@ -7,16 +7,50 @@
 from __future__ import annotations
 
 import argparse
+import inspect
 import json
 from pathlib import Path
 from typing import Any
 
 import torch
 from accelerate import init_empty_weights
-
-from modeling.o5.configuration_minicpmo import MiniCPMOConfig
-from modeling.o5.modeling_minicpmo_unified import MiniCPMO
+from transformers import Qwen3_5MoeForCausalLM, Qwen3_5MoeTextConfig
 from tools.checkpoint.validate_fc_checkpoint import load_checkpoint_state_dict
+
+
+def build_o5_text_config(
+    raw_config: dict[str, Any],
+    *,
+    expected_rows: int,
+) -> Qwen3_5MoeTextConfig:
+    """从完整 MiniCPMO config 提取纯 LLM 配置。
+
+    参数:
+        raw_config: ``MODEL_PATH/config.json`` 的完整多模态配置。
+        expected_rows: SDK 0.0.5 O5 required rows。
+
+    返回:
+        不含 ``auto_map``、vision/audio/TTS 或嵌套 ``text_config`` 的 text-only config。
+    """
+
+    allowed_fields = set(
+        inspect.signature(Qwen3_5MoeTextConfig.__init__).parameters
+    ) - {"self"}
+    fields = {
+        key: value
+        for key, value in raw_config.items()
+        if key in allowed_fields
+    }
+    fields.update(
+        {
+            "architectures": ["Qwen3_5MoeForCausalLM"],
+            "vocab_size": expected_rows,
+        }
+    )
+    config = Qwen3_5MoeTextConfig(**fields)
+    config._attn_implementation = "sdpa"
+    config._attn_implementation_internal = "sdpa"
+    return config
 
 
 def extract_o5_tp2_backbone(
@@ -58,16 +92,26 @@ def extract_o5_tp2_backbone(
             f"lm_head={lm_head_rows}"
         )
 
-    config = MiniCPMOConfig.from_pretrained(str(model_path))
-    config.vocab_size = expected_rows
+    raw_config = json.loads(
+        (Path(model_path) / "config.json").read_text(encoding="utf-8")
+    )
+    config = build_o5_text_config(
+        raw_config,
+        expected_rows=expected_rows,
+    )
     config._name_or_path = str(model_path)
     config.name_or_path = str(model_path)
     with init_empty_weights():
-        model = MiniCPMO(config)
-    load_info = model.load_state_dict(state, strict=False, assign=True)
+        llm = Qwen3_5MoeForCausalLM(config)
+    llm_state = {
+        key.removeprefix("llm."): value
+        for key, value in state.items()
+        if key.startswith("llm.")
+    }
+    load_info = llm.load_state_dict(llm_state, strict=False, assign=True)
     del state
 
-    llm = model.llm.bfloat16()
+    llm = llm.bfloat16()
     llm.config.vocab_size = expected_rows
     llm.save_pretrained(
         target,
