@@ -36,7 +36,7 @@ class Merger(nn.Module):
 
     def forward(self, hidden_states: torch.Tensor, tgt_sizes: torch.IntTensor,) -> torch.Tensor:
         m1, m2 = self.merge_kernel_size
-        
+
         start = 0
         processed_features = []
         for batch_idx in range(len(tgt_sizes)):
@@ -76,7 +76,7 @@ class Merger(nn.Module):
                         .reshape(h_new * w_new, m1 * m2 * hidden_dim)
                     )
                     _hidden_state = self.mlp[i](_hidden_state)
-            
+
             start += num_patches
             processed_features.append(_hidden_state)
 

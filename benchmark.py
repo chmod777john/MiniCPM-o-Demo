@@ -170,7 +170,7 @@ def main():
     logger.info("[1/3] Loading model...")
     t0 = time.time()
 
-    from MiniCPMO45.modeling_minicpmo_unified import MiniCPMO
+    from modeling.o5.modeling_minicpmo_unified import MiniCPMO
 
     resolved_attn = attn_impl
     if resolved_attn == "auto":

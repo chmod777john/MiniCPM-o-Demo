@@ -1,1 +1,1 @@
-"""MiniCPMO45 测试模块"""
+"""modeling.o5 测试模块"""

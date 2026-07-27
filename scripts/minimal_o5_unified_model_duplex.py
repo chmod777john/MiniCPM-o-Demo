@@ -12,8 +12,8 @@ import torch
 from accelerate import init_empty_weights
 from transformers import AutoConfig
 
-from MiniCPMO45.modeling_minicpmo_unified import MiniCPMO
-from MiniCPMO45.processing_minicpmo import MiniCPMOProcessor
+from modeling.o5.modeling_minicpmo_unified import MiniCPMO
+from modeling.o5.processing_minicpmo import MiniCPMOProcessor
 
 
 MODEL_PATH = os.environ.get("MODEL_PATH")

@@ -66,7 +66,7 @@ from typing import Dict
 class ProcessorMode(Enum):
     """处理器模式
     
-    MiniCPMO45 支持三种处理模式，每种模式有不同的特性。
+    modeling.o5 支持三种处理模式，每种模式有不同的特性。
     
     - CHAT: 单工对话
       - 一问一答，同步等待完整响应

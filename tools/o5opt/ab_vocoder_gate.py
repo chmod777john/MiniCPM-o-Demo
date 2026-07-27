@@ -11,7 +11,7 @@ WORKTREE = os.environ["WORKTREE"]; sys.path.insert(0, WORKTREE); sys.path.insert
 os.environ.setdefault("ATTN_IMPLEMENTATION", "sdpa"); os.environ.setdefault("O5_VISION_BATCH", "1")
 OUT_DIR = Path(os.environ["OUT_DIR"]); OUT_DIR.mkdir(parents=True, exist_ok=True); os.environ["OUT_DIR"] = str(OUT_DIR)
 import minimal_o5_unified_model_duplex as probe
-from MiniCPMO45.opt_flags import OPT
+from modeling.o5.opt_flags import OPT
 import vocoder_graph as vg
 VIDEO = os.environ.get("VIDEO", os.path.join(WORKTREE, "assets", "samples", "compile.mp4"))
 REF_WAV = os.environ.get("REF_WAV", os.path.join(WORKTREE, "assets/ref_audio/ref_minicpm_signature.wav"))

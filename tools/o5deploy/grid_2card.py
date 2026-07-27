@@ -45,7 +45,7 @@ def main():
     from transformers import AutoConfig, AutoModelForCausalLM
     from accelerate import init_empty_weights
     import minimal_o5_unified_model_duplex as probe
-    from MiniCPMO45.opt_flags import OPT
+    from modeling.o5.opt_flags import OPT
 
     # --- surgery: MiniCPMO(non-llm) + TP backbone ---
     log(f"=== build MiniCPMO + TP backbone  MODE={MODE} FORCE={FORCE} PATH={PATH} ===")

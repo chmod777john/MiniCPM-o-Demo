@@ -1,4 +1,4 @@
-"""MiniCPMO45 服务配置
+"""modeling.o5 服务配置
 
 所有端口、路径、超时、前端默认值等配置集中管理。
 Worker 和 Gateway 统一读取此文件。
@@ -201,7 +201,7 @@ class DuplexSectionConfig(BaseModel):
 
 
 class ServiceConfig(BaseModel):
-    """MiniCPMO45 服务完整配置
+    """modeling.o5 服务完整配置
 
     从 config.json 加载，所有字段（除 model.model_path）均有默认值。
     用户只需在 config.json 中写需要覆盖的字段。

@@ -1,4 +1,4 @@
-"""MiniCPMO45 处理器模块
+"""modeling.o5 处理器模块
 
 本模块提供统一处理器，支持 Chat/Streaming/Duplex 三种模式热切换。
 

@@ -17,7 +17,7 @@ sys.path.insert(0, os.path.join(WORKTREE, "scripts"))
 
 def main():
     import core.deploy as deploy
-    from MiniCPMO45.modeling_minicpmo_unified import ProcessorMode
+    from modeling.o5.modeling_minicpmo_unified import ProcessorMode
 
     cfg = {
         "model_path": os.environ["MODEL_PATH"],

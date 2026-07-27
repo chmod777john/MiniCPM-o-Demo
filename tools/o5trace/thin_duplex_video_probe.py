@@ -123,7 +123,7 @@ def set_experts_implementation(model: Any, implementation: str) -> int:
 
 
 def enable_probe_o5_optimizations(model: Any, args: argparse.Namespace) -> dict[str, Any]:
-    from MiniCPMO45.opt_flags import OPT
+    from modeling.o5.opt_flags import OPT
 
     info: dict[str, Any] = {}
     if args.skip_o5_vocoder_graph:
@@ -149,7 +149,7 @@ def enable_probe_o5_optimizations(model: Any, args: argparse.Namespace) -> dict[
             "vocoder_graph": False,
         })
     else:
-        from MiniCPMO45.o5_enable import enable_o5_optimizations
+        from modeling.o5.o5_enable import enable_o5_optimizations
 
         info.update(enable_o5_optimizations(model))
 
@@ -174,11 +174,11 @@ def import_raw_modeling_from_flat_code():
             continue
         root = Path(entry)
         if (root / "modeling_minicpmo.py").exists() and (root / "configuration_minicpmo.py").exists():
-            package = types.ModuleType("MiniCPMO45")
+            package = types.ModuleType("modeling.o5")
             package.__path__ = [str(root)]
-            sys.modules["MiniCPMO45"] = package
-            modeling = importlib.import_module("MiniCPMO45.modeling_minicpmo")
-            processing = importlib.import_module("MiniCPMO45.processing_minicpmo")
+            sys.modules["modeling.o5"] = package
+            modeling = importlib.import_module("modeling.o5.modeling_minicpmo")
+            processing = importlib.import_module("modeling.o5.processing_minicpmo")
             return modeling.MiniCPMO, modeling.MiniCPMODuplex, processing.MiniCPMOProcessor
     raise ModuleNotFoundError("Cannot find flat MiniCPMO trusted-code root on sys.path")
 
@@ -292,13 +292,13 @@ def install_token_trace(duplex: Any, model: Any) -> dict[str, Any]:
 def load_model(args: argparse.Namespace):
     if args.mode == "raw":
         try:
-            from MiniCPMO45.modeling_minicpmo import MiniCPMO, MiniCPMODuplex
-            from MiniCPMO45.processing_minicpmo import MiniCPMOProcessor
+            from modeling.o5.modeling_minicpmo import MiniCPMO, MiniCPMODuplex
+            from modeling.o5.processing_minicpmo import MiniCPMOProcessor
         except ModuleNotFoundError:
             MiniCPMO, MiniCPMODuplex, MiniCPMOProcessor = import_raw_modeling_from_flat_code()
     else:
-        from MiniCPMO45.modeling_minicpmo_unified import MiniCPMO
-        from MiniCPMO45.processing_minicpmo import MiniCPMOProcessor
+        from modeling.o5.modeling_minicpmo_unified import MiniCPMO
+        from modeling.o5.processing_minicpmo import MiniCPMOProcessor
         MiniCPMODuplex = None
 
     config = AutoConfig.from_pretrained(args.model_path, trust_remote_code=True)

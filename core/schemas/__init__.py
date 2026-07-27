@@ -1,4 +1,4 @@
-"""MiniCPMO45 Schema 模块
+"""modeling.o5 Schema 模块
 
 本模块提供所有模式的输入/输出 Schema 定义。
 

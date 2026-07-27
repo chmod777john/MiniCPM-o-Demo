@@ -49,7 +49,7 @@ def main():
     from transformers import AutoConfig, AutoModelForCausalLM
     from accelerate import init_empty_weights
     import minimal_o5_unified_model_duplex as probe
-    from MiniCPMO45.opt_flags import OPT
+    from modeling.o5.opt_flags import OPT
 
     # ---- surgery: MiniCPMO(non-llm) + TP backbone (the 2-card serving model) ----
     log(f"=== build 2-card model  MODE={MODE} FORCE={FORCE} UNITS={UNITS} WARMUP={WARMUP} ===")

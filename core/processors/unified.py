@@ -114,6 +114,7 @@ import logging
 import base64
 import hashlib
 import glob
+import importlib
 
 import numpy as np
 import torch
@@ -170,7 +171,7 @@ from core.schemas.fc_duplex import (
 )
 
 if TYPE_CHECKING:
-    from MiniCPMO45.modeling_minicpmo_unified import MiniCPMO, ProcessorMode as ModelProcessorMode
+    MiniCPMO = Any
 
 
 logger = logging.getLogger(__name__)
@@ -384,7 +385,12 @@ class ChatView(MiniCPMOProcessorMixin):
             
             # 构建 TTS 采样参数
             if tts_config.sampling:
-                from MiniCPMO45.utils import TTSSamplingParams as ModelTTSSamplingParams
+                modeling_root = self._model.__class__.__module__.split(
+                    ".modeling_",
+                    maxsplit=1,
+                )[0]
+                model_utils = importlib.import_module(f"{modeling_root}.utils")
+                ModelTTSSamplingParams = model_utils.TTSSamplingParams
                 tts_sampling_params = ModelTTSSamplingParams(
                     top_p=tts_config.sampling.top_p,
                     min_p=tts_config.sampling.min_p,
@@ -2881,8 +2887,14 @@ class UnifiedProcessor(BaseProcessor):
             return
         # ──────────────────────────────────────────────────────────────────────
 
-        from MiniCPMO45.modeling_minicpmo_unified import MiniCPMO, ProcessorMode as ModelProcessorMode
-        from transformers import AutoConfig
+        model_module = importlib.import_module(
+            f"modeling.{self.fc_model_family}.modeling_minicpmo_unified"
+        )
+        config_module = importlib.import_module(
+            f"modeling.{self.fc_model_family}.configuration_minicpmo"
+        )
+        MiniCPMO = model_module.MiniCPMO
+        MiniCPMOConfig = config_module.MiniCPMOConfig
 
         # Resolve attention implementation (auto-detect when set to "auto")
         resolved_attn = self._resolve_attn_implementation()
@@ -2898,7 +2910,7 @@ class UnifiedProcessor(BaseProcessor):
                 "No HF checkpoint files found in model_path; "
                 "building model from config and loading pt directly"
             )
-            config = AutoConfig.from_pretrained(self.model_path, trust_remote_code=True)
+            config = MiniCPMOConfig.from_pretrained(self.model_path)
             config._attn_implementation = resolved_attn
             config._name_or_path = self.model_path
             config.name_or_path = self.model_path
@@ -2937,7 +2949,6 @@ class UnifiedProcessor(BaseProcessor):
             # Load base model
             self.model = MiniCPMO.from_pretrained(
                 self.model_path,
-                trust_remote_code=True,
                 _attn_implementation=resolved_attn,
             )
 
@@ -3031,7 +3042,9 @@ class UnifiedProcessor(BaseProcessor):
         Returns:
             ChatView instance.
         """
-        from MiniCPMO45.modeling_minicpmo_unified import ProcessorMode as ModelProcessorMode
+        ModelProcessorMode = importlib.import_module(
+            f"modeling.{self.fc_model_family}.modeling_minicpmo_unified"
+        ).ProcessorMode
 
         if self._current_mode != ProcessorMode.CHAT:
             start = time.time()
@@ -3048,7 +3061,9 @@ class UnifiedProcessor(BaseProcessor):
         Returns:
             HalfDuplexView instance.
         """
-        from MiniCPMO45.modeling_minicpmo_unified import ProcessorMode as ModelProcessorMode
+        ModelProcessorMode = importlib.import_module(
+            f"modeling.{self.fc_model_family}.modeling_minicpmo_unified"
+        ).ProcessorMode
 
         if self._current_mode != ProcessorMode.HALF_DUPLEX:
             start = time.time()
@@ -3065,7 +3080,9 @@ class UnifiedProcessor(BaseProcessor):
         Returns:
             DuplexView instance.
         """
-        from MiniCPMO45.modeling_minicpmo_unified import ProcessorMode as ModelProcessorMode
+        ModelProcessorMode = importlib.import_module(
+            f"modeling.{self.fc_model_family}.modeling_minicpmo_unified"
+        ).ProcessorMode
 
         if self._current_mode != ProcessorMode.DUPLEX:
             start = time.time()

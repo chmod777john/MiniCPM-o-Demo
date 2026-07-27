@@ -1,4 +1,4 @@
-"""MiniCPMO45 推理 Gateway
+"""modeling.o5 推理 Gateway
 
 请求分发网关，不加载模型，负责：
 - 路由 Chat/Streaming/Duplex 请求到 Worker
@@ -316,8 +316,8 @@ async def _session_cleanup_loop() -> None:
 
 
 app = FastAPI(
-    title="MiniCPMO45 Gateway",
-    description="MiniCPMO45 多模态推理网关",
+    title="modeling.o5 Gateway",
+    description="modeling.o5 多模态推理网关",
     version="1.0.0-alpha.2",
     lifespan=lifespan,
     docs_url=None,
@@ -325,7 +325,7 @@ app = FastAPI(
 )
 
 internal_app = FastAPI(
-    title="MiniCPMO45 Gateway Internal",
+    title="modeling.o5 Gateway Internal",
     description="Internal worker registration API",
     version="1.0.0-alpha.2",
     docs_url=None,
@@ -1390,7 +1390,7 @@ async def index():
     if os.path.exists(index_path):
         return FileResponse(index_path)
     return HTMLResponse(
-        "<h1>MiniCPMO45 Service</h1>"
+        "<h1>modeling.o5 Service</h1>"
         "<p>API docs: <a href='/docs'>/docs</a></p>"
     )
 
@@ -1694,7 +1694,7 @@ def main():
     ws_debug = _enable_ws_debug_logging()
     cfg = get_config()
 
-    parser = argparse.ArgumentParser(description="MiniCPMO45 Gateway")
+    parser = argparse.ArgumentParser(description="modeling.o5 Gateway")
     parser.add_argument("--port", type=int, default=None, help=f"Gateway port (default: {cfg.gateway_port})")
     parser.add_argument("--internal-port", type=int, default=8007, help="Internal worker registration port")
     parser.add_argument("--host", type=str, default="0.0.0.0", help="Host")

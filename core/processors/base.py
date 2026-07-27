@@ -66,7 +66,7 @@ logger = logging.getLogger(__name__)
 class BaseProcessor(ABC):
     """处理器抽象基类
     
-    所有 MiniCPMO45 处理器的基类，定义统一的接口和行为。
+    所有 modeling.o5 处理器的基类，定义统一的接口和行为。
     
     **子类必须实现**：
     
@@ -364,7 +364,7 @@ class MiniCPMOProcessorMixin:
             ref_audio = self._resolve_ref_audio(tts_config)
             
             # 获取 system prompt（包含参考音频）
-            from MiniCPMO45.modeling_minicpmo_unified import MiniCPMO
+            from modeling.o5.modeling_minicpmo_unified import MiniCPMO
             sys_msg = MiniCPMO.get_sys_prompt(
                 ref_audio=ref_audio,
                 mode=tts_config.mode.value,

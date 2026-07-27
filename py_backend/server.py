@@ -689,7 +689,7 @@ async def lifespan(app: FastAPI):
             await asyncio.to_thread(_backend.shutdown)
 
 
-app = FastAPI(title="MiniCPMO45 Backend Protocol Server", lifespan=lifespan)
+app = FastAPI(title="modeling.o5 Backend Protocol Server", lifespan=lifespan)
 
 
 @app.get("/health")
@@ -802,7 +802,7 @@ def main() -> None:
 
     ws_debug = _enable_ws_debug_logging()
     cfg = get_config()
-    parser = argparse.ArgumentParser(description="MiniCPMO45 backend protocol server")
+    parser = argparse.ArgumentParser(description="modeling.o5 backend protocol server")
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=22500)
     parser.add_argument("--model-path", default=None)

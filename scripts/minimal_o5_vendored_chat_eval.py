@@ -2,7 +2,7 @@
 """Minimal chat speech probe for local o5 vendored inference code.
 
 This intentionally avoids the full humanevalkit benchmark runner.  It imports the
-local MiniCPMO45 vendored package, runs a small list of QA-style chat prompts, and
+local modeling.o5 vendored package, runs a small list of QA-style chat prompts, and
 writes one result.json + assistant.wav per sample plus a compact index.
 """
 
@@ -96,8 +96,8 @@ def load_prompts() -> list[str]:
 
 def load_model():
     add_vendored_to_path()
-    from MiniCPMO45.modeling_minicpmo import MiniCPMO
-    from MiniCPMO45.processing_minicpmo import MiniCPMOProcessor
+    from modeling.o5.modeling_minicpmo import MiniCPMO
+    from modeling.o5.processing_minicpmo import MiniCPMOProcessor
 
     config = AutoConfig.from_pretrained(MODEL_PATH, trust_remote_code=True)
     config._attn_implementation = "sdpa"

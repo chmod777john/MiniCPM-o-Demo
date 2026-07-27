@@ -1,4 +1,4 @@
-"""MiniCPMO45 推理 Worker
+"""modeling.o5 推理 Worker
 
 每个 Worker 占用一张 GPU，持有一个 UnifiedProcessor 实例，
 提供 Chat (HTTP) / Streaming (WebSocket) / Duplex (WebSocket) 三种推理 API。
@@ -166,7 +166,7 @@ async def lifespan(app: FastAPI):
             await asyncio.to_thread(worker.shutdown)
 
 
-app = FastAPI(title="MiniCPMO45 Worker", lifespan=lifespan)
+app = FastAPI(title="modeling.o5 Worker", lifespan=lifespan)
 
 
 # ========== 健康检查 ==========
@@ -398,7 +398,7 @@ def main():
     ws_debug = _enable_ws_debug_logging()
     cfg = get_config()
 
-    parser = argparse.ArgumentParser(description="MiniCPMO45 Worker")
+    parser = argparse.ArgumentParser(description="modeling.o5 Worker")
     parser.add_argument("--port", type=int, default=None, help=f"Worker port (default: from config, base={cfg.worker_base_port})")
     parser.add_argument("--host", type=str, default="0.0.0.0", help="Host")
     parser.add_argument("--model-path", type=str, default=None, help="Base model path")

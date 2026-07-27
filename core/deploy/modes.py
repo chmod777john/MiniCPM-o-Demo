@@ -34,8 +34,9 @@ def _env_flag(name: str, default: bool) -> bool:
 
 # ─────────────────────────── shared helpers ───────────────────────────
 def _mk_config(cfg: Dict[str, Any]):
-    from transformers import AutoConfig
-    c = AutoConfig.from_pretrained(cfg["model_path"], trust_remote_code=True)
+    from modeling.o5.configuration_minicpmo import MiniCPMOConfig
+
+    c = MiniCPMOConfig.from_pretrained(cfg["model_path"])
     c._attn_implementation = cfg.get("attn_implementation", "sdpa")
     c._name_or_path = cfg["model_path"]; c.name_or_path = cfg["model_path"]
     return c
@@ -44,14 +45,14 @@ def _mk_config(cfg: Dict[str, Any]):
 def _load_full(cfg: Dict[str, Any], device: str):
     """Single-card: build MiniCPMO, load the full .pt, place on `device`, init_unified."""
     from accelerate import init_empty_weights
-    from MiniCPMO45.modeling_minicpmo_unified import MiniCPMO
-    from MiniCPMO45.processing_minicpmo import MiniCPMOProcessor
+    from modeling.o5.modeling_minicpmo_unified import MiniCPMO
+    from modeling.o5.processing_minicpmo import MiniCPMOProcessor
     with init_empty_weights():
         model = MiniCPMO(_mk_config(cfg))
     sd = torch.load(cfg["pt_path"], map_location="cpu", weights_only=True, mmap=True)
     model.load_state_dict(sd, strict=False, assign=True); del sd
     model.bfloat16().eval().to(device)
-    model.processor = MiniCPMOProcessor.from_pretrained(cfg["model_path"], trust_remote_code=True)
+    model.processor = MiniCPMOProcessor.from_pretrained(cfg["model_path"])
     return model
 
 
@@ -67,8 +68,8 @@ def _surgery_tp(
     from accelerate import init_empty_weights
     from transformers import AutoConfig, AutoModelForCausalLM
     from .llm_wrapper import DistributedTPLLM
-    from MiniCPMO45.modeling_minicpmo_unified import MiniCPMO
-    from MiniCPMO45.processing_minicpmo import MiniCPMOProcessor
+    from modeling.o5.modeling_minicpmo_unified import MiniCPMO
+    from modeling.o5.processing_minicpmo import MiniCPMOProcessor
     with init_empty_weights():
         model = MiniCPMO(_mk_config(cfg))
     sd = torch.load(cfg["pt_path"], map_location="cpu", weights_only=True, mmap=True)
@@ -101,7 +102,7 @@ def _surgery_tp(
         world_size=world_size,
         sync_calls=sync_llm_calls,
     )
-    model.processor = MiniCPMOProcessor.from_pretrained(cfg["model_path"], trust_remote_code=True)
+    model.processor = MiniCPMOProcessor.from_pretrained(cfg["model_path"])
     return model
 
 
@@ -109,7 +110,7 @@ def _enable_engine(model, *, tp: bool, cfg: Dict[str, Any]):
     """Enable the deployed CUDA-graph optimization engine. Returns an engine-info dict.
     TP synchronization is handled by the LLM/graph runner, not by decoder-level
     sampling synchronization or backend method mirroring."""
-    from MiniCPMO45.opt_flags import OPT
+    from modeling.o5.opt_flags import OPT
     # deployed MoE on both paths
     experts_impl = _experts_impl()
     seen = set()
@@ -144,7 +145,7 @@ def _enable_engine(model, *, tp: bool, cfg: Dict[str, Any]):
 def _enable_vocoder_bucket(model):
     """Pre-capture the dominant vocoder chunk sizes off the serving hot path (call after warmup)."""
     try:
-        from MiniCPMO45 import vocoder_graph as vg
+        from modeling.o5 import vocoder_graph as vg
         vg.enable_bucketed(model, lambda *a: logger.info("%s", " ".join(str(x) for x in a)), bucket=50)
     except Exception as e:
         logger.warning("[deploy] vocoder bucketing failed (staying eager): %s", e)

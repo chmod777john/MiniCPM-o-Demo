@@ -1,7 +1,10 @@
 import pytest
 import torch
 
-from MiniCPMO45.utils import InvalidSamplingProbabilitiesError, _validate_sampling_probs
+from modeling.o45.utils import (
+    InvalidSamplingProbabilitiesError,
+    _validate_sampling_probs,
+)
 
 
 def test_validate_sampling_probs_accepts_valid_probs():

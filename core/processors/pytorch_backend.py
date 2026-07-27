@@ -33,7 +33,7 @@ logger = logging.getLogger("pytorch_backend")
 
 
 class PyTorchBackend:
-    """MiniCPMO45 PyTorch inference backend.
+    """modeling.o5 PyTorch inference backend.
 
     持有一个 UnifiedProcessor 实例，提供三种推理模式。
     """
