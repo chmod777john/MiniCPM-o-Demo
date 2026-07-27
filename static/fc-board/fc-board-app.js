@@ -3,6 +3,7 @@ import { decodeFileToChunks, float32ToBase64 } from './file-audio-provider.js';
 import { FcRealtimeClient } from './fc-realtime-client.js';
 import { LiveMicProvider } from './live-mic-provider.js';
 import { AudioPlayer } from './audio-player.js';
+import { NsSegmentView } from './ns-segment-view.js';
 
 const DEFAULT_SYSTEM_PROMPT = `你是一个可以一边听用户说话、一边思考并调用工具的语音助手。用户让你把故事或描述中出现的动物、植物或具体物体放到画板上时，使用 display_object_on_board 工具。不要等用户完全讲完才思考；在你确认具体对象后，可以调用工具把对象放到画板。`;
 
@@ -22,8 +23,6 @@ const DISPLAY_OBJECT_TOOL = {
 };
 
 const state = new BoardState({ maxCards: 6 });
-const nonSpokenBlocks = new Map();
-const toolCallBlocks = new Map();
 const streamEvents = new Map();
 const audioPlayer = new AudioPlayer({ outputSampleRate: 24000 });
 
@@ -32,9 +31,31 @@ let micProvider = null;
 let audioPlayerReady = false;
 let sentChunkCount = 0;
 let aiAudioCount = 0;
-let micPeakSinceStart = 0;
-let blockSeq = 0;
-let activeNonSpokenBlockId = null;
+let generationStepCount = 0;
+let latestCheckpoint = null;
+let resumeInProgress = false;
+// Mic level display uses a LUFS-like unit (dBFS) instead of raw RMS.
+//
+// 换算依据（`scripts/diagnostics/lufs_survey.py` 采样训练数据，见 o45-fc 分支）：
+//   training set: RMS mean = 0.069  ↔  LUFS mean = -23.0
+//   公式 20·log10(RMS) 在这个 RMS 上算得 -23.2 —— 跟真 LUFS 只差 0.2 dB
+// 结论：对语音信号，`20·log10(rms)` 就够当 LUFS 近似值显示了（K-weighting
+// 对语音频谱几乎无影响，真 LUFS 需要 400ms 窗 + 门控，UI 场景不必如此严格）。
+//
+// bar 映射范围：-50 dB → -10 dB（覆盖训练分布 -23 附近 ±15 dB）
+// target zone：-28 dB → -18 dB（训练集 5th → 95th percentile RMS 换算）
+const MIC_METER_MIN_DB = -50;    // 静音底
+const MIC_METER_MAX_DB = -10;    // 满格
+const MIC_TARGET_LO_DB = -28;    // 训练集 p5 附近
+const MIC_TARGET_HI_DB = -18;    // 训练集 p95 附近
+
+function rmsToDb(rms) {
+  if (!(rms > 0)) return MIC_METER_MIN_DB;
+  const db = 20 * Math.log10(rms);
+  return Math.max(MIC_METER_MIN_DB, db);   // 静音底
+}
+
+let micPeakDbSinceStart = MIC_METER_MIN_DB;
 let fcBoardDefaults = null;
 let micLiveState = 'idle';
 let streamEventSeq = 0;
@@ -50,6 +71,9 @@ const el = {
   wsState: document.getElementById('wsState'),
   sentChunks: document.getElementById('sentChunks'),
   aiAudioCount: document.getElementById('aiAudioCount'),
+  generationSteps: document.getElementById('generationSteps'),
+  resumeCheckpoint: document.getElementById('resumeCheckpoint'),
+  resumeSummary: document.getElementById('resumeSummary'),
   liveHint: document.getElementById('liveHint'),
   audioFileInput: document.getElementById('audioFileInput'),
   runFileReplay: document.getElementById('runFileReplay'),
@@ -75,7 +99,9 @@ const el = {
   systemPrompt: document.getElementById('systemPrompt'),
   refAudioPath: document.getElementById('refAudioPath'),
   nonSpokenScheduling: document.getElementById('nonSpokenScheduling'),
-  nonSpokenBudget: document.getElementById('nonSpokenBudget'),
+  checkpointProfileId: document.getElementById('checkpointProfileId'),
+  nonSpokenBudgetWhileListening: document.getElementById('nonSpokenBudgetWhileListening'),
+  nonSpokenBudgetWhileSpeaking: document.getElementById('nonSpokenBudgetWhileSpeaking'),
   debugBudgetUsed: document.getElementById('debugBudgetUsed'),
   debugBudgetMax: document.getElementById('debugBudgetMax'),
   debugBudgetUpdated: document.getElementById('debugBudgetUpdated'),
@@ -85,13 +111,16 @@ const el = {
   debugDrawer: document.getElementById('debugDrawer'),
 };
 
+// non-spoken segment 的 3 轨审计视图（think / tool_call 渲染）
+const nsView = new NsSegmentView(el.nsStream);
+
 initPage();
 
 function initPage() {
   el.modeBadge.textContent = 'Realtime API';
   el.modeBadge.className = 'mode-tag mode-real';
   el.kvMode.textContent = '/v1/realtime?mode=audio';
-  el.kvCkpt.textContent = 'backend selected';
+  el.kvCkpt.textContent = 'No checkpoint';
   el.kvTools.textContent = DISPLAY_OBJECT_TOOL.function.name;
   applyDefaults({});
   setWsState('idle');
@@ -136,22 +165,7 @@ el.startMicLive.addEventListener('click', async () => {
   }
   try {
     liveClient = await createRealtimeSession();
-    micProvider = new LiveMicProvider({
-      onChunk: (chunk) => {
-        liveClient.appendAudio({ audioBase64: float32ToBase64(chunk), sampleRate: 16000 });
-        sentChunkCount += 1;
-        updateStats();
-      },
-      onLevel: updateMicLevel,
-      onPermissionHint: (text) => {
-        if (el.liveHint) {
-          el.liveHint.textContent = text;
-          el.liveHint.classList.add('warning');
-        }
-      },
-      onState: setMicState,
-      onStatus: setStatus,
-    });
+    micProvider = createMicProvider(liveClient);
     await micProvider.start();
     setMicLiveState('live');
     setStatus('Listening via /v1/realtime · mention concrete objects for the board');
@@ -165,6 +179,47 @@ el.stopMicLive.addEventListener('click', () => {
   if (micLiveState === 'idle' || micLiveState === 'stopped' || micLiveState === 'closed') return;
   stopMicLive();
   setStatus('Stopped');
+});
+
+el.resumeCheckpoint?.addEventListener('click', async () => {
+  if (
+    resumeInProgress
+    || !liveClient
+    || latestCheckpoint?.resume?.status !== 'available'
+  ) return;
+
+  resumeInProgress = true;
+  updateControlState();
+  const throughUnitIndex = Number(latestCheckpoint.unit_index);
+  try {
+    const resumePayload = liveClient.buildResumePayload(throughUnitIndex);
+    if (micProvider) {
+      micProvider.stop();
+      micProvider = null;
+    }
+    const disconnectedClient = liveClient;
+    liveClient = null;
+    disconnectedClient.disconnect('demo_resume_test');
+    setMicLiveState('starting');
+    setWsState('reconnecting');
+    setStatus(`Reconnecting from Unit ${throughUnitIndex} checkpoint…`);
+    await sleep(600);
+
+    liveClient = await resumeRealtimeSession(resumePayload);
+    micProvider = createMicProvider(liveClient);
+    await micProvider.start();
+    setMicLiveState('live');
+    setWsState('connected');
+    setStatus(`Resume succeeded · continuing after Unit ${throughUnitIndex}`);
+  } catch (err) {
+    console.error('[FC resume]', err);
+    setMicLiveState('error');
+    setWsState('closed');
+    setStatus(`Resume failed: ${err.message}`);
+  } finally {
+    resumeInProgress = false;
+    updateControlState();
+  }
 });
 
 el.audioFileInput.addEventListener('change', () => {
@@ -202,27 +257,85 @@ el.runFileReplay.addEventListener('click', async () => {
 });
 
 async function createRealtimeSession() {
+  const client = await createConnectedClient();
+  client.initSession(buildSessionInitPayload());
+  return client;
+}
+
+async function createConnectedClient(onControlEvent = null) {
   const client = new FcRealtimeClient({
-    onEvent: applyApiEvent,
+    onEvent: (event) => {
+      applyApiEvent(event);
+      onControlEvent?.(event);
+    },
     onSend: (message) => appendStreamEvent('tx', message),
     onStatus: setStatus,
   });
   setStatus('Connecting to /v1/realtime...');
   await client.connect();
   setWsState('connected');
-  client.initSession(buildSessionInitPayload());
   return client;
+}
+
+async function resumeRealtimeSession(payload) {
+  let resolveResume;
+  let rejectResume;
+  const resumed = new Promise((resolve, reject) => {
+    resolveResume = resolve;
+    rejectResume = reject;
+  });
+  const client = await createConnectedClient((event) => {
+    if (event.type === 'session.resumed') resolveResume(event);
+    if (event.type === 'session.resume.failed') {
+      rejectResume(new Error(`${event.code || 'resume_failed'}: ${event.message || ''}`));
+    }
+  });
+  client.resumeSession(payload);
+  const timeout = new Promise((_, reject) => {
+    setTimeout(() => reject(new Error('session.resume timed out')), 120000);
+  });
+  await Promise.race([resumed, timeout]);
+  return client;
+}
+
+function createMicProvider(client) {
+  return new LiveMicProvider({
+    onChunk: (chunk) => {
+      client.appendAudio({ audioBase64: float32ToBase64(chunk), sampleRate: 16000 });
+      sentChunkCount += 1;
+      updateStats();
+    },
+    onLevel: updateMicLevel,
+    onPermissionHint: (text) => {
+      if (el.liveHint) {
+        el.liveHint.textContent = text;
+        el.liveHint.classList.add('warning');
+      }
+    },
+    onState: setMicState,
+    onStatus: setStatus,
+  });
 }
 
 function buildSessionInitPayload() {
   const refAudioPath = (el.refAudioPath?.value || '').trim();
+  const checkpointProfileId = (el.checkpointProfileId?.value || '').trim();
+  if (!checkpointProfileId) throw new Error('Checkpoint Profile is not configured');
   const nonSpokenScheduling = ['quality', 'latency'].includes(el.nonSpokenScheduling?.value)
     ? el.nonSpokenScheduling.value
     : 'quality';
-  const nonSpokenBudget = clampInt(el.nonSpokenBudget?.value, 1, 512, 12);
+  const nonSpokenBudgetWhileListening = requirePositiveInt(
+    el.nonSpokenBudgetWhileListening?.value,
+    'Listening budget',
+  );
+  const nonSpokenBudgetWhileSpeaking = requirePositiveInt(
+    el.nonSpokenBudgetWhileSpeaking?.value,
+    'Speaking budget',
+  );
   const payload = {
     mode: 'full_duplex',
     fc_duplex: true,
+    checkpoint_profile_id: checkpointProfileId,
     system_prompt: (el.systemPrompt?.value || '').trim() || defaultSystemPrompt(),
     tools: defaultTools(),
     generate_audio: true,
@@ -232,11 +345,13 @@ function buildSessionInitPayload() {
       non_spoken_scheduling: nonSpokenScheduling,
       sample_rate: 16000,
       max_spoken_tokens: 24,
-      non_spoken_budget_per_unit: nonSpokenBudget,
+      non_spoken_budget_while_listening: nonSpokenBudgetWhileListening,
+      non_spoken_budget_while_speaking: nonSpokenBudgetWhileSpeaking,
       decode_mode: 'greedy',
     },
   };
   if (refAudioPath) payload.ref_audio_path = refAudioPath;
+  nsView.setBudgets(nonSpokenBudgetWhileListening, nonSpokenBudgetWhileSpeaking);
   return payload;
 }
 
@@ -258,6 +373,17 @@ async function loadFcBoardDefaults() {
 function applyDefaults(defaults) {
   if (el.systemPrompt) el.systemPrompt.value = defaults.default_system_prompt || DEFAULT_SYSTEM_PROMPT;
   if (el.refAudioPath) el.refAudioPath.value = defaults.default_ref_audio_path || '';
+  if (el.nonSpokenScheduling && ['quality', 'latency'].includes(defaults.non_spoken_scheduling)) {
+    el.nonSpokenScheduling.value = defaults.non_spoken_scheduling;
+  }
+  if (el.checkpointProfileId) el.checkpointProfileId.value = defaults.checkpoint_profile_id || '';
+  if (el.nonSpokenBudgetWhileListening) {
+    el.nonSpokenBudgetWhileListening.value = defaults.non_spoken_budget_while_listening ?? '';
+  }
+  if (el.nonSpokenBudgetWhileSpeaking) {
+    el.nonSpokenBudgetWhileSpeaking.value = defaults.non_spoken_budget_while_speaking ?? '';
+  }
+  if (el.kvCkpt) el.kvCkpt.textContent = defaults.checkpoint_profile_id || 'No checkpoint profile';
   if (el.kvTools) el.kvTools.textContent = defaultTools().map(tool => tool?.function?.name || tool?.name || 'tool').join(', ');
 }
 
@@ -281,41 +407,55 @@ function applyApiEvent(event) {
     case 'session.created':
       setStatus('Session created');
       return;
+    case 'session.resumed':
+      setStatus(`Session resumed after Unit ${event.through_unit_index}`);
+      return;
+    case 'session.resume.failed':
+      setStatus(`Resume failed: ${event.code || 'unknown'}`);
+      return;
+    case 'response.warning':
+      setStatus(`Warning: ${event.message || event.code || 'unknown'}`);
+      return;
     case 'session.closed':
       setWsState('closed');
       releaseMicLive('closed');
       setStatus(`Session closed: ${event.reason || 'closed'}`);
       return;
-    case 'response.output.delta':
-      handleOutputDelta(event);
+    case 'response.unit.started':
+      return;
+    case 'response.non_spoken.end':
+      nsView.markNonSpokenEnd(event.unit_index, event.reason);
+      return;
+    case 'response.unit.committed':
+      handleUnitCheckpoint(event);
+      return;
+    case 'response.spoken.delta':
+      handleSpokenDelta(event);
+      return;
+    case 'response.spoken.end':
+      handleSpokenEnd(event);
       return;
     case 'response.think.begin':
-      beginNonSpokenBlock({ block_id: blockIdFor(event, 'think'), block_kind: 'think' });
+      nsView.beginSegment('think', event.unit_index);
       return;
     case 'response.think.delta':
-      appendNonSpokenDelta({ block_id: blockIdFor(event, 'think'), step_text: event.delta || '' });
+      generationStepCount += (Array.isArray(event.steps) ? event.steps.length : 0);
+      nsView.appendSteps(event.unit_index, event.steps);
+      updateStats();
       return;
     case 'response.think.end':
-      closeNonSpokenBlock({ block_id: blockIdFor(event, 'think'), block_kind: 'think' });
+      nsView.endSegment('think', event.unit_index, { fullText: event.full_text });
       return;
-    case 'response.tool_call.args.begin':
-      toolCallBlocks.set(event.tool_call_id, blockIdFor(event, 'tool_call'));
-      beginNonSpokenBlock({ block_id: toolCallBlocks.get(event.tool_call_id), block_kind: 'tool_call' });
+    case 'response.tool_call.begin':
+      nsView.beginSegment('tool_call', event.unit_index, { toolCallId: event.tool_call_id });
       return;
-    case 'response.tool_call.args.delta':
-      appendNonSpokenDelta({ block_id: blockIdFor(event, 'tool_call'), step_text: event.delta || '' });
+    case 'response.tool_call.delta':
+      generationStepCount += (Array.isArray(event.steps) ? event.steps.length : 0);
+      nsView.appendSteps(event.unit_index, event.steps);
+      updateStats();
       return;
-    case 'response.tool_call.args.end':
-      closeNonSpokenBlock({ block_id: blockIdFor(event, 'tool_call'), block_kind: 'tool_call' });
-      return;
-    case 'response.tool_call.args.raw':
-      handleToolCallRaw(event);
-      return;
-    case 'response.tool_result':
-      handleToolResult(event);
-      return;
-    case 'response.output.sp_tokens':
-      handleSpToken(event);
+    case 'response.tool_call.done':
+      handleToolCallDone(event);
       return;
     case 'response.debug':
       handleDebugEvent(event);
@@ -325,35 +465,55 @@ function applyApiEvent(event) {
   }
 }
 
-function handleOutputDelta(event) {
-  if (event.kind === 'listen') {
-    handleSpokenOutput({ isListen: true, isSpeaking: false });
-    closeActiveNonSpokenBlock();
-    return;
+function textFromSteps(steps) {
+  return (Array.isArray(steps) ? steps : [])
+    .filter((step) => step?.kind === 'text')
+    .map((step) => step.text || '')
+    .join('');
+}
+
+function handleSpokenDelta(event) {
+  const steps = Array.isArray(event.steps) ? event.steps : [];
+  generationStepCount += steps.length;
+  const text = textFromSteps(steps);
+  if (text) enqueueSpeech(text, 0);
+  if (event.audio) {
+    handleSpokenOutput({
+      isListen: false,
+      isSpeaking: true,
+      audioBase64: event.audio,
+      sampleRate: event.sample_rate || 24000,
+    });
   }
-  if (event.kind === 'text' && event.text) {
-    enqueueSpeech(event.text, 0);
-    return;
-  }
-  if (event.kind === 'audio' && event.audio) {
-    handleSpokenOutput({ isListen: false, isSpeaking: true, audioBase64: event.audio, sampleRate: event.sample_rate || 24000 });
-    return;
-  }
-  if (event.kind === 'non_spoken') {
-    if (!activeNonSpokenBlockId) {
-      activeNonSpokenBlockId = `non_spoken:${event.input_id || 'input'}:${++blockSeq}`;
-      beginNonSpokenBlock({ block_id: activeNonSpokenBlockId, block_kind: 'unknown' });
-    }
-    const text = event.text || (event.token_strs || []).join('');
-    appendNonSpokenDelta({ block_id: activeNonSpokenBlockId, step_text: text });
+  updateStats();
+}
+
+function handleSpokenEnd(event) {
+  // 该 Unit 的 spoken 决策决定 non-spoken 用哪档 budget：listen → listening，其余 → speaking
+  const lane = event.reason === 'listen' ? 'listen' : 'speak';
+  nsView.setUnitLane(event.unit_index, lane);
+  if (event.reason === 'listen' || event.reason === 'turn_eos') {
+    if (audioPlayerReady && audioPlayer.turnActive) audioPlayer.endTurn();
   }
 }
 
-function handleSpToken(event) {
-  const token = String(event.token || '');
-  if (['no_action', 'non_spoken_eos', 'non_spoken_budget_reached', 'non_spoken_hold', 'non_spoken_abort'].includes(token)) {
-    closeActiveNonSpokenBlock();
+function handleUnitCheckpoint(event) {
+  latestCheckpoint = event;
+  const unitIndex = Number(event.unit_index);
+  const resume = event.resume || {};
+  const available = resume.status === 'available';
+  const detail = available
+    ? `Unit ${unitIndex} · available`
+    : `Unit ${unitIndex} · unavailable (${resume.reason || 'unknown'})`;
+  if (el.kvCkpt) el.kvCkpt.textContent = detail;
+  if (el.resumeSummary) {
+    el.resumeSummary.textContent = available
+      ? `Unit ${unitIndex} can reconnect without server state`
+      : detail;
+    el.resumeSummary.classList.toggle('available', available);
+    el.resumeSummary.classList.toggle('failed', !available);
   }
+  updateControlState();
 }
 
 function handleDebugEvent(event) {
@@ -369,16 +529,11 @@ function handleDebugEvent(event) {
   }
 }
 
-function handleToolCallRaw(event) {
-  const blockId = blockIdFor(event, 'tool_call');
-  const raw = event.raw || {};
-  closeNonSpokenBlock({
-    block_id: blockId,
-    block_kind: 'tool_call',
-    full_text: formatToolCall(raw),
-  });
-  if (raw.name !== 'display_object_on_board' || raw.error) return;
-  const args = parseArguments(raw.arguments);
+function handleToolCallDone(event) {
+  const call = event.call || {};
+  nsView.endSegment('tool_call', event.unit_index, { fullText: event.full_text || event.error || '' });
+  if (call.name !== 'display_object_on_board' || event.error) return;
+  const args = parseArguments(call.arguments);
   const query = String(args.name || '').trim();
   if (!query) return;
   state.upsert({
@@ -389,20 +544,6 @@ function handleToolCallRaw(event) {
   });
   renderBoard();
   executeDisplayObjectOnBoard({ query, toolCallId: event.tool_call_id });
-}
-
-function handleToolResult(event) {
-  const result = event.result || {};
-  const query = result.query || result.image?.query || event.name || event.tool_call_id;
-  state.upsert({
-    card_id: cardIdFor(event.tool_call_id),
-    tool_call_id: event.tool_call_id,
-    query,
-    status: result.error ? 'error' : 'ready',
-    image: result.image,
-    error: result.error,
-  });
-  renderBoard();
 }
 
 async function executeDisplayObjectOnBoard({ query, toolCallId }) {
@@ -453,111 +594,22 @@ async function executeDisplayObjectOnBoard({ query, toolCallId }) {
 
 function sendDisplayObjectToolResult({ toolCallId, query, content }) {
   if (!liveClient || !toolCallId) return;
-  const text = content || JSON.stringify({
+  let payload = content || {
     status: 'displayed',
     name: query,
     reason: '已在画板显示该对象。',
-  });
+  };
+  if (typeof payload === 'string') {
+    try { payload = JSON.parse(payload); } catch (_) { payload = { text: payload }; }
+  }
   liveClient.sendToolResult({
     toolCallId,
-    contents: [{ kind: 'text', text }],
+    content: payload,
   });
-}
-
-function blockIdFor(event, kind) {
-  if (kind === 'tool_call') {
-    const key = event.tool_call_id || 'pending';
-    if (!toolCallBlocks.has(key)) toolCallBlocks.set(key, `tool_call:${key}`);
-    return toolCallBlocks.get(key);
-  }
-  return `${kind}:${event.input_id || 'input'}:${event.response_id || 'resp'}`;
 }
 
 function cardIdFor(toolCallId) {
   return `card:${toolCallId || 'pending'}`;
-}
-
-function closeActiveNonSpokenBlock() {
-  if (!activeNonSpokenBlockId) return;
-  closeNonSpokenBlock({ block_id: activeNonSpokenBlockId, block_kind: 'unknown' });
-  activeNonSpokenBlockId = null;
-}
-
-function beginNonSpokenBlock(event) {
-  const blockId = event.block_id;
-  if (!blockId || nonSpokenBlocks.has(blockId)) return;
-  const kind = event.block_kind || 'unknown';
-  const placeholder = el.nsStream.querySelector('.placeholder');
-  if (placeholder) placeholder.remove();
-  const wrap = document.createElement('article');
-  wrap.className = `ns-block kind-${kind}`;
-  wrap.dataset.blockId = blockId;
-  wrap.dataset.kind = kind;
-  wrap.innerHTML = `
-    <header class="ns-block-header">
-      <span class="kind-tag">${escapeHtml(kind)}</span>
-      <span class="status-tag">streaming…</span>
-    </header>
-    <section class="ns-layer streaming">
-      <div class="layer-tag">streaming</div>
-      <pre class="layer-body" data-role="streaming"></pre>
-    </section>
-    <section class="ns-layer full">
-      <div class="layer-tag">full</div>
-      <pre class="layer-body" data-role="full"></pre>
-    </section>
-  `;
-  el.nsStream.appendChild(wrap);
-  nonSpokenBlocks.set(blockId, { kind, streamingPieces: [], fullText: null, closed: false, node: wrap });
-  scrollNsToBottom();
-}
-
-function appendNonSpokenDelta(event) {
-  const blockId = event.block_id;
-  if (!blockId) return;
-  if (!nonSpokenBlocks.has(blockId)) beginNonSpokenBlock({ block_id: blockId, block_kind: 'unknown' });
-  const block = nonSpokenBlocks.get(blockId);
-  const piece = event.step_text || event.delta || '';
-  if (!piece) return;
-  block.streamingPieces.push(piece);
-  const target = block.node.querySelector('[data-role="streaming"]');
-  if (target) target.textContent = block.streamingPieces.join('');
-  scrollNsToBottom();
-}
-
-function closeNonSpokenBlock(event) {
-  const blockId = event.block_id;
-  if (!blockId) return;
-  const block = nonSpokenBlocks.get(blockId);
-  if (!block) return;
-  block.closed = true;
-  block.fullText = event.full_text || block.fullText || null;
-  const finalKind = (event.block_kind && event.block_kind !== 'unknown') ? event.block_kind : block.kind;
-  if (finalKind && finalKind !== 'unknown' && block.kind !== finalKind) {
-    block.kind = finalKind;
-    block.node.classList.remove('kind-unknown');
-    block.node.classList.add(`kind-${finalKind}`);
-    const kindTag = block.node.querySelector('.kind-tag');
-    if (kindTag) kindTag.textContent = finalKind;
-  }
-  block.node.classList.add('closed');
-  const statusTag = block.node.querySelector('.status-tag');
-  if (statusTag) statusTag.textContent = 'closed';
-  const streamingTarget = block.node.querySelector('[data-role="streaming"]');
-  if (streamingTarget && finalKind && finalKind !== 'unknown') {
-    const inner = block.streamingPieces.join('');
-    streamingTarget.textContent = `<${finalKind}>\n${inner}\n</${finalKind}>`;
-  }
-  const full = block.node.querySelector('[data-role="full"]');
-  if (full) {
-    if (block.fullText) {
-      full.textContent = block.fullText;
-    } else {
-      const section = full.closest('section.ns-layer.full');
-      if (section) section.style.display = 'none';
-    }
-  }
-  scrollNsToBottom();
 }
 
 function handleSpokenOutput({ isListen, isSpeaking, audioBase64, sampleRate }) {
@@ -578,7 +630,13 @@ function handleSpokenOutput({ isListen, isSpeaking, audioBase64, sampleRate }) {
 function renderBoard() {
   if (!state.cards.length) {
     el.board.classList.add('empty-board');
-    el.board.innerHTML = '<div class="empty-state">说出具体物体，例如「你看这只猫」「桌上有个苹果」</div>';
+    el.board.innerHTML = `<div class="empty-state">
+      <strong>先说一句指令</strong>（约 6-8 秒），比如：<br />
+      <em>「我等下讲讲故事里出现的动物，提到的你就帮我放到画板上。」</em><br />
+      <em>「等下我描述房间里的东西，提到的你就帮我展示出来。」</em><br />
+      等 AI 应一声之后，再自由描述具体物体。<br />
+      <span style="color:#999;font-size:11px">句式仿训练数据：\`等下我/我等下…提到 XX 你就 放到画板上\`</span>
+    </div>`;
     return;
   }
   el.board.classList.remove('empty-board');
@@ -679,9 +737,7 @@ function releaseMicLive(finalState = 'closed') {
 
 function clearViews() {
   state.cards = [];
-  nonSpokenBlocks.clear();
-  toolCallBlocks.clear();
-  activeNonSpokenBlockId = null;
+  nsView.reset();
   el.timeline.innerHTML = '';
   el.streamFeed.innerHTML = '<div class="placeholder">还没有数据流</div>';
   el.board.innerHTML = '';
@@ -689,10 +745,16 @@ function clearViews() {
   speechQueue.length = 0;
   if (speechDrainer) { clearTimeout(speechDrainer); speechDrainer = null; }
   el.aiSpeech.innerHTML = '<div class="placeholder">AI 还没开口</div>';
-  el.nsStream.innerHTML = '<div class="placeholder">还没有 think / tool_call 块</div>';
   el.aiAudioList.innerHTML = '';
   sentChunkCount = 0;
   aiAudioCount = 0;
+  generationStepCount = 0;
+  latestCheckpoint = null;
+  if (el.kvCkpt) el.kvCkpt.textContent = 'No checkpoint';
+  if (el.resumeSummary) {
+    el.resumeSummary.textContent = 'No resumable checkpoint';
+    el.resumeSummary.classList.remove('available', 'failed');
+  }
   updateStats();
   updateMicLevel(0);
 }
@@ -719,6 +781,14 @@ function updateControlState() {
   const active = micLiveState === 'starting' || micLiveState === 'live' || micLiveState === 'stopping';
   if (el.startMicLive) el.startMicLive.disabled = active;
   if (el.stopMicLive) el.stopMicLive.disabled = !active || micLiveState === 'stopping';
+  if (el.resumeCheckpoint) {
+    el.resumeCheckpoint.disabled = (
+      resumeInProgress
+      || micLiveState !== 'live'
+      || !liveClient
+      || latestCheckpoint?.resume?.status !== 'available'
+    );
+  }
 }
 
 function setWsState(state) {
@@ -730,19 +800,30 @@ function setWsState(state) {
 }
 
 function updateMicLevel(level) {
-  const clamped = Math.max(0, Math.min(1, level / 0.08));
+  // `level` 是 live-mic-provider 传来的原始 RMS ∈ [0, 1]
+  const db = rmsToDb(level);
+  const clamped = Math.max(0, Math.min(1, (db - MIC_METER_MIN_DB) / (MIC_METER_MAX_DB - MIC_METER_MIN_DB)));
   if (el.micLevelBar) el.micLevelBar.style.width = `${Math.round(clamped * 100)}%`;
-  if (level > micPeakSinceStart) micPeakSinceStart = level;
-  if (el.micLevelText) el.micLevelText.textContent = `${level.toFixed(2)}  (peak ${micPeakSinceStart.toFixed(2)})`;
+  // 用户反馈过"模型不响应"往往是麦克风采到了静音（Chrome noiseSuppression
+  // 太狠 / 权限没给 / 硬件哑了）。session peak 让用户一眼就能判断音频真的
+  // 有没有进来：peak < -50 dB 基本可以断定是静音。
+  if (db > micPeakDbSinceStart) micPeakDbSinceStart = db;
+  if (el.micLevelText) {
+    const inTarget = (db >= MIC_TARGET_LO_DB && db <= MIC_TARGET_HI_DB) ? '✓' : ' ';
+    el.micLevelText.textContent = `${db.toFixed(1)} dB ${inTarget}  (peak ${micPeakDbSinceStart.toFixed(1)}, target ${MIC_TARGET_LO_DB}~${MIC_TARGET_HI_DB} ≈ -23 LUFS)`;
+  }
 }
 
 function resetMicPeak() {
-  micPeakSinceStart = 0;
+  micPeakDbSinceStart = MIC_METER_MIN_DB;
 }
 
 function updateStats() {
   el.sentChunks.textContent = String(sentChunkCount);
   el.aiAudioCount.textContent = String(aiAudioCount);
+  if (el.generationSteps) {
+    el.generationSteps.textContent = String(generationStepCount);
+  }
 }
 
 function setStatus(text) {
@@ -813,7 +894,7 @@ function renderStreamRowContent({ direction, event, type, timeText }) {
 function renderStreamEventMedia(event) {
   let audioBase64 = '';
   let sampleRate = 24000;
-  if (event.type === 'response.output.delta' && event.kind === 'audio' && event.audio) {
+  if (event.type === 'response.spoken.delta' && event.audio) {
     audioBase64 = event.audio;
     sampleRate = Number(event.sample_rate || 24000);
   } else if (event.type === 'input.append' && event.input?.audio_base64) {
@@ -843,14 +924,14 @@ function applyStreamFilter() {
 function streamEventCategory(direction, event) {
   const type = event.type || '';
   if (type === 'error' || type.endsWith('.error')) return 'error';
+  if (type === 'response.warning') return 'warning';
   if (type.startsWith('session.')) return 'session';
   if (type.startsWith('input.')) return 'input';
-  if (type === 'response.output.sp_tokens') return 'sp';
+  if (type.startsWith('response.unit.')) return 'unit';
+  if (type.startsWith('response.spoken.')) return 'spoken';
   if (type === 'response.debug') return 'debug';
-  if (type === 'response.output.delta') return 'output';
   if (type.startsWith('response.think')) return 'think';
   if (type.startsWith('response.tool_call')) return 'tool_call';
-  if (type === 'response.tool_result') return 'tool_result';
   return direction;
 }
 
@@ -869,24 +950,27 @@ function summarizeStreamEvent(event) {
       `generate_audio=${Boolean(payload.generate_audio)}`,
     ].join(' · ');
   }
-  if (type === 'response.output.delta') {
-    if (event.kind === 'audio') return `kind=audio · audio=${String(event.audio || '').length} chars · sample_rate=${event.sample_rate || '-'}`;
-    if (event.kind === 'text') return `kind=text · ${event.text || ''}`;
-    if (event.kind === 'non_spoken') return `kind=non_spoken · ${event.text || (event.token_strs || []).join('')}`;
-    return `kind=${event.kind || '-'}`;
+  if (type.endsWith('.delta')) {
+    const steps = Array.isArray(event.steps) ? event.steps : [];
+    return `unit=${event.unit_index ?? '-'} · text=${textFromSteps(steps)} · steps=${steps.length} · audio=${String(event.audio || '').length}`;
+  }
+  if (type === 'response.unit.started') {
+    return `unit=${event.unit_index ?? '-'} · input_id=${event.input_id || '-'} · tool_events=${(event.tool_events || []).length}`;
+  }
+  if (type === 'response.non_spoken.end') {
+    return `unit=${event.unit_index ?? '-'} · reason=${event.reason || '-'}`;
+  }
+  if (type === 'response.unit.committed') {
+    return `unit=${event.unit_index ?? '-'} · resume=${event.resume?.status || '-'}${event.resume?.reason ? ` (${event.resume.reason})` : ''}`;
+  }
+  if (type === 'response.warning') {
+    return `unit=${event.unit_index ?? '-'} · code=${event.code || '-'} · ${event.message || ''}`;
   }
   if (type.startsWith('response.tool_call')) {
-    return `tool_call_id=${event.tool_call_id || '-'} · ${event.delta || formatRawForSummary(event.raw) || ''}`;
-  }
-  if (type === 'response.tool_result') {
-    const result = event.result || {};
-    return `tool_call_id=${event.tool_call_id || '-'} · query=${result.query || '-'} · error=${result.error || '-'}`;
+    return `tool_call_id=${event.tool_call_id || '-'} · unit=${event.unit_index ?? '-'} · ${event.full_text || event.error || ''}`;
   }
   if (type.startsWith('response.think')) {
-    return event.delta || '';
-  }
-  if (type === 'response.output.sp_tokens') {
-    return `token=${event.token || '-'}`;
+    return `unit=${event.unit_index ?? '-'} · ${event.full_text || textFromSteps(event.steps)}`;
   }
   if (type === 'response.debug') {
     const debug = event.debug || {};
@@ -894,6 +978,12 @@ function summarizeStreamEvent(event) {
   }
   if (type === 'session.created') {
     return `session_id=${event.session_id || '-'} · mode=${event.mode || '-'}`;
+  }
+  if (type === 'session.resumed') {
+    return `session_id=${event.session_id || '-'} · through_unit=${event.through_unit_index ?? '-'} · next_unit=${event.next_unit_index ?? '-'}`;
+  }
+  if (type === 'session.resume.failed') {
+    return `code=${event.code || '-'} · unit=${event.unit_index ?? '-'} · ${event.message || ''}`;
   }
   if (type === 'session.queued' || type === 'session.queue_update') {
     return `position=${event.position ?? '-'} · eta=${event.estimated_wait_s ?? '-'}s`;
@@ -904,40 +994,26 @@ function summarizeStreamEvent(event) {
   return compactJson(event);
 }
 
-function formatRawForSummary(raw) {
-  if (!raw) return '';
-  if (raw.error) return `error=${raw.error}`;
-  return `${raw.name || ''} ${raw.arguments || ''}`.trim();
-}
-
 function compactJson(value) {
   try { return JSON.stringify(value); } catch (_) { return String(value); }
 }
 
-function clampInt(value, min, max, fallback) {
+function requirePositiveInt(value, label) {
   const parsed = Number.parseInt(String(value ?? ''), 10);
-  if (!Number.isFinite(parsed)) return fallback;
-  return Math.max(min, Math.min(max, parsed));
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    throw new Error(`${label} must come from a valid Checkpoint Profile`);
+  }
+  return parsed;
 }
 
 function prettyJson(value) {
   try { return JSON.stringify(value, null, 2); } catch (_) { return String(value); }
 }
 
-function scrollNsToBottom() {
-  const scroller = el.nsStream.parentElement;
-  if (scroller) requestAnimationFrame(() => { scroller.scrollTop = scroller.scrollHeight; });
-}
-
 function parseArguments(value) {
   if (!value) return {};
   if (typeof value === 'object') return value;
   try { return JSON.parse(value); } catch (_) { return {}; }
-}
-
-function formatToolCall(raw) {
-  if (!raw || raw.error) return raw?.error || '';
-  return `<function name="${raw.name}">${raw.arguments || ''}</function>`;
 }
 
 function placeholderImageDataUrl(label) {

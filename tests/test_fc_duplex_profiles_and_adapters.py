@@ -169,7 +169,16 @@ def test_profile_environment_is_server_internal(
         "FC_MODEL_FAMILY",
         "CHECKPOINT_PROFILE_ID",
         "FC_DUPLEX_UNIT_POLICY_JSON",
+        "FC_DUPLEX_NON_SPOKEN_SCHEDULING",
+        "FC_DUPLEX_NON_SPOKEN_BUDGET_WHILE_LISTENING",
+        "FC_DUPLEX_NON_SPOKEN_BUDGET_WHILE_SPEAKING",
+        "FC_DUPLEX_UNIT_SEC",
         "O5_DEPLOY_MODE",
+        "O5_BACKBONE_DIR",
+        "O5_LLM_CACHE",
+        "O5_LLM_GRAPH",
+        "O5_SPMD_HEARTBEAT_INTERVAL",
+        "O5_ATTN_IMPLEMENTATION",
     ):
         # 先通过 monkeypatch 记录原值，确保被生产函数直接写入的环境在 teardown 恢复。
         monkeypatch.setenv(name, "__test_placeholder__")

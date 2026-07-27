@@ -23,6 +23,8 @@ FRPC_CONFIG="${FRPC_CONFIG:-}"
 GATEWAY_HTTPS="${GATEWAY_HTTPS:-1}"
 O5_LLM_CACHE="${O5_LLM_CACHE:-32768}"
 O5_SPMD_HEARTBEAT_INTERVAL="${O5_SPMD_HEARTBEAT_INTERVAL:-30}"
+FC_MODEL_FAMILY="${FC_MODEL_FAMILY:-o5}"
+CHECKPOINT_PROFILE_ID="${CHECKPOINT_PROFILE_ID:-unprofiled}"
 
 mkdir -p "${LOG_DIR}"
 cd "${PROJECT_DIR}"
@@ -102,7 +104,7 @@ wait_http "${BACKEND_URL}/health" 1200 "backend-tp2"
 worker_pid=$!
 wait_http "http://${WORKER_ENDPOINT}/health" 120 "worker"
 
-payload="{\"endpoint\":\"${WORKER_ENDPOINT}\",\"gpu_group\":\"${WORKER_GPU_GROUP}\",\"labels\":{\"model\":\"o5\",\"runtime\":\"tp2-cctl\"}}"
+payload="{\"endpoint\":\"${WORKER_ENDPOINT}\",\"gpu_group\":\"${WORKER_GPU_GROUP}\",\"labels\":{\"model\":\"${FC_MODEL_FAMILY}\",\"runtime\":\"tp2-cctl\",\"profile\":\"${CHECKPOINT_PROFILE_ID}\"}}"
 curl -sf -X PUT -H "content-type: application/json" --data "${payload}" "${GATEWAY_REGISTRY_URL}" >/dev/null
 echo "[tp2-start] registered ${WORKER_ID} endpoint=${WORKER_ENDPOINT}"
 

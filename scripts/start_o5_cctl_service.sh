@@ -14,8 +14,10 @@ GATEWAY_HOST="${GATEWAY_HOST:-0.0.0.0}"
 GATEWAY_PORT="${GATEWAY_PORT:-8009}"
 GATEWAY_INTERNAL_PORT="${GATEWAY_INTERNAL_PORT:-8010}"
 GPU_ID="${GPU_ID:-0}"
+FC_MODEL_FAMILY="${FC_MODEL_FAMILY:-o5}"
+CHECKPOINT_PROFILE_ID="${CHECKPOINT_PROFILE_ID:-unprofiled}"
 
-WORKER_ID="${WORKER_ID:-o5-cctl-worker}"
+WORKER_ID="${WORKER_ID:-${FC_MODEL_FAMILY}-cctl-worker}"
 WORKER_GPU_GROUP="${WORKER_GPU_GROUP:-cctl-a100-${GPU_ID}}"
 LOG_DIR="${LOG_DIR:-${PROJECT_DIR}/run-logs/o5_cctl}"
 ENABLE_FRP="${ENABLE_FRP:-1}"
@@ -115,7 +117,7 @@ wait_http "${BACKEND_URL}/health" 900 "backend"
 worker_pid=$!
 wait_http "http://${WORKER_ENDPOINT}/health" 120 "worker"
 
-payload="{\"endpoint\":\"${WORKER_ENDPOINT}\",\"gpu_group\":\"${WORKER_GPU_GROUP}\",\"labels\":{\"model\":\"o5\",\"runtime\":\"cctl\"}}"
+payload="{\"endpoint\":\"${WORKER_ENDPOINT}\",\"gpu_group\":\"${WORKER_GPU_GROUP}\",\"labels\":{\"model\":\"${FC_MODEL_FAMILY}\",\"runtime\":\"single-cctl\",\"profile\":\"${CHECKPOINT_PROFILE_ID}\"}}"
 curl -sf -X PUT \
     -H "content-type: application/json" \
     --data "${payload}" \

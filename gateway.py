@@ -145,6 +145,32 @@ def _fc_board_case_folder() -> Optional[str]:
     return None
 
 
+def _optional_environment_number(
+    name: str,
+    *,
+    value_type: type[int] | type[float],
+) -> int | float | None:
+    """读取部署 Profile 投影的可选数值。
+
+    参数:
+        name: 环境变量名。
+        value_type: 目标数值类型。
+
+    返回:
+        环境变量缺失时返回 None，否则返回目标数值。
+    """
+
+    raw = os.environ.get(name)
+    if raw is None or raw == "":
+        return None
+    try:
+        return value_type(raw)
+    except ValueError as exc:
+        raise RuntimeError(
+            f"{name} must be a valid {value_type.__name__}"
+        ) from exc
+
+
 def _ws_debug_enabled() -> bool:
     return os.environ.get("MCPMO_WS_DEBUG", "").lower() in {"1", "true", "yes", "on"}
 
@@ -1499,6 +1525,22 @@ async def fc_board_defaults():
         "default_system_prompt": defaults.get("system_prompt"),
         "default_ref_audio_path": defaults.get("ref_audio_path"),
         "default_tools": defaults.get("tools") or [_display_object_tool_default()],
+        "checkpoint_profile_id": os.environ.get("CHECKPOINT_PROFILE_ID"),
+        "non_spoken_scheduling": os.environ.get(
+            "FC_DUPLEX_NON_SPOKEN_SCHEDULING"
+        ),
+        "non_spoken_budget_while_listening": _optional_environment_number(
+            "FC_DUPLEX_NON_SPOKEN_BUDGET_WHILE_LISTENING",
+            value_type=int,
+        ),
+        "non_spoken_budget_while_speaking": _optional_environment_number(
+            "FC_DUPLEX_NON_SPOKEN_BUDGET_WHILE_SPEAKING",
+            value_type=int,
+        ),
+        "unit_sec": _optional_environment_number(
+            "FC_DUPLEX_UNIT_SEC",
+            value_type=float,
+        ),
     }
 
 

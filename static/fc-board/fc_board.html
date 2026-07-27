@@ -70,16 +70,24 @@
           <summary>Runtime</summary>
           <label class="field-row">
             <span>Mode</span>
-            <select id="nonSpokenScheduling">
+            <select id="nonSpokenScheduling" disabled>
               <option value="quality" selected>Quality</option>
               <option value="latency">Latency</option>
             </select>
           </label>
           <label class="field-row">
-            <span>Budget</span>
-            <input id="nonSpokenBudget" type="number" min="1" max="512" step="1" value="12" />
+            <span>Checkpoint Profile</span>
+            <input id="checkpointProfileId" type="text" value="" readonly />
           </label>
-          <p class="hint">Budget is non-spoken decode steps per audio unit. MVP hard cap was 200.</p>
+          <label class="field-row">
+            <span>Listening budget</span>
+            <input id="nonSpokenBudgetWhileListening" type="number" min="1" max="512" step="1" value="" readonly />
+          </label>
+          <label class="field-row">
+            <span>Speaking budget</span>
+            <input id="nonSpokenBudgetWhileSpeaking" type="number" min="1" max="512" step="1" value="" readonly />
+          </label>
+          <p class="hint">Budgets are injected from the selected checkpoint deployment Profile.</p>
         </details>
       </section>
 
@@ -114,12 +122,12 @@
             <option value="rx">RX only</option>
             <option value="session">Session</option>
             <option value="input">Input</option>
-            <option value="output">Output delta</option>
-            <option value="sp">SP tokens</option>
+            <option value="unit">Units</option>
+            <option value="spoken">Spoken</option>
             <option value="debug">Debug</option>
             <option value="think">Think</option>
             <option value="tool_call">Tool call</option>
-            <option value="tool_result">Tool result</option>
+            <option value="warning">Warnings</option>
             <option value="error">Errors</option>
           </select>
         </label>
@@ -136,10 +144,16 @@
       <section class="panel board-panel">
         <div class="panel-title">
           Board · display_object_on_board
-          <span class="hint">2 × 3 cards · FIFO</span>
+          <span class="hint">1 × 6 cards · FIFO</span>
         </div>
         <div id="board" class="board empty-board">
-          <div class="empty-state">说出具体物体，例如「你看这只猫」「桌上有个苹果」</div>
+          <div class="empty-state">
+            <strong>先说一句指令</strong>（约 6-8 秒），比如：<br />
+            <em>「我等下讲讲故事里出现的动物，提到的你就帮我放到画板上。」</em><br />
+            <em>「等下我描述房间里的东西，提到的你就帮我展示出来。」</em><br />
+            等 AI 应一声之后，再自由描述具体物体。<br />
+            <span style="color:#999;font-size:11px">句式仿训练数据：`等下我/我等下…提到 XX 你就 放到画板上`</span>
+          </div>
         </div>
       </section>
 
@@ -155,7 +169,7 @@
         <section class="panel ns-panel">
           <div class="panel-title">
             Think / Tool-Call
-            <span class="hint">streaming = id-to-token · full = BPE merged</span>
+            <span class="hint">Per-Unit token ledger · budget audit</span>
           </div>
           <div class="scroll-body">
             <div id="nonSpokenStream" class="ns-stream">
@@ -171,10 +185,13 @@
     <div class="controls-bar">
       <button id="startMicLive" class="ctrl-btn primary">Start mic live</button>
       <button id="stopMicLive" class="ctrl-btn danger">Stop</button>
+      <button id="resumeCheckpoint" class="ctrl-btn" disabled>Reconnect &amp; Resume</button>
+      <span id="resumeSummary" class="resume-summary">No resumable checkpoint</span>
       <span class="ctrl-divider"></span>
       <div class="ctrl-stats">
         <span>Chunks <b id="sentChunks">0</b></span>
         <span>AI audio <b id="aiAudioCount">0</b></span>
+        <span>Generation steps <b id="generationSteps">0</b></span>
       </div>
     </div>
 

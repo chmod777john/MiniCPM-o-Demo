@@ -194,6 +194,16 @@ def apply_fc_deployment_profile_environment(
     os.environ["FC_DUPLEX_NON_SPOKEN_SCHEDULING"] = (
         profile.non_spoken_scheduling
     )
+    policy_data = profile.unit_policy.model_dump(mode="json")
+    os.environ["FC_DUPLEX_UNIT_SEC"] = str(policy_data["unit_sec"])
+    _set_uniform_budget_environment(
+        "FC_DUPLEX_NON_SPOKEN_BUDGET_WHILE_LISTENING",
+        policy_data.get("non_spoken_budgets_while_listening"),
+    )
+    _set_uniform_budget_environment(
+        "FC_DUPLEX_NON_SPOKEN_BUDGET_WHILE_SPEAKING",
+        policy_data.get("non_spoken_budgets_while_speaking"),
+    )
     os.environ["O5_DEPLOY_MODE"] = profile.deployment_mode
     if isinstance(profile, O5FcDeploymentProfile):
         os.environ["O5_BACKBONE_DIR"] = profile.backbone_dir
@@ -203,6 +213,28 @@ def apply_fc_deployment_profile_environment(
             profile.spmd_heartbeat_interval_sec
         )
         os.environ["O5_ATTN_IMPLEMENTATION"] = profile.attn_implementation
+
+
+def _set_uniform_budget_environment(name: str, values: object) -> None:
+    """只为恒定整数 budget 投影 legacy 前端标量。
+
+    参数:
+        name: 目标环境变量名。
+        values: UnitPolicy 中的 budget 序列。
+
+    返回:
+        无返回值；可安全降级为标量时才写入。
+    """
+
+    os.environ.pop(name, None)
+    if not isinstance(values, list) or not values:
+        return
+    first = values[0]
+    if isinstance(first, bool) or not isinstance(first, int):
+        return
+    if any(value != first for value in values):
+        return
+    os.environ[name] = str(first)
 
 
 def _validate_profile_paths(profile: FcDeploymentProfile) -> None:
