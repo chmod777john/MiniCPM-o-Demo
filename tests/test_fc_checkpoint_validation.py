@@ -6,9 +6,14 @@ import json
 from pathlib import Path
 
 import torch
+import torch.distributed.checkpoint as dcp
 
 from core.fc_duplex.profiles import O45FcDeploymentProfile, O5FcDeploymentProfile
 from minicpm_o5_sdk import O5UnitPolicy
+from tools.checkpoint.convert_mcore_to_pt import (
+    _runtime_key,
+    convert_model_only_dcp_to_pt,
+)
 from tools.checkpoint.validate_fc_checkpoint import validate_fc_checkpoint
 
 
@@ -115,3 +120,32 @@ def test_o5_rejects_legacy_005a1_rows(tmp_path: Path) -> None:
     assert report.valid is False
     assert len(report.errors) == 3
     assert all("248168" in error for error in report.errors)
+
+
+def test_mcore_model_only_dcp_converts_to_runtime_pt(tmp_path: Path) -> None:
+    """DCP converter 应去掉 model.module wrapper 并输出普通 state_dict。"""
+
+    source_dir = tmp_path / "dcp"
+    dcp.save(
+        {
+            "model.module.llm.model.embed_tokens.weight": torch.ones(4, 2),
+            "model.module.llm.lm_head.weight": torch.ones(4, 2),
+            "model.module.apm.weight": torch.ones(2, 2),
+            "optimizer.state": torch.ones(1),
+        },
+        checkpoint_id=source_dir,
+    )
+    output_pt = tmp_path / "dense.pt"
+
+    manifest = convert_model_only_dcp_to_pt(
+        source_dir=source_dir,
+        output_pt=output_pt,
+    )
+    state = torch.load(output_pt, map_location="cpu", weights_only=True)
+
+    assert manifest.tensor_count == 3
+    assert manifest.embedding_rows == 4
+    assert manifest.lm_head_rows == 4
+    assert "llm.model.embed_tokens.weight" in state
+    assert "optimizer.state" not in state
+    assert _runtime_key("model.foo") == "foo"

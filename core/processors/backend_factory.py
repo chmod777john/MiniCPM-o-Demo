@@ -30,6 +30,7 @@ def create_backend(config: Dict[str, Any]) -> Any:
                 "model_family": profile.model_family,
                 "deployment_mode": profile.deployment_mode,
                 "fc_deployment_profile_path": str(profile_path),
+                "ref_audio_path": profile.reference_audio_path,
             }
         )
         if isinstance(profile, O5FcDeploymentProfile):

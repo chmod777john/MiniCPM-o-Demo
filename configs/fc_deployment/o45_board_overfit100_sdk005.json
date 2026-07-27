@@ -1,0 +1,35 @@
+{
+  "profile_id": "o45_board_overfit100_sdk005",
+  "model_family": "o45",
+  "sdk_version": "0.0.5",
+  "tokenizer_target": "o45_fc",
+  "required_model_rows": 151772,
+  "modeling_package": "modeling.o45",
+  "model_path": "/user/weihongliang/autoshow_omni/models/MiniCPM-o-4_5",
+  "pt_path": "/user/sunweiyue/lib/swy-dev/omni_agent_research/minicpm_o5_training/experiments/overfit_midtrain_v2_100/runs/job_623811_sdk005_compacted/checkpoints/minicpm-v/swy_o5_midtrain_v2_overfit/o5_midtrain_v2_overfit100_sdk005_v1/job_623811_ckpt_100/minicpm-v_100.pt",
+  "checkpoint_sha256": "6c5f9c733ec0ac5dcf0e674df65cd9b6f955a12381eb4d45fdeb6671b37a6e3e",
+  "reference_audio_path": "/user/sunweiyue/lib/swy-dev/omni_agent_research/minicpm_o5_training/experiments/overfit_midtrain_v2_100/runs/subsets/overfit100_seed0/delivery_train_data/media/system_reference/HTRef06.wav",
+  "case_folder": "/user/sunweiyue/lib/swy-dev/omni_agent_research/minicpm_o5_training/experiments/overfit_midtrain_v2_100/runs/subsets/overfit100_seed0/delivery_train_data",
+  "unit_policy": {
+    "unit_sec": 1.0,
+    "non_spoken_budgets_while_listening": [
+      30
+    ],
+    "non_spoken_budgets_while_speaking": [
+      15
+    ],
+    "prefill_second_per_unit": [
+      0.2
+    ],
+    "ai_tts_second_per_unit": [
+      0.3
+    ],
+    "decode_ms_per_step": [
+      15.0
+    ],
+    "ai_spoken_playback_delay_sec": 0.2,
+    "spoken_prelook_sec": 0.3
+  },
+  "non_spoken_scheduling": "quality",
+  "deployment_mode": "single_eager"
+}

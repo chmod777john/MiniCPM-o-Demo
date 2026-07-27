@@ -179,6 +179,8 @@ def test_profile_environment_is_server_internal(
         "O5_LLM_GRAPH",
         "O5_SPMD_HEARTBEAT_INTERVAL",
         "O5_ATTN_IMPLEMENTATION",
+        "FC_REFERENCE_AUDIO_PATH",
+        "FC_BOARD_CASE_FOLDER",
     ):
         # 先通过 monkeypatch 记录原值，确保被生产函数直接写入的环境在 teardown 恢复。
         monkeypatch.setenv(name, "__test_placeholder__")

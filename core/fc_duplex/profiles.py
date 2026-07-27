@@ -32,6 +32,14 @@ class _BaseFcDeploymentProfile(BaseModel):
         default=None,
         description="完整 checkpoint 的可选 SHA256；正式部署应填写。",
     )
+    reference_audio_path: str | None = Field(
+        default=None,
+        description="Session 默认使用的系统/TTS 参考音频。",
+    )
+    case_folder: str | None = Field(
+        default=None,
+        description="FC Board 静态 TrainingData case 目录。",
+    )
     unit_policy: O5UnitPolicy = Field(description="SDK 0.0.5 定义的完整 UnitPolicy。")
     non_spoken_scheduling: Literal["quality", "latency"] = Field(
         default="quality",
@@ -205,6 +213,10 @@ def apply_fc_deployment_profile_environment(
         policy_data.get("non_spoken_budgets_while_speaking"),
     )
     os.environ["O5_DEPLOY_MODE"] = profile.deployment_mode
+    if profile.reference_audio_path is not None:
+        os.environ["FC_REFERENCE_AUDIO_PATH"] = profile.reference_audio_path
+    if profile.case_folder is not None:
+        os.environ["FC_BOARD_CASE_FOLDER"] = profile.case_folder
     if isinstance(profile, O5FcDeploymentProfile):
         os.environ["O5_BACKBONE_DIR"] = profile.backbone_dir
         os.environ["O5_LLM_CACHE"] = str(profile.llm_cache)
@@ -253,6 +265,17 @@ def _validate_profile_paths(profile: FcDeploymentProfile) -> None:
         raise FileNotFoundError(f"model_path 不存在或不是目录: {model_path}")
     if not pt_path.is_file():
         raise FileNotFoundError(f"pt_path 不存在或不是文件: {pt_path}")
+    if (
+        profile.reference_audio_path is not None
+        and not Path(profile.reference_audio_path).is_file()
+    ):
+        raise FileNotFoundError(
+            f"reference_audio_path 不存在或不是文件: {profile.reference_audio_path}"
+        )
+    if profile.case_folder is not None and not Path(profile.case_folder).is_dir():
+        raise FileNotFoundError(
+            f"case_folder 不存在或不是目录: {profile.case_folder}"
+        )
     if isinstance(profile, O5FcDeploymentProfile):
         backbone_dir = Path(profile.backbone_dir)
         if not backbone_dir.is_dir():
