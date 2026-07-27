@@ -8,7 +8,7 @@ import gc
 import io
 import logging
 import time
-from typing import Any, Dict, Iterator, List, Optional
+from typing import Any, Dict, Iterator, List, Literal, Optional
 
 import numpy as np
 import soundfile as sf
@@ -48,6 +48,7 @@ class PyTorchBackend:
         compile: bool = False,
         chat_vocoder: str = "token2wav",
         attn_implementation: str = "auto",
+        fc_model_family: Literal["o45", "o5"] = "o5",
     ):
         self.model_path = model_path
         self.gpu_id = gpu_id
@@ -57,6 +58,7 @@ class PyTorchBackend:
         self.compile = compile
         self.chat_vocoder = chat_vocoder
         self.attn_implementation = attn_implementation
+        self.fc_model_family = fc_model_family
 
         self.status = "loading"
         self.processor = None
@@ -80,6 +82,7 @@ class PyTorchBackend:
             compile=self.compile,
             chat_vocoder=self.chat_vocoder,
             attn_implementation=self.attn_implementation,
+            fc_model_family=self.fc_model_family,
         )
 
         gc.collect()

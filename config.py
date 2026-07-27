@@ -49,6 +49,13 @@ class ModelConfig(BaseModel):
             "由 backend 在构造模型时校验非空。"
         ),
     )
+    fc_deployment_profile_path: Optional[str] = Field(
+        default=None,
+        description=(
+            "双工 FC backend 的严格 DeploymentProfile JSON。设置后由 Profile 唯一决定"
+            "模型族、SDK target、checkpoint、UnitPolicy 和部署引擎。"
+        ),
+    )
     pt_path: Optional[str] = Field(
         default=None,
         description="额外权重路径（.pt 文件，可选）。为 null 时不加载额外权重。",

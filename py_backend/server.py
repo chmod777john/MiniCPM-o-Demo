@@ -807,22 +807,28 @@ def main() -> None:
     parser.add_argument("--port", type=int, default=22500)
     parser.add_argument("--model-path", default=None)
     parser.add_argument("--pt-path", default=None)
+    parser.add_argument("--fc-deployment-profile", default=None)
     parser.add_argument("--ref-audio-path", default=None)
     parser.add_argument("--gpu-id", type=int, default=0)
     parser.add_argument("--worker-index", type=int, default=0)
     parser.add_argument("--duplex-pause-timeout", type=float, default=None)
     args = parser.parse_args()
 
+    profile_path = (
+        args.fc_deployment_profile
+        or os.environ.get("FC_DEPLOYMENT_PROFILE")
+        or getattr(cfg.model, "fc_deployment_profile_path", None)
+    )
     model_path = args.model_path or cfg.model.model_path
-    if not model_path:
+    if not model_path and not profile_path:
         parser.error(
-            "model path is required for the backend: pass --model-path <dir> "
-            "or set model.model_path in config.json"
+            "model path or FC deployment profile is required for the backend"
         )
 
     SERVER_CONFIG.update({
         "model_path": model_path,
         "gpu_id": args.gpu_id,
+        "fc_deployment_profile_path": profile_path,
         "pt_path": args.pt_path or cfg.model.pt_path,
         "ref_audio_path": args.ref_audio_path or cfg.ref_audio_path,
         "duplex_pause_timeout": args.duplex_pause_timeout or cfg.duplex_pause_timeout,

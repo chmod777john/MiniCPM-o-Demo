@@ -105,7 +105,7 @@ for audio_chunk in audio_stream:
 """
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, Iterable, Optional, Generator, List, TYPE_CHECKING
+from typing import Any, Dict, Iterable, Literal, Optional, Generator, List, TYPE_CHECKING
 from pathlib import Path
 import json
 import os
@@ -119,6 +119,10 @@ import numpy as np
 import torch
 
 from core.capabilities import ProcessorMode
+from core.fc_duplex.model_adapter import (
+    FcDuplexModelAdapter,
+    create_fc_duplex_model_adapter,
+)
 from core.processors.base import BaseProcessor, MiniCPMOProcessorMixin
 from core.schemas import (
     # Chat
@@ -1369,10 +1373,14 @@ class _FcTextStreamState:
 
 
 class FcDuplexView:
-    """FC slot Duplex 模式视图。"""
+    """O45/O5 共享的 FC slot Duplex 视图。"""
 
-    def __init__(self, model: "MiniCPMO", config: Optional[FcDuplexConfig] = None):
-        self._model = model
+    def __init__(
+        self,
+        adapter: FcDuplexModelAdapter,
+        config: Optional[FcDuplexConfig] = None,
+    ):
+        self._adapter = adapter
         self.config = config or FcDuplexConfig()
         self.tool_call_manager = ToolCallStateManager()
         self._ref_audio_cache: Dict[str, np.ndarray] = {}
@@ -1410,10 +1418,7 @@ class FcDuplexView:
 
         if self._protocol_tokenizer is not None:
             return self._protocol_tokenizer
-        capability = getattr(self._model, "fc_duplex", None)
-        if capability is None:
-            raise RuntimeError("FC duplex capability is not initialized")
-        self._protocol_tokenizer = capability.protocol_tokenizer
+        self._protocol_tokenizer = self._adapter.protocol_tokenizer
         return self._protocol_tokenizer
 
     def _new_text_stream(self, kind: str) -> _FcTextStreamState:
@@ -1927,7 +1932,7 @@ class FcDuplexView:
                 self._resume_prompt_wav_sha256 = hashlib.sha256(
                     prompt_path.read_bytes()
                 ).hexdigest()
-        result = self._model.fc_duplex_prepare(
+        result = self._adapter.prepare(
             system_prompt=request.system_prompt,
             tools=request.tools,
             ref_audio=ref_audio,
@@ -1958,7 +1963,7 @@ class FcDuplexView:
         tool_events.extend(self.tool_call_manager.consume_pending_started_events())
         tool_events.extend(self.tool_call_manager.consume_pending_error_responses())
         tool_events.extend(self.tool_call_manager.validate_and_mark_responses(request.tool_responses))
-        result = self._model.fc_duplex_streaming_prefill(
+        result = self._adapter.streaming_prefill(
             audio_waveform=audio_waveform,
             frame_list=request.frame_list,
             tool_responses=tool_events or None,
@@ -1969,14 +1974,14 @@ class FcDuplexView:
         return self._prefill_result(result)
 
     def streaming_spoken_generate(self, request: FcSpokenGenerateRequest) -> FcSpokenGenerateResult:
-        result = self._model.fc_duplex_streaming_spoken_generate(
+        result = self._adapter.streaming_spoken_generate(
             max_tokens=request.max_tokens,
             decode_mode=request.decode_mode,
         )
         return self._spoken_result(result)
 
     def streaming_non_spoken_generate(self, request: FcNonSpokenGenerateRequest) -> FcNonSpokenGenerateResult:
-        result = self._model.fc_duplex_streaming_non_spoken_generate(
+        result = self._adapter.streaming_non_spoken_generate(
             decode_mode=request.decode_mode,
             max_tokens=request.max_tokens,
             close_reason=request.close_reason,
@@ -2056,7 +2061,7 @@ class FcDuplexView:
 
     def finalize_unit(self, request: Optional[FcFinalizeUnitRequest] = None) -> FcDuplexUnitInfo:
         del request
-        return self._unit_info(self._model.fc_duplex_finalize_unit())
+        return self._unit_info(self._adapter.finalize_unit())
 
     def resume_boundary_status(self) -> Dict[str, Any]:
         """Return whether the current Unit boundary is reconstructable from public text."""
@@ -2092,26 +2097,16 @@ class FcDuplexView:
                 ),
                 "stream_id": stream.stream_id,
             }
-        capability = getattr(self._model, "fc_duplex", None)
-        capability_status = getattr(capability, "resume_boundary_status", None)
-        if capability_status is not None:
-            return dict(capability_status())
-        return {"status": "available"}
+        return self._adapter.resume_boundary_status()
 
     def resume_identity(self) -> Dict[str, Any]:
         """Return the model/tokenizer identity required for stateless resume."""
 
         tokenizer = self._ensure_protocol_tokenizer()
         fingerprint = tokenizer.fingerprint
-        model_config = getattr(self._model, "config", None)
-        model_name = str(
-            getattr(model_config, "_name_or_path", None)
-            or getattr(self._model, "name_or_path", None)
-            or "unknown"
-        )
         return {
             "protocol_version": "fc-duplex-semantic-v2",
-            "model": model_name,
+            "model": self._adapter.model_name,
             "tokenizer_target": tokenizer.target,
             "tokenizer_fingerprint": {
                 "vocab_hash": fingerprint.vocab_hash,
@@ -2135,7 +2130,7 @@ class FcDuplexView:
         """Deterministically feed one historical Unit without sampling outputs."""
 
         audio_waveform = self._audio_from_base64(audio_data)
-        result = self._model.fc_duplex_replay_completed_unit(
+        result = self._adapter.replay_completed_unit(
             audio_waveform=audio_waveform,
             frame_list=frame_list,
             tool_responses=tool_responses,
@@ -2169,16 +2164,22 @@ class FcDuplexView:
         if request is not None:
             output_ids = request.output_ids
             tools = request.tools
-        return self._decode_result(self._model.fc_duplex_decode_output_ids(output_ids=output_ids, tools=tools))
+        return self._decode_result(
+            self._adapter.decode_output_ids(output_ids=output_ids, tools=tools)
+        )
 
     def trace_snapshot(self, *, session_id: Optional[str] = None, reason: Optional[str] = None) -> dict:
-        return self._model.fc_duplex_trace_snapshot(session_id=session_id, reason=reason)
+        return self._adapter.trace_snapshot(session_id=session_id, reason=reason)
 
     def dump_trace(self, path: str, *, session_id: Optional[str] = None, reason: Optional[str] = None) -> dict:
-        return self._model.fc_duplex_dump_trace(path=path, session_id=session_id, reason=reason)
+        return self._adapter.dump_trace(
+            path=path,
+            session_id=session_id,
+            reason=reason,
+        )
 
     def cleanup(self) -> None:
-        self._model.fc_duplex_cleanup()
+        self._adapter.cleanup()
         self._protocol_tokenizer = None
         self._stream_seq = 0
         self._non_spoken_text_stream = None
@@ -2684,6 +2685,7 @@ class UnifiedProcessor(BaseProcessor):
         compile: bool = False,
         chat_vocoder: str = "token2wav",
         attn_implementation: str = "auto",
+        fc_model_family: Literal["o45", "o5"] = "o5",
     ):
         """Initialize the unified processor.
 
@@ -2699,6 +2701,7 @@ class UnifiedProcessor(BaseProcessor):
             chat_vocoder: Chat mode vocoder ("token2wav" or "cosyvoice2").
             attn_implementation: Attention implementation
                 ("auto" / "flash_attention_2" / "sdpa" / "eager").
+            fc_model_family: 部署 Profile 明确指定的 FC 模型族。
         """
         self.pt_path = pt_path
         self.ref_audio_path = ref_audio_path
@@ -2707,6 +2710,7 @@ class UnifiedProcessor(BaseProcessor):
         self.compile = compile
         self.chat_vocoder = chat_vocoder
         self.attn_implementation = attn_implementation
+        self.fc_model_family = fc_model_family
 
         # View instances (lazily created)
         self._chat_view: Optional[ChatView] = None
@@ -2866,7 +2870,12 @@ class UnifiedProcessor(BaseProcessor):
             self._chat_view = ChatView(self.model, self.ref_audio_path)
             self._half_duplex_view = HalfDuplexView(self.model, self.ref_audio_path)
             self._duplex_view = DuplexView(self.model, self.ref_audio_path, self.duplex_config)
-            self._fc_duplex_view = FcDuplexView(self.model)
+            self._fc_duplex_view = FcDuplexView(
+                create_fc_duplex_model_adapter(
+                    model=self.model,
+                    model_family=self.fc_model_family,
+                )
+            )
             logger.info("[deploy] built via framework: mode=%s world=%d rank=%d engine=%s",
                         _dep_mode, _br.world_size, _br.rank, _br.engine)
             return
@@ -2991,7 +3000,12 @@ class UnifiedProcessor(BaseProcessor):
         self._chat_view = ChatView(self.model, self.ref_audio_path)
         self._half_duplex_view = HalfDuplexView(self.model, self.ref_audio_path)
         self._duplex_view = DuplexView(self.model, self.ref_audio_path, self.duplex_config)
-        self._fc_duplex_view = FcDuplexView(self.model)
+        self._fc_duplex_view = FcDuplexView(
+            create_fc_duplex_model_adapter(
+                model=self.model,
+                model_family=self.fc_model_family,
+            )
+        )
 
         total_time = time.time() - start
         logger.info(f"UnifiedProcessor initialization complete in {total_time:.1f}s")
@@ -3066,7 +3080,12 @@ class UnifiedProcessor(BaseProcessor):
         """Switch to FC Duplex mode."""
         self.set_duplex_mode()
         if self._fc_duplex_view is None:
-            self._fc_duplex_view = FcDuplexView(self.model)
+            self._fc_duplex_view = FcDuplexView(
+                create_fc_duplex_model_adapter(
+                    model=self.model,
+                    model_family=self.fc_model_family,
+                )
+            )
         return self._fc_duplex_view
 
     # ==================== KV Cache State ====================
