@@ -54,6 +54,13 @@ checkpoint SHA256:
 d7e8c539c935eed8a64cef95b7015599ff8425795ca7a02875b978253aec750f
 ```
 
+O45 Full4850 audio Job `628757` completed a 42-Unit Session:
+
+- `errors=[]`
+- two valid tool calls and two tool-result injections;
+- six non-empty spoken audio events at `24000` Hz;
+- generated spoken text was non-empty.
+
 ## O5 checkpoint conversion
 
 The current Demo runtime accepts a dense PT plus a paired TP2 HF backbone.
@@ -123,7 +130,7 @@ Full4850 audio Job `628631` completed a second 42-Unit Session:
 
 ## User acceptance deployment
 
-Temporary one-hour Cybertron Job `628646` is running with:
+Temporary one-hour Cybertron Job `628765` is running with:
 
 - Profile: `o5_fc_board_tts_full4850_sdk005_step400`
 - runtime: O5 MoE TP2 + LLM Graph
