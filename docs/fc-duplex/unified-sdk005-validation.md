@@ -130,12 +130,12 @@ Full4850 audio Job `628631` completed a second 42-Unit Session:
 
 ## User acceptance deployment
 
-Temporary one-hour Cybertron Job `628765` is running with:
+Temporary one-hour Cybertron Job `628825` is running with:
 
 - Profile: `o5_fc_board_tts_full4850_sdk005_step400`
 - runtime: O5 MoE TP2 + LLM Graph
 - branch: `duplex-fc-unified-sdk005`
-- public FC Board: `http://47.95.219.248:7040/fc_board`
+- public FC Board: `https://47.95.219.248:7040/fc_board`
 
 Automated browser verification passed:
 
