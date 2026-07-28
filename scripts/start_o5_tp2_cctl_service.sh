@@ -26,6 +26,7 @@ O5_SPMD_HEARTBEAT_INTERVAL="${O5_SPMD_HEARTBEAT_INTERVAL:-30}"
 O5_DETERMINISTIC_REPLAY="${O5_DETERMINISTIC_REPLAY:-0}"
 O5_SESSION_SEED="${O5_SESSION_SEED:-0}"
 O5_TTS_ARGMAX="${O5_TTS_ARGMAX:-0}"
+O5_ASSETS_DIR="${O5_ASSETS_DIR:-}"
 
 mkdir -p "${LOG_DIR}"
 cd "${PROJECT_DIR}"
@@ -38,6 +39,7 @@ export O5_SPMD_HEARTBEAT_INTERVAL
 export O5_DETERMINISTIC_REPLAY
 export O5_SESSION_SEED
 export O5_TTS_ARGMAX
+if [ -n "${O5_ASSETS_DIR}" ]; then export O5_ASSETS_DIR; fi
 export O5_TOKEN_TRACE_DIR
 export TORCHRUN="${VENV_DIR}/bin/torchrun"
 
@@ -78,6 +80,7 @@ echo "[tp2-start] project=${PROJECT_DIR}"
 echo "[tp2-start] model=${MODEL_PATH}"
 echo "[tp2-start] pt=${PT_PATH}"
 echo "[tp2-start] token_trace_dir=${O5_TOKEN_TRACE_DIR}"
+echo "[tp2-start] assets_dir=${O5_ASSETS_DIR:-<model_path>/assets}"
 echo "[tp2-start] backbone=${BACKBONE_DIR} llm_cache=${O5_LLM_CACHE} spmd_heartbeat=${O5_SPMD_HEARTBEAT_INTERVAL}"
 echo "[tp2-start] deterministic_replay=${O5_DETERMINISTIC_REPLAY} session_seed=${O5_SESSION_SEED} tts_argmax=${O5_TTS_ARGMAX}"
 echo "[tp2-start] gateway=https://${GATEWAY_HOST}:${GATEWAY_PORT} backend=${BACKEND_URL} worker=${WORKER_ENDPOINT}"

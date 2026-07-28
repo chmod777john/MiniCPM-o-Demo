@@ -7,6 +7,7 @@ export VENV_DIR="${VENV_DIR:-/user/weihongliang/MiniCPM-o-Demo-wt-o5-inference-r
 export MODEL_PATH="${MODEL_PATH:-/user/weihongliang/MiniCPM-o-4_6}"
 export PT_PATH="${PT_PATH:-/user/weihongliang/o5_weights/omni_sft2_main_run_iter1200.pt}"
 export BACKBONE_DIR="${BACKBONE_DIR:-/user/weihongliang/wangkaiqi/o5_backbone_hf}"
+export O5_ASSETS_DIR="${O5_ASSETS_DIR:-/user/weihongliang/MiniCPM-o-4_6/assets}"
 export O5_DEPLOY_MODE="${O5_DEPLOY_MODE:-tp2_llm}"
 export O5_ATTN_IMPLEMENTATION="${O5_ATTN_IMPLEMENTATION:-auto}"
 export O5_LLM_CACHE="${O5_LLM_CACHE:-32768}"

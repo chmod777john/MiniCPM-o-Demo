@@ -1,7 +1,7 @@
 """Shipped deployment-mode builders. Each build() returns a ready-to-serve MiniCPMO.
 
 config keys used: model_path, pt_path, backbone_dir (tp2), chat_vocoder, attn_implementation,
-llm_cache_len (tp2/opt graph StaticCache width), duplex_config (optional override).
+llm_cache_len (tp2/opt graph StaticCache width), assets_dir, duplex_config (optional override).
 """
 from __future__ import annotations
 import os
@@ -176,6 +176,7 @@ def _init_unified(model, cfg: Dict[str, Any]):
         duplex_config=cfg.get("duplex_config", _DEFAULT_DUP),
         device="cuda",
         chat_vocoder=cfg.get("chat_vocoder", "token2wav"),
+        assets_dir=cfg.get("assets_dir"),
     )
 
 

@@ -151,6 +151,7 @@ def _runtime_env_snapshot() -> Dict[str, Any]:
         "O5_EXPERTS_IMPLEMENTATION",
         "O5_ATTN_IMPLEMENTATION",
         "O5_PRELOAD_BOTH_TTS",
+        "O5_ASSETS_DIR",
         "O5_TTS_ARGMAX",
         "O5_DETERMINISTIC_REPLAY",
         "O5_SESSION_SEED",
@@ -923,6 +924,7 @@ def main() -> None:
         "attn_implementation": os.environ.get("O5_ATTN_IMPLEMENTATION", cfg.attn_implementation),
         "preload_both_tts": os.environ.get("O5_PRELOAD_BOTH_TTS", "1").lower()
         in {"1", "true", "yes", "on"},
+        "assets_dir": os.environ.get("O5_ASSETS_DIR") or None,
         "deployment_mode": getattr(cfg.model, "deployment_mode", "single_eager"),
         "backbone_dir": getattr(cfg.model, "backbone_dir", None),
         "llm_cache_len": getattr(cfg.model, "llm_cache_len", 8192),

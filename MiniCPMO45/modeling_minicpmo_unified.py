@@ -125,6 +125,7 @@ class MiniCPMO(BaseMiniCPMO):
         duplex_config: Optional[dict] = None,
         device: str = "cuda",
         chat_vocoder: str = "token2wav",
+        assets_dir: Optional[str] = None,
     ):
         self._chat_vocoder = chat_vocoder
 
@@ -140,6 +141,7 @@ class MiniCPMO(BaseMiniCPMO):
 
         self.init_token2wav(
             streaming=True,
+            model_dir=os.path.join(assets_dir, "token2wav") if assets_dir else None,
             n_timesteps=getattr(self.config.tts_config, "s3_stream_n_timesteps", 10),
         )
 
