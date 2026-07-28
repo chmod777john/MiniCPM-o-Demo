@@ -6,6 +6,7 @@ spoken turn 必须按 SDK 顺序关闭；TrainingData helper 必须显式选择 
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -209,3 +210,39 @@ def test_processor_warms_full_o5_fc_prepare_path_before_returning_ready(
     assert calls[0][0].shape == (16000,)
     assert calls[0][0].dtype == np.float32
     assert calls[0][1] == "/voices/ref.wav"
+
+
+def test_o5_trace_dump_preserves_raw_tokens_without_session_close_error(
+    tmp_path: Path,
+) -> None:
+    """O5 Session close 必须落盘 raw token，而不是抛 NotImplementedError。"""
+
+    capability = FcDuplexCapability.__new__(FcDuplexCapability)
+    capability._ensure_protocol = lambda: None  # type: ignore[method-assign]
+    capability.output_ids = [248159, 248103, 42, 248143, 248114, 248160]
+    capability.render_token_stream = lambda _ids: "<ai_spoken_slot>..."  # type: ignore[method-assign]
+    capability.units_info = [{"unit": 0, "spoken_ids": [248103, 42, 248143]}]
+    capability._current_unit_idx = 1
+    capability._current_unit_open = False
+    capability._spoken_slot_open = False
+    capability._non_spoken_slot_open = False
+    capability._non_spoken_mode = None
+    capability._think_buf = []
+    capability._tool_call_buf = []
+    capability.token2wav_initialized = True
+    capability._token2wav_prompt_wav_path = "/voices/ref.wav"
+    trace_path = tmp_path / "trace.json"
+
+    result = capability.dump_trace(
+        path=trace_path,
+        session_id="sess_test",
+        reason="session_close",
+    )
+    structure = json.loads(trace_path.read_text(encoding="utf-8"))
+
+    assert result["trace_supported"] is True
+    assert result["output_token_count"] == 6
+    assert result["unit_count"] == 1
+    assert structure["output_ids"] == capability.output_ids
+    assert structure["session_id"] == "sess_test"
+    assert structure["reason"] == "session_close"

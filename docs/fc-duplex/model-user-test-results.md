@@ -190,6 +190,28 @@ closed: 2026-07-28
 而同一外层 API、前端和调度框架下的 O45FC 已通过。该分布强烈指向 O5 专属的模型内层
 推理、特殊 token 或 adapter 边界，而不是10个训练 checkpoint 独立失效。
 
+## 修复后待用户复测
+
+```text
+status: pending_retest
+training_job: 629255
+model: REF-AUDIO-001 Full4850 LLM+TTS Step400
+profile: o5_629255_refaudio_full4850_llm_tts_sdk005_step400
+deploy_job: 631623
+code_commit: 913b1c7
+url: https://47.95.219.248:7001/fc_board
+```
+
+机器验证：
+
+- O5 完整 prepare 在 Backend ready 前预热14.2秒。
+- 修复后首个浏览器 Session 创建耗时1.117秒，不再出现约27秒无响应。
+- `generate_audio=true` 的46 Unit 回放产生完整 spoken text、7个 audio event、
+  1次 think 和正确工具调用，warning/error 均为0。
+
+前述10/10是修复前的用户体验结论；最后4个 Session 当时没有越过首次 prepare，不能用于
+否定对应 checkpoint 的 generation 能力。当前只对 `629255` 开放修复后 Live 复测。
+
 部署约定：
 
 - 同一时段最多并行部署4个 O5 TP2 模型，每个模型占2张 A100。

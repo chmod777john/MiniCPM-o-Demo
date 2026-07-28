@@ -11,6 +11,7 @@ passthrough methods.
 from __future__ import annotations
 
 import io
+import json
 import logging
 import os
 import re
@@ -18,6 +19,7 @@ import tempfile
 import time
 import types
 from enum import Enum
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import numpy as np
@@ -482,6 +484,12 @@ class MiniCPMO(BaseMiniCPMO):
 
     def fc_duplex_decode_output_ids(self, output_ids=None, tools=None) -> dict:
         return self._require_fc_duplex().decode_output_ids(output_ids=output_ids, tools=tools)
+
+    def fc_duplex_trace_snapshot(self, **kwargs: Any) -> dict:
+        return self._require_fc_duplex().trace_snapshot(**kwargs)
+
+    def fc_duplex_dump_trace(self, **kwargs: Any) -> dict:
+        return self._require_fc_duplex().dump_trace(**kwargs)
 
     def fc_duplex_cleanup(self) -> None:
         self._require_fc_duplex().cleanup()
@@ -1305,6 +1313,75 @@ class FcDuplexCapability:
             "tool_calls": tool_calls,
             "output_ids": ids,
             "output_render": self.render_token_stream(ids),
+        }
+
+    def trace_snapshot(
+        self,
+        *,
+        session_id: Optional[str] = None,
+        reason: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """返回 O5 FC Session 的可序列化原始协议状态。
+
+        参数:
+            session_id: 调用方分配的 Session ID。
+            reason: trace 触发原因，例如 ``session_close`` 或 ``runtime_error``。
+
+        返回:
+            原始 token、slot 状态、Unit 摘要和 prompt cache 身份。
+        """
+
+        self._ensure_protocol()
+        return {
+            "trace_supported": True,
+            "session_id": session_id,
+            "reason": reason,
+            "output_ids": list(self.output_ids),
+            "output_render": self.render_token_stream(self.output_ids),
+            "units_info": list(self.units_info),
+            "current_unit_index": int(self._current_unit_idx),
+            "current_unit_open": bool(self._current_unit_open),
+            "spoken_slot_open": bool(self._spoken_slot_open),
+            "non_spoken_slot_open": bool(self._non_spoken_slot_open),
+            "non_spoken_mode": self._non_spoken_mode,
+            "think_token_ids": list(self._think_buf),
+            "tool_call_token_ids": list(self._tool_call_buf),
+            "token2wav_initialized": bool(self.token2wav_initialized),
+            "token2wav_prompt_wav_path": self._token2wav_prompt_wav_path,
+        }
+
+    def dump_trace(
+        self,
+        *,
+        path: str | Path,
+        session_id: Optional[str] = None,
+        reason: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """把 O5 FC trace 原子化写入 JSON 文件。
+
+        参数:
+            path: 目标 JSON 路径。
+            session_id: 调用方分配的 Session ID。
+            reason: trace 触发原因。
+
+        返回:
+            trace 路径与 token/Unit 数量摘要。
+        """
+
+        output_path = Path(path)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        snapshot = self.trace_snapshot(session_id=session_id, reason=reason)
+        temporary_path = output_path.with_suffix(output_path.suffix + ".tmp")
+        temporary_path.write_text(
+            json.dumps(snapshot, ensure_ascii=False, indent=2, default=str),
+            encoding="utf-8",
+        )
+        temporary_path.replace(output_path)
+        return {
+            "trace_supported": True,
+            "path": str(output_path),
+            "output_token_count": len(snapshot["output_ids"]),
+            "unit_count": len(snapshot["units_info"]),
         }
 
     def cleanup(self):

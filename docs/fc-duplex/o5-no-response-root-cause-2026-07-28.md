@@ -243,10 +243,49 @@ unsupported runtime message type: session.init
 5. **待补 Gate：O5 training/inference waveform、feature、position 与同-policy
    post-APM 对拍，以及 DCP teacher-forced top1。Training 文档中这两项仍明确未完成。**
 
+## 修复与验证
+
+实现提交：
+
+```text
+6c2497e  prompt-specific Token2Wav cache 跨 Session 复用；
+         spoken_turn_eos → spoken_slot_eos → slot_end；
+         offline helper 显式选择 O5 target。
+
+913b1c7  Backend ready 前执行完整 reference APM + system LLM prefill +
+         Token2Wav prepare warmup。
+```
+
+真实 TP2 + LLM Graph 服务 `tasks/631623` 验证：
+
+```text
+startup full prepare warmup: 14.2s，发生在 Backend ready 之前
+首个浏览器 Session created: 1.117s
+Session closed: 1.650s
+修复前首个 Session prepare: 约27.3s，且用户关闭前没有进入 generation
+```
+
+同一 `629255` checkpoint、正式 SDK `0.0.5`、`generate_audio=true` 的46 Unit
+TrainingData 全链路回放：
+
+```text
+spoken: 39 listen + 6 slot_eos + 1 turn_eos
+non-spoken: 40 no_action + 4 budget_reached + 2 eos
+spoken text: 完整中文回复
+spoken audio events: 7
+think span: 1
+tool call: display_object_on_board(name="红外感应相机")
+warnings: 0
+runtime errors: 0
+```
+
+P0 首次 Session 假死已完成机器验证；仍需用户用 Live 真人语音复测 P1
+ordinary-before-opener / 泛化行为。
+
 ## 下一步验证顺序
 
-1. 服务启动阶段完成 O5 Token2Wav/TTS warmup，warmup 未通过时 Worker 不注册 ready。
-2. warm 后回放同一段用户 Live 录音，确认 spoken/tool-call 是否恢复。
+1. 用户在已预热服务上重新进行 Live 真人语音验收。
+2. 回放同一段用户 Live 录音，确认 spoken/tool-call 是否可重复。
 3. 为 O5 Capability 增加原始 generated token ID、display name、top-k logits 和
    classification trace；不要只记录被 View 丢弃后的空文本。
 4. 将 O5 spoken close sequence 对齐为
