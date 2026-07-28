@@ -367,6 +367,18 @@ SDK-native TTS supervision。该 A/B 支持“训练 TTS 有效”：它改善 s
 正确性、连贯性、音色和韵律，但不改变 FC 是否进入 speaking 的决策 margin。基础模型
 音色仍可能限制绝对上限，但已不能解释两者之间的全部差距。
 
+进一步复测得到两条独立证据：
+
+1. `629252/629254` MVP100 在首个 non-spoken step 生成 ordinary `" no"` /
+   `" spoken"`，而不是 `<|no_action|>`、`<think>` 或 `<tool_call>`；模型忠实 parser
+   fail-fast，所以 Session 约1秒关闭。这是 step100 checkpoint 的协议学习失败。
+2. `623666` Strict Treatment Step2000 的 FC 功能正常，但语音质量与未训练 TTS 的
+   `629253` 接近，说明较长 Agent/LLM 训练不自动带来 TTS 音质改善。
+
+因此不能把“功能可用”“稳定遵守 FC control token”“TTS 音质”合并成一个指标：
+MVP100 主要失败在协议控制 token，Strict/629253 主要缺少 TTS 质量，629255 则证明
+SDK-native TTS supervision 能改善 speaking 后的语音。
+
 ## 下一步验证顺序
 
 1. 将6条 Live Session 录音登记为固定回归集，逐条回放确认 greedy 决策可重复。

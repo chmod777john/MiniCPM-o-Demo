@@ -304,6 +304,37 @@ url: https://47.95.219.248:7001/fc_board
 但改善了模型真正进入 speaking 后的语音质量。后续不应再把 `629255` 的音色差距完全
 归因于共同基础模型；更准确的结论是 TTS 训练已明显改善基础音色，但相对 O45 仍有差距。
 
+### MVP100 与 Strict Treatment 模型忠实复测
+
+`629252` 和 `629254` 均能创建 Session，并在首个 Unit 正常生成 spoken `listen`；
+随后 non-spoken 首 token 违反 SDK 协议：
+
+```text
+629252:
+  repeated token_id: 874
+  decoded ordinary: " no"
+
+629254:
+  observed token_id: 20699 / 874
+  decoded ordinary: " spoken" / " no"
+
+expected:
+  <|no_action|> / <think> / <tool_call> / non-spoken terminator
+```
+
+模型忠实 View 与 O45 一样对 ordinary-before-opener fail-fast，因此 Session 约1秒关闭。
+这不是启动、网络或 parser 故障，而是两个 MVP100 step100 checkpoint 没有稳定学会
+non-spoken opener/control token。禁止恢复“warning 后吞 token”的体验补丁。
+
+`623666` Strict Treatment Step2000：
+
+- FC 功能正常；
+- 偶发无响应体感未单独量化；
+- 语音质量较差，与未训练 TTS 的 `629253` 接近。
+
+该结果进一步支持：Agent/FC 能力与 TTS 音质是独立训练轴；没有 SDK-native TTS
+supervision 的 checkpoint 即使 FC 功能可用，语音仍可能不连贯、音色/韵律较差。
+
 部署约定：
 
 - 同一时段最多并行部署4个 O5 TP2 模型，每个模型占2张 A100。
