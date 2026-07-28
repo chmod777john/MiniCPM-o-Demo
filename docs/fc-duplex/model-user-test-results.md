@@ -214,6 +214,44 @@ url: https://47.95.219.248:7001/fc_board
 前述10/10是修复前的用户体验结论；最后4个 Session 当时没有越过首次 prepare，不能用于
 否定对应 checkpoint 的 generation 能力。当前只对 `629255` 开放修复后 Live 复测。
 
+### 修复后 Live 复测（2026-07-28）
+
+用户共完成6次有实际音频输入的 Live Session：
+
+```text
+1/6 成功
+5/6 未响应
+```
+
+成功 Session `sess_55c3dd3428f3`：
+
+- 38个1秒输入 Unit；
+- spoken 回复：`没问题，你说到哪种动物我就给放到画板上。`；
+- 正确调用4次工具：`小狗`、`小猫`、`大狗`、`波偶猫`；
+- 无 warning/error。
+
+5个未响应 Session：
+
+```text
+sess_670bbd846d9d  15 Units
+sess_0aec03778364  18 Units
+sess_210e0f311852  14 Units
+sess_326e117bf9b5  15 Units
+sess_52867741ad7f  11 Units
+```
+
+共同事实：
+
+- 全部进入真实 generation，不再卡在 prepare；
+- 每个 Unit 都生成合法 `listen + no_action`；
+- 没有 `ordinary_before_opener`、连接错误或 trace 错误；
+- 录音峰值为0.50–1.00，存在3–6秒连续有效语音，不是麦克风静音。
+
+因此首次 Session 假死已修复；当前剩余问题是 checkpoint 对 Live 说法/节奏的
+free-running 决策稳定性。成功样本具有“规则说明 → 模型确认 → 后续连续对象”的两阶段
+结构；失败样本只有一次较短语音阶段。不得用 runtime 强制 speak/tool-call 掩盖该问题，
+应把这6条录音固化为训练/评测回归集。
+
 部署约定：
 
 - 同一时段最多并行部署4个 O5 TP2 模型，每个模型占2张 A100。

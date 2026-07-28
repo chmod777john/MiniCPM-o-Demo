@@ -286,14 +286,29 @@ runtime errors: 0
 P0 首次 Session 假死已完成机器验证；仍需用户用 Live 真人语音复测 P1
 ordinary-before-opener / 泛化行为。
 
+修复后 Live 用户复测进一步收窄了 P1：
+
+```text
+6次有效录音 Session
+成功：1
+未响应：5
+```
+
+成功 Session 连续38秒，先说规则并得到模型 spoken 确认，随后再说具体对象；模型正确
+调用 `小狗`、`小猫`、`大狗`、`波偶猫` 4次工具。5个失败 Session 为11–18秒，每条都
+有3–6秒有效语音，但模型在所有 Unit 上稳定输出合法 `listen + no_action`。
+
+这5条失败已不包含首次 warmup、ordinary-before-opener、连接或 parser 错误。当前首要
+剩余根因是 O5 checkpoint 对 Live 真人语音内容、说法和两阶段交互节奏的
+free-running 泛化不足，而不是共享 runtime 随机丢包。6条 Session 录音已固化到
+`tmp/o5-fc-root-cause/live-sessions/`，应作为后续训练和回归评测输入。
+
 ## 下一步验证顺序
 
-1. 用户在已预热服务上重新进行 Live 真人语音验收。
-2. 回放同一段用户 Live 录音，确认 spoken/tool-call 是否可重复。
-3. 为 O5 Capability 增加原始 generated token ID、display name、top-k logits 和
-   classification trace；不要只记录被 View 丢弃后的空文本。
-4. 将 O5 spoken close sequence 对齐为
-   `spoken_turn_eos → spoken_slot_eos → ai_spoken_slot_end`，并补跨 Unit KV 回归。
+1. 将6条 Live Session 录音登记为固定回归集，逐条回放确认 greedy 决策可重复。
+2. 对成功/失败录音做 ASR 和同 Unit 能量/时序对照，识别内容与节奏变量。
+3. 在训练侧增加真人语音、短指令、立即出现对象、不同开口 offset 与单阶段/两阶段变体。
+4. 对失败录音记录首步 `listen/speak`、`no_action/tool_call_start` 的 top-k margin。
 5. 用同一 checkpoint、同一 waveform 做：
    - Training/Megatron full-forward teacher-forced；
    - HF eager incremental；
