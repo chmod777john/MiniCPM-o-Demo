@@ -3094,15 +3094,25 @@ class UnifiedProcessor(BaseProcessor):
         if deployment is not None and not bool(deployment.is_driver):
             return
         capability = getattr(self.model, "fc_duplex", None)
-        warm = getattr(capability, "warm_token2wav", None)
-        if warm is None:
+        warm_prepare = getattr(capability, "warm_prepare", None)
+        if warm_prepare is None:
             raise RuntimeError(
-                "O5 FC capability lacks warm_token2wav; cannot declare Backend ready"
+                "O5 FC capability lacks warm_prepare; cannot declare Backend ready"
             )
+        import librosa
+
+        ref_audio, _ = librosa.load(
+            self.ref_audio_path,
+            sr=16000,
+            mono=True,
+        )
         start = time.time()
-        warm(prompt_wav_path=self.ref_audio_path)
+        warm_prepare(
+            ref_audio=np.asarray(ref_audio, dtype=np.float32),
+            prompt_wav_path=self.ref_audio_path,
+        )
         logger.info(
-            "O5 FC Token2Wav prompt cache warmed before ready in %.1fs: %s",
+            "O5 FC full prepare path warmed before ready in %.1fs: %s",
             time.time() - start,
             self.ref_audio_path,
         )

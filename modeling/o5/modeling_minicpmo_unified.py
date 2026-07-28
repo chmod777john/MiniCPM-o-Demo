@@ -838,6 +838,32 @@ class FcDuplexCapability:
             self._init_token2wav_cache(canonical_prompt_path)
         self._reset_token2wav()
 
+    def warm_prepare(
+        self,
+        *,
+        ref_audio: np.ndarray,
+        prompt_wav_path: str,
+    ) -> None:
+        """在服务 ready 前执行一次完整 O5 FC prepare 热路径。
+
+        参数:
+            ref_audio: 16kHz mono float32 reference waveform。
+            prompt_wav_path: 与 waveform 对应的参考音频路径。
+
+        返回:
+            无返回值；APM、system LLM prefill 和 Token2Wav prompt cache 完成预热后，
+            清理 Session KV，但保留可安全复用的模型级 prompt cache。
+        """
+
+        self.prepare(
+            system_prompt="",
+            tools=None,
+            ref_audio=np.asarray(ref_audio, dtype=np.float32),
+            prompt_wav_path=prompt_wav_path,
+            generate_audio=True,
+        )
+        self.cleanup()
+
     def _tts_condition(self, results):
         tts = self.model.tts
         if not results:

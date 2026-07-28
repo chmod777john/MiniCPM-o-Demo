@@ -10,6 +10,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+import numpy as np
 import torch
 
 from core.processors.unified import FcDuplexView, UnifiedProcessor
@@ -179,10 +180,12 @@ def test_training_data_loader_requires_explicit_o5_target(monkeypatch: Any) -> N
     assert observed == [O5TokenizerID.O5]
 
 
-def test_processor_warms_o5_fc_prompt_cache_before_returning_ready() -> None:
-    """配置 reference audio 时，Processor 初始化必须完成 O5 FC prompt warmup。"""
+def test_processor_warms_full_o5_fc_prepare_path_before_returning_ready(
+    monkeypatch: Any,
+) -> None:
+    """配置 reference audio 时，Processor ready 前必须完成 APM/LLM/TTS 全路径预热。"""
 
-    calls: list[str] = []
+    calls: list[tuple[np.ndarray, str]] = []
     processor = UnifiedProcessor.__new__(UnifiedProcessor)
     processor._is_initialized = False
     processor.fc_model_family = "o5"
@@ -190,10 +193,19 @@ def test_processor_warms_o5_fc_prompt_cache_before_returning_ready() -> None:
     processor.ref_audio_path = "/voices/ref.wav"
     processor.model = SimpleNamespace(
         fc_duplex=SimpleNamespace(
-            warm_token2wav=lambda *, prompt_wav_path: calls.append(prompt_wav_path)
+            warm_prepare=lambda *, ref_audio, prompt_wav_path: calls.append(
+                (ref_audio, prompt_wav_path)
+            )
         )
+    )
+    monkeypatch.setattr(
+        "librosa.load",
+        lambda _path, sr, mono: (np.zeros(sr, dtype=np.float32), sr),
     )
 
     processor._warm_fc_token2wav_if_configured()
 
-    assert calls == ["/voices/ref.wav"]
+    assert len(calls) == 1
+    assert calls[0][0].shape == (16000,)
+    assert calls[0][0].dtype == np.float32
+    assert calls[0][1] == "/voices/ref.wav"
