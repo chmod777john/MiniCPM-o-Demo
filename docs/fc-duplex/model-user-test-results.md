@@ -3,6 +3,11 @@
 本文件是统一 FC Demo 的用户测试结论单一记录入口。训练血缘和权重路径仍由 Training
 模块维护；这里只记录实际部署、用户体验和后端证据。
 
+2026-07-28 的根因复核见
+[`o5-no-response-root-cause-2026-07-28.md`](o5-no-response-root-cause-2026-07-28.md)。
+用户验收失败仍按原始事实保留，但最后4个 O5 Session 实际在首次 TTS/Token2Wav
+prepare 完成前就被关闭，不能继续解释为“4个 checkpoint 均已完成 generation 且选择沉默”。
+
 状态定义：
 
 - `normal`：用户确认主要交互正常，不再重复部署。
