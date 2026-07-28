@@ -1,0 +1,41 @@
+{
+  "profile_id": "o5_621851_mixed_pilot_sdk005_step3000",
+  "model_family": "o5",
+  "sdk_version": "0.0.5",
+  "tokenizer_target": "o5",
+  "required_model_rows": 248168,
+  "modeling_package": "modeling.o5",
+  "model_path": "/user/weihongliang/MiniCPM-o-4_6",
+  "pt_path": "/user/sunweiyue/training/o5-demo-conversions/mixed_pilot_621851_iter3000/iter_0003000_o5_caohao.pt",
+  "checkpoint_sha256": "ae4a441e29476efe0b38acc5e9878b7aa6c5a25518470e16a4b2e941c3d8e6dd",
+  "reference_audio_path": "/user/sunweiyue/training/o5-mvp-specialized/datasets/full4850_delivery/media/system_reference/HTRef06.wav",
+  "case_folder": "/user/sunweiyue/training/o5-mvp-specialized/datasets/full4850_delivery",
+  "unit_policy": {
+    "unit_sec": 1.0,
+    "non_spoken_budgets_while_listening": [
+      30
+    ],
+    "non_spoken_budgets_while_speaking": [
+      15
+    ],
+    "prefill_second_per_unit": [
+      0.2
+    ],
+    "ai_tts_second_per_unit": [
+      0.3
+    ],
+    "decode_ms_per_step": [
+      15.0
+    ],
+    "ai_spoken_playback_delay_sec": 0.2,
+    "spoken_prelook_sec": 0.3
+  },
+  "non_spoken_scheduling": "quality",
+  "deployment_mode": "tp2",
+  "backbone_dir": "/user/sunweiyue/training/o5-demo-conversions/mixed_pilot_621851_iter3000/backbone_hf_caohao_o5deploy",
+  "tp_size": 2,
+  "llm_graph": true,
+  "llm_cache": 32768,
+  "spmd_heartbeat_interval_sec": 30.0,
+  "attn_implementation": "auto"
+}

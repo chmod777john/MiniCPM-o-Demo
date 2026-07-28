@@ -78,35 +78,58 @@ closed: 2026-07-28
 - 没有形成有效 think/tool-call span。
 - 服务和 TP2 本身未崩溃，问题属于模型输出行为，不是 Worker 离线。
 
-## 当前待用户测试
+### O5 第二批四模型对照
 
-以下4个服务已于 2026-07-28 完成 HTTPS、Gateway 和 TP2 Worker 健康检查：
+公共用户结论：
+
+- 4个模型均不说话。
+- 4个模型均不调用工具。
+- 页面日志中均观察到疑似错误信息。
 
 ```text
-625366
-  model: pre-REF Full4850 LLM-only Step400
-  profile: o5_625366_full4850_llm_sdk005_step400
-  deploy_job: 631041
-  url: https://47.95.219.248:7001/fc_board
+status: failed
+training_job: 625366
+model: pre-REF Full4850 LLM-only Step400
+profile: o5_625366_full4850_llm_sdk005_step400
+deploy_job: 631041
+url: https://47.95.219.248:7001/fc_board
+closed: 2026-07-28
 
-625367
-  model: pre-REF MVP100 LLM+TTS Step100
-  profile: o5_625367_mvp100_llm_tts_sdk005_step100
-  deploy_job: 631039
-  url: https://47.95.219.248:7002/fc_board
+status: failed
+training_job: 625367
+model: pre-REF MVP100 LLM+TTS Step100
+profile: o5_625367_mvp100_llm_tts_sdk005_step100
+deploy_job: 631039
+url: https://47.95.219.248:7002/fc_board
+closed: 2026-07-28
 
-629252
-  model: REF-AUDIO-001 MVP100 LLM-only Step100
-  profile: o5_629252_refaudio_mvp100_llm_sdk005_step100
-  deploy_job: 631040
-  url: https://47.95.219.248:7011/fc_board
+status: failed
+training_job: 629252
+model: REF-AUDIO-001 MVP100 LLM-only Step100
+profile: o5_629252_refaudio_mvp100_llm_sdk005_step100
+deploy_job: 631040
+url: https://47.95.219.248:7011/fc_board
+closed: 2026-07-28
 
-629254
-  model: REF-AUDIO-001 MVP100 LLM+TTS Step100
-  profile: o5_629254_refaudio_mvp100_llm_tts_sdk005_step100
-  deploy_job: 631064
-  url: https://47.95.219.248:7014/fc_board
+status: failed
+training_job: 629254
+model: REF-AUDIO-001 MVP100 LLM+TTS Step100
+profile: o5_629254_refaudio_mvp100_llm_tts_sdk005_step100
+deploy_job: 631064
+url: https://47.95.219.248:7014/fc_board
+closed: 2026-07-28
 ```
+
+后端证据与错误归因：
+
+- `625366` 的 spoken 始终为空，non-spoken 直接以空内容 `no_action` 结束。
+- `629254` 的 spoken 始终为空，non-spoken 连续产生空 step，最终
+  `budget_reached`，与 `625365` 的失败模式一致。
+- `625366`、`625367`、`629254` 在关闭 Session 时出现
+  `NotImplementedError: o5 FC Adapter 不支持 dump_trace`。这是 O5 trace
+  能力缺失导致的观测错误，不是模型不说话的根因。
+- `629254` 另出现过一次 `backend already has an active session`，属于重复建连竞态；
+  它不能解释4个模型共同不输出的现象。
 
 ## 后续待部署模型
 
