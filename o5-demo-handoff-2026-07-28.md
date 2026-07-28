@@ -2,12 +2,13 @@
 
 ## 交付分支
 
-- 代码目录：`/user/weihongliang/MiniCPM-o-Demo-wt-o5-no-fc-speedup-tp2-thin-unified-2026-07-24-api-canonical-align-2026-07-26-session-replay-canonical-2026-07-26`
-- 分支：`wt/o5-no-fc-speedup-tp2-thin-unified-2026-07-24-api-canonical-align-2026-07-26-session-replay-canonical-2026-07-26`
-- 代码基线 commit：`30007a5bcf3ef42509183f8221372fc08fc36e96`
-- Codeup remote：
-  - `git@codeup.aliyun.com:thunlp/demo/MiniCPM-o-Demo.git`
-  - `git@codeup.aliyun.com:modelbest/multi-modal/MiniCPM-o-Demo.git`
+- 交付仓库：`git@codeup.aliyun.com:modelbest/multi-modal/MiniCPM-o-Demo.git`
+- 交付分支：`o5-no-fc-speedup-tp2-robust`
+- 当前服务对应 commit：`2d0effbc9d333cad5f7c70a53ecbc996ef86728f`
+- 实验过程、本机启动目录和日志参考：
+  `/user/weihongliang/MiniCPM-o-Demo-wt-o5-no-fc-speedup-tp2-thin-unified-2026-07-24-api-canonical-align-2026-07-26-session-replay-canonical-2026-07-26`
+
+同事复现时使用 `o5-no-fc-speedup-tp2-robust` 分支即可；下面的启动命令记录的是当前这次服务实际使用的参数和路径。
 
 ## 当前可用服务
 
