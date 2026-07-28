@@ -1522,7 +1522,6 @@ class UnifiedProcessor(BaseProcessor):
             },
             device=self.device,
             chat_vocoder=self.chat_vocoder,
-            assets_dir=os.environ.get("O5_ASSETS_DIR") or None,
         )
 
         init_time = time.time() - init_start
