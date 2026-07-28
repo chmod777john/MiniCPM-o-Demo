@@ -131,37 +131,59 @@ closed: 2026-07-28
 - `629254` 另出现过一次 `backend already has an active session`，属于重复建连竞态；
   它不能解释4个模型共同不输出的现象。
 
-## 当前待用户测试
+### O5 最后一批四模型对照
 
-最后4个服务已于 2026-07-28 完成 HTTPS、Gateway 和 TP2 Worker 健康检查：
+公共用户结论：
+
+- 4个模型均不说话。
+- 4个模型均不调用工具。
+- 页面日志中均观察到错误信息。
 
 ```text
-629253
-  model: REF-AUDIO-001 Full4850 LLM-only Step400
-  profile: o5_629253_refaudio_full4850_llm_sdk005_step400
-  deploy_job: 631113
-  url: https://47.95.219.248:7001/fc_board
+status: failed
+training_job: 629253
+model: REF-AUDIO-001 Full4850 LLM-only Step400
+profile: o5_629253_refaudio_full4850_llm_sdk005_step400
+deploy_job: 631113
+url: https://47.95.219.248:7001/fc_board
+closed: 2026-07-28
 
-629255
-  model: REF-AUDIO-001 Full4850 LLM+TTS Step400
-  profile: o5_629255_refaudio_full4850_llm_tts_sdk005_step400
-  deploy_job: 631114
-  url: https://47.95.219.248:7002/fc_board
+status: failed
+training_job: 629255
+model: REF-AUDIO-001 Full4850 LLM+TTS Step400
+profile: o5_629255_refaudio_full4850_llm_tts_sdk005_step400
+deploy_job: 631114
+url: https://47.95.219.248:7002/fc_board
+closed: 2026-07-28
 
-623666
-  model: Strict Treatment Step2000
-  profile: o5_623666_strict_treatment_sdk005_step2000
-  deploy_job: 631115
-  url: https://47.95.219.248:7011/fc_board
+status: failed
+training_job: 623666
+model: Strict Treatment Step2000
+profile: o5_623666_strict_treatment_sdk005_step2000
+deploy_job: 631115
+url: https://47.95.219.248:7011/fc_board
+closed: 2026-07-28
 
-621851
-  model: Mixed Pilot Step3000
-  profile: o5_621851_mixed_pilot_sdk005_step3000
-  deploy_job: 631116
-  url: https://47.95.219.248:7014/fc_board
+status: failed
+training_job: 621851
+model: Mixed Pilot Step3000
+profile: o5_621851_mixed_pilot_sdk005_step3000
+deploy_job: 631116
+url: https://47.95.219.248:7014/fc_board
+closed: 2026-07-28
 ```
 
-这4个完成后，已登记的10个 O5 candidate checkpoint 将全部完成用户测试。
+后端证据：
+
+- 4个入口的 Gateway、Worker 和 TP2 Backend 均保持健康，模型和 LLM Graph 加载成功。
+- 用户 Session 均正常到达 Backend，但没有形成 spoken/tool-call 输出。
+- 4组关闭 Session 时再次出现 O5 `dump_trace` 不支持错误。
+- `623666` 的一次重复连接出现 `unsupported runtime message type: session.init`；
+  这是独立的重复建连协议错误，不能解释首个 Session 及全部模型共同无输出。
+
+至此已登记的10个 O5 candidate checkpoint 已全部完成用户测试；10/10 均未通过，
+而同一外层 API、前端和调度框架下的 O45FC 已通过。该分布强烈指向 O5 专属的模型内层
+推理、特殊 token 或 adapter 边界，而不是10个训练 checkpoint 独立失效。
 
 部署约定：
 
