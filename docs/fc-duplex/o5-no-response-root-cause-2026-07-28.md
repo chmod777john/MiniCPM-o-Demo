@@ -254,14 +254,18 @@ unsupported runtime message type: session.init
 
 913b1c7  Backend ready 前执行完整 reference APM + system LLM prefill +
          Token2Wav prepare warmup。
+
+056a3f8  O5 Session close 原子落盘 raw token / slot / Unit trace，
+         移除 dump_trace NotImplementedError。
 ```
 
-真实 TP2 + LLM Graph 服务 `tasks/631623` 验证：
+最终 TP2 + LLM Graph 服务 `tasks/631735` 验证：
 
 ```text
-startup full prepare warmup: 14.2s，发生在 Backend ready 之前
-首个浏览器 Session created: 1.117s
-Session closed: 1.650s
+startup full prepare warmup: 14.6s，发生在 Backend ready 之前
+首个浏览器 Session created: 1.003s
+Session closed: 1.354s
+Session trace: 成功落盘，output_token_count=477，无 close-time ERROR
 修复前首个 Session prepare: 约27.3s，且用户关闭前没有进入 generation
 ```
 

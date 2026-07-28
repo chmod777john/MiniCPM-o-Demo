@@ -197,17 +197,19 @@ status: pending_retest
 training_job: 629255
 model: REF-AUDIO-001 Full4850 LLM+TTS Step400
 profile: o5_629255_refaudio_full4850_llm_tts_sdk005_step400
-deploy_job: 631623
-code_commit: 913b1c7
+deploy_job: 631735
+code_commit: 056a3f8
 url: https://47.95.219.248:7001/fc_board
 ```
 
 机器验证：
 
-- O5 完整 prepare 在 Backend ready 前预热14.2秒。
-- 修复后首个浏览器 Session 创建耗时1.117秒，不再出现约27秒无响应。
+- O5 完整 prepare 在 Backend ready 前预热14.6秒。
+- 最终服务首个浏览器 Session 创建耗时1.003秒，不再出现约27秒无响应。
 - `generate_audio=true` 的46 Unit 回放产生完整 spoken text、7个 audio event、
   1次 think 和正确工具调用，warning/error 均为0。
+- Session close 已成功落盘原始 O5 token trace，不再抛 `dump_trace`
+  `NotImplementedError`。
 
 前述10/10是修复前的用户体验结论；最后4个 Session 当时没有越过首次 prepare，不能用于
 否定对应 checkpoint 的 generation 能力。当前只对 `629255` 开放修复后 Live 复测。
