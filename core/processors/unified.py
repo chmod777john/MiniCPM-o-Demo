@@ -1416,6 +1416,7 @@ class UnifiedProcessor(BaseProcessor):
                 "attn_implementation": self._resolve_attn_implementation(),
                 "llm_cache_len": int(_os.environ.get("O5_LLM_CACHE", "8192")),
                 "preload_both_tts": self.preload_both_tts,
+                "assets_dir": _os.environ.get("O5_ASSETS_DIR") or None,
                 "duplex_config": {
                     "generate_audio": self.duplex_config.generate_audio,
                     "ls_mode": self.duplex_config.ls_mode,
