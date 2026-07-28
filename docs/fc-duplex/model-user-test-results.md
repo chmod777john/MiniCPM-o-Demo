@@ -78,16 +78,42 @@ closed: 2026-07-28
 - 没有形成有效 think/tool-call span。
 - 服务和 TP2 本身未崩溃，问题属于模型输出行为，不是 Worker 离线。
 
-## 待测试模型
+## 当前待用户测试
+
+以下4个服务已于 2026-07-28 完成 HTTPS、Gateway 和 TP2 Worker 健康检查：
+
+```text
+625366
+  model: pre-REF Full4850 LLM-only Step400
+  profile: o5_625366_full4850_llm_sdk005_step400
+  deploy_job: 631041
+  url: https://47.95.219.248:7001/fc_board
+
+625367
+  model: pre-REF MVP100 LLM+TTS Step100
+  profile: o5_625367_mvp100_llm_tts_sdk005_step100
+  deploy_job: 631039
+  url: https://47.95.219.248:7002/fc_board
+
+629252
+  model: REF-AUDIO-001 MVP100 LLM-only Step100
+  profile: o5_629252_refaudio_mvp100_llm_sdk005_step100
+  deploy_job: 631040
+  url: https://47.95.219.248:7011/fc_board
+
+629254
+  model: REF-AUDIO-001 MVP100 LLM+TTS Step100
+  profile: o5_629254_refaudio_mvp100_llm_tts_sdk005_step100
+  deploy_job: 631064
+  url: https://47.95.219.248:7014/fc_board
+```
+
+## 后续待部署模型
 
 转换完成、尚未部署：
 
 ```text
-625366  pre-REF Full4850 LLM-only Step400
-625367  pre-REF MVP100 LLM+TTS Step100
-629252  REF-AUDIO-001 MVP100 LLM-only Step100
 629253  REF-AUDIO-001 Full4850 LLM-only Step400
-629254  REF-AUDIO-001 MVP100 LLM+TTS Step100
 629255  REF-AUDIO-001 Full4850 LLM+TTS Step400
 623666  Strict Treatment Step2000
 621851  Mixed Pilot Step3000
