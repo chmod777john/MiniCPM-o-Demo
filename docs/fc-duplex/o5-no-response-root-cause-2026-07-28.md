@@ -257,9 +257,13 @@ unsupported runtime message type: session.init
 
 056a3f8  O5 Session close 原子落盘 raw token / slot / Unit trace，
          移除 dump_trace NotImplementedError。
+
+a505ed6  环境开关控制的 spoken/non-spoken 首步 top-k margin probe；
+         正式服务默认关闭，诊断回放时开启。
 ```
 
-最终 TP2 + LLM Graph 服务 `tasks/631735` 验证：
+最终 TP2 + LLM Graph 稳定服务 `tasks/631948` 使用相同修复代码，margin probe 默认关闭。
+机器验证来自等价修复服务：
 
 ```text
 startup full prepare warmup: 14.6s，发生在 Backend ready 之前
@@ -303,12 +307,41 @@ ordinary-before-opener / 泛化行为。
 free-running 泛化不足，而不是共享 runtime 随机丢包。6条 Session 录音已固化到
 `tmp/o5-fc-root-cause/live-sessions/`，应作为后续训练和回归评测输入。
 
+对6条原始录音做确定性逐 Unit 回放，并记录 BF16 spoken/non-spoken 首步 logits 后，
+进一步得到：
+
+```text
+source session             min(listen - speak)
+sess_55c3dd3428f3          0.000   # 原成功录音，Unit6 完全平票
+sess_0aec03778364          1.000
+sess_210e0f311852          1.375
+sess_326e117bf9b5          2.875
+sess_52867741ad7f          2.875
+sess_670bbd846d9d          4.875
+```
+
+原成功录音在首次 Live 运行时 Unit6 选择 `speak`，重启服务后以相同音频、相同 greedy
+配置回放时，`listen` 和 `speak` 都是 `25.125`；`argmax` 因 token ID 更小而选择
+`listen`。从该 Unit 开始 KV 轨迹分叉，回放只产生1次工具调用，不再复现原来的 spoken
+和4次工具调用。
+
+non-spoken margin 也支持同一判断：
+
+- 原成功录音的 `no_action - tool_call_start` 最低为 `-3.0`，工具触发有真实正 margin；
+- 5个失败录音最低仍为 `4.125–4.44`，模型明确偏向 `no_action`，不是 parser 吞 token。
+
+因此“偶尔成功”已经定位为模型决策边界过薄：成功样本的 spoken 首步恰好落在 BF16
+平票附近，服务重启或底层数值微扰即可翻转整条自回归轨迹。这不是适合用 runtime
+`speak`/tool logit bias 修补的问题；bias 会引入不可控误触发。正确方向是提高
+checkpoint 在 Live 真人语音及节奏变体上的监督覆盖和决策 margin。
+
 ## 下一步验证顺序
 
 1. 将6条 Live Session 录音登记为固定回归集，逐条回放确认 greedy 决策可重复。
 2. 对成功/失败录音做 ASR 和同 Unit 能量/时序对照，识别内容与节奏变量。
 3. 在训练侧增加真人语音、短指令、立即出现对象、不同开口 offset 与单阶段/两阶段变体。
-4. 对失败录音记录首步 `listen/speak`、`no_action/tool_call_start` 的 top-k margin。
+4. 把 `listen-speak` 和 `no_action-tool_call_start` margin 纳入 teacher-forced /
+   free-running Gate；不能只看 CE loss 和 top1 accuracy。
 5. 用同一 checkpoint、同一 waveform 做：
    - Training/Megatron full-forward teacher-forced；
    - HF eager incremental；

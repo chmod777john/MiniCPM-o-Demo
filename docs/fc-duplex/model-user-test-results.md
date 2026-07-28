@@ -197,8 +197,8 @@ status: pending_retest
 training_job: 629255
 model: REF-AUDIO-001 Full4850 LLM+TTS Step400
 profile: o5_629255_refaudio_full4850_llm_tts_sdk005_step400
-deploy_job: 631735
-code_commit: 056a3f8
+deploy_job: 631948
+code_commit: a505ed6
 url: https://47.95.219.248:7001/fc_board
 ```
 
@@ -251,6 +251,16 @@ sess_52867741ad7f  11 Units
 free-running 决策稳定性。成功样本具有“规则说明 → 模型确认 → 后续连续对象”的两阶段
 结构；失败样本只有一次较短语音阶段。不得用 runtime 强制 speak/tool-call 掩盖该问题，
 应把这6条录音固化为训练/评测回归集。
+
+逐 Unit logits 复核：
+
+- 成功录音的 Unit6 `listen=speak=25.125`，处于 BF16 完全平票；
+- 同一录音重放时 greedy 改选 token ID 更小的 `listen`，原4次工具调用只复现1次；
+- 其余失败录音最接近的 `listen-speak` margin 为1.0，其余可到4.875；
+- 5个失败录音的 `no_action-tool_call_start` 最小 margin 仍为4.125以上。
+
+所以1/6成功属于决策 margin 过薄导致的轨迹翻转，不是服务随机丢 Session。后续 Gate
+必须检查协议关键 token margin，不能只检查 top1。
 
 部署约定：
 
