@@ -746,6 +746,54 @@ class FcDuplexCapability:
         probs = torch.softmax(logits[0] / max(float(self.temperature), 1e-5), dim=-1)
         return int(torch.multinomial(probs, 1).item())
 
+    def _log_decision_logits(self, *, track: str, logits: torch.Tensor) -> None:
+        """按环境开关记录 slot 首步 top-k 与关键协议 token margin。
+
+        参数:
+            track: ``spoken`` 或 ``non_spoken``。
+            logits: 当前 slot 首步 `[1, vocab]` logits。
+
+        返回:
+            无返回值；仅当 ``FC_DUPLEX_TOKEN_PROBE=1`` 时写日志，不改变采样。
+        """
+
+        if os.environ.get("FC_DUPLEX_TOKEN_PROBE", "0") != "1":
+            return
+        candidate_keys = (
+            [self.K.LISTEN, self.K.SPEAK, self.K.SPOKEN_SLOT_EOS]
+            if track == "spoken"
+            else [
+                self.K.NO_ACTION,
+                self.K.THINK_START,
+                self.K.TOOL_CALL_START,
+                self.K.NON_SPOKEN_EOS,
+            ]
+        )
+        scores = logits[0].detach().float()
+        top_values, top_ids = torch.topk(scores, k=min(10, int(scores.shape[0])))
+        top = [
+            {
+                "id": int(token_id),
+                "token": self.id2name.get(int(token_id), f"<ordinary:{int(token_id)}>"),
+                "logit": round(float(value), 6),
+            }
+            for token_id, value in zip(top_ids.tolist(), top_values.tolist())
+        ]
+        candidates = {
+            key.value: {
+                "id": self.sid(key),
+                "logit": round(float(scores[self.sid(key)]), 6),
+            }
+            for key in candidate_keys
+        }
+        logger.info(
+            "fc_decision_logits unit=%s track=%s top=%s candidates=%s",
+            self._current_unit_idx,
+            track,
+            top,
+            candidates,
+        )
+
     def _safe_deserialize_tool_call(self, wire: str, tool_definitions=None) -> dict:
         definitions = self._normalize_tools(tool_definitions or self._tools)
         result = {"wire": wire, "name": None, "arguments": None, "error": None}
@@ -1023,7 +1071,9 @@ class FcDuplexCapability:
             self.sid(self.K.LISTEN): "listen",
             self.sid(self.K.TTS_PAD): "tts_pad",
         }
-        for _ in range(max_tokens):
+        for step_index in range(max_tokens):
+            if step_index == 0:
+                self._log_decision_logits(track="spoken", logits=logits)
             tid = self._sample(logits, decode_mode)
             if tid == self.sid(self.K.AI_SPOKEN_SLOT_END):
                 terminated, reason, term_id = True, "ai_spoken_slot_end", tid
@@ -1110,6 +1160,11 @@ class FcDuplexCapability:
                 self.sid(self.K.NON_SPOKEN_ABORT): "abort",
             }
             for _ in range(max_tokens):
+                if not self._current_unit_info["non_spoken_ids"]:
+                    self._log_decision_logits(
+                        track="non_spoken",
+                        logits=self._non_spoken_logits,
+                    )
                 tid = self._sample(self._non_spoken_logits, decode_mode)
                 if tid == self.sid(self.K.AI_NON_SPOKEN_SLOT_END):
                     terminated, reason = True, "eos"
