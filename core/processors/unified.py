@@ -3088,6 +3088,7 @@ class UnifiedProcessor(BaseProcessor):
             self.fc_model_family != "o5"
             or not self.preload_both_tts
             or not self.ref_audio_path
+            or os.environ.get("FC_DUPLEX_STARTUP_WARM", "1") == "0"
         ):
             return
         deployment = getattr(self, "_deploy", None)

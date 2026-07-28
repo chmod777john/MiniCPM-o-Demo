@@ -10,6 +10,7 @@ passthrough methods.
 
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 import logging
@@ -563,6 +564,7 @@ class FcDuplexCapability:
         self.hift_cache_base = None
         self.pre_lookahead = 0
         self._token2wav_prompt_wav_path: Optional[str] = None
+        self._prepare_sequence = 0
         self._reset_streaming_state()
         logger.info("[FcDuplexCapability] initialized")
 
@@ -770,6 +772,8 @@ class FcDuplexCapability:
             ]
         )
         scores = logits[0].detach().float()
+        scores_cpu = scores.cpu()
+        logits_sha256 = hashlib.sha256(scores_cpu.numpy().tobytes()).hexdigest()
         top_values, top_ids = torch.topk(scores, k=min(10, int(scores.shape[0])))
         top = [
             {
@@ -787,12 +791,39 @@ class FcDuplexCapability:
             for key in candidate_keys
         }
         logger.info(
-            "fc_decision_logits unit=%s track=%s top=%s candidates=%s",
+            "fc_decision_logits prepare=%s unit=%s track=%s sha256=%s top=%s candidates=%s",
+            self._prepare_sequence,
             self._current_unit_idx,
             track,
+            logits_sha256,
             top,
             candidates,
         )
+        dump_dir = os.environ.get("FC_DUPLEX_LOGITS_DUMP_DIR")
+        max_dump_units = int(os.environ.get("FC_DUPLEX_LOGITS_DUMP_MAX_UNITS", "0"))
+        if dump_dir and self._current_unit_idx < max_dump_units:
+            output_dir = Path(dump_dir)
+            output_dir.mkdir(parents=True, exist_ok=True)
+            stem = (
+                f"prepare_{self._prepare_sequence:04d}_"
+                f"unit_{self._current_unit_idx:04d}_{track}"
+            )
+            torch.save(scores_cpu, output_dir / f"{stem}.pt")
+            (output_dir / f"{stem}.json").write_text(
+                json.dumps(
+                    {
+                        "prepare_sequence": self._prepare_sequence,
+                        "unit_index": self._current_unit_idx,
+                        "track": track,
+                        "sha256": logits_sha256,
+                        "top": top,
+                        "candidates": candidates,
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
 
     def _safe_deserialize_tool_call(self, wire: str, tool_definitions=None) -> dict:
         definitions = self._normalize_tools(tool_definitions or self._tools)
@@ -887,9 +918,13 @@ class FcDuplexCapability:
         """
 
         canonical_prompt_path = os.path.realpath(prompt_wav_path)
+        reuse_prompt_cache = (
+            os.environ.get("FC_DUPLEX_PROMPT_CACHE_REUSE", "1") != "0"
+        )
         if (
             not self.token2wav_initialized
             or self._token2wav_prompt_wav_path != canonical_prompt_path
+            or not reuse_prompt_cache
         ):
             self._init_token2wav_cache(canonical_prompt_path)
         self._reset_token2wav()
@@ -1002,6 +1037,7 @@ class FcDuplexCapability:
         }
 
     def prepare(self, system_prompt, tools=None, ref_audio=None, prompt_wav_path=None, generate_audio=None):
+        self._prepare_sequence += 1
         resize_info = self._resize_embeddings()
         self._reset_streaming_state()
         self._tools = self._normalize_tools(tools)
@@ -1403,6 +1439,8 @@ class FcDuplexCapability:
             "tool_call_token_ids": list(self._tool_call_buf),
             "token2wav_initialized": bool(self.token2wav_initialized),
             "token2wav_prompt_wav_path": self._token2wav_prompt_wav_path,
+            "prepare_sequence": int(self._prepare_sequence),
+            "kv_cache_length": int(self.decoder.get_cache_length()),
         }
 
     def dump_trace(

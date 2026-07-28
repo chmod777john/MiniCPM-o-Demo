@@ -95,6 +95,21 @@ def test_token2wav_prompt_cache_survives_session_reset_and_reuses_same_prompt() 
     assert tokenizer.calls == ["/voices/ref.wav", "/voices/other.wav"]
 
 
+def test_token2wav_prompt_cache_reuse_can_be_disabled_for_equivalence_probe(
+    monkeypatch: Any,
+) -> None:
+    """Cold 对拍可强制每个 prepare 重建 prompt cache。"""
+
+    tokenizer = _FakeAudioTokenizer()
+    capability = _new_cache_capability(tokenizer)
+    monkeypatch.setenv("FC_DUPLEX_PROMPT_CACHE_REUSE", "0")
+
+    capability.warm_token2wav(prompt_wav_path="/voices/ref.wav")
+    capability.warm_token2wav(prompt_wav_path="/voices/ref.wav")
+
+    assert tokenizer.calls == ["/voices/ref.wav", "/voices/ref.wav"]
+
+
 def test_o5_spoken_turn_eos_stops_and_appends_slot_eos_before_slot_end() -> None:
     """O5 spoken turn 必须与 SDK/O45 一样补齐 turn_eos→slot_eos→slot_end。"""
 
@@ -212,6 +227,29 @@ def test_processor_warms_full_o5_fc_prepare_path_before_returning_ready(
     assert calls[0][1] == "/voices/ref.wav"
 
 
+def test_processor_startup_warm_can_be_disabled_for_cold_equivalence_probe(
+    monkeypatch: Any,
+) -> None:
+    """Cold 对拍关闭 startup warm 时不得触碰 capability。"""
+
+    calls: list[str] = []
+    processor = UnifiedProcessor.__new__(UnifiedProcessor)
+    processor._is_initialized = False
+    processor.fc_model_family = "o5"
+    processor.preload_both_tts = True
+    processor.ref_audio_path = "/voices/ref.wav"
+    processor.model = SimpleNamespace(
+        fc_duplex=SimpleNamespace(
+            warm_prepare=lambda **_: calls.append("unexpected")
+        )
+    )
+    monkeypatch.setenv("FC_DUPLEX_STARTUP_WARM", "0")
+
+    processor._warm_fc_token2wav_if_configured()
+
+    assert calls == []
+
+
 def test_o5_trace_dump_preserves_raw_tokens_without_session_close_error(
     tmp_path: Path,
 ) -> None:
@@ -231,6 +269,8 @@ def test_o5_trace_dump_preserves_raw_tokens_without_session_close_error(
     capability._tool_call_buf = []
     capability.token2wav_initialized = True
     capability._token2wav_prompt_wav_path = "/voices/ref.wav"
+    capability._prepare_sequence = 2
+    capability.decoder = SimpleNamespace(get_cache_length=lambda: 123)
     trace_path = tmp_path / "trace.json"
 
     result = capability.dump_trace(
@@ -246,3 +286,5 @@ def test_o5_trace_dump_preserves_raw_tokens_without_session_close_error(
     assert structure["output_ids"] == capability.output_ids
     assert structure["session_id"] == "sess_test"
     assert structure["reason"] == "session_close"
+    assert structure["prepare_sequence"] == 2
+    assert structure["kv_cache_length"] == 123
