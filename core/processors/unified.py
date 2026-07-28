@@ -2438,14 +2438,34 @@ class FcDuplexView:
         return responses
 
     @staticmethod
-    def _load_sdk_train_data(structure: Dict[str, Any], data_root: Path):
+    def _load_sdk_train_data(
+        structure: Dict[str, Any],
+        data_root: Path,
+        *,
+        tokenizer_target: Literal["o45_fc", "o5"],
+    ):
+        """按显式模型 target 加载并 tokenize 一条 SDK TrainingData。
+
+        参数:
+            structure: TrainingData JSON 结构。
+            data_root: 相对媒体文件的根目录。
+            tokenizer_target: 当前模型 Adapter 声明的 tokenizer target。
+
+        返回:
+            TrainingData 对象及对应 target 的 tokenized result。
+        """
+
         from minicpm_o5_sdk import O5DuplexTrainingData, O5TokenizerID
 
         training_data = O5DuplexTrainingData.load_structure(
             structure,
             data_root=data_root,
         )
-        tokenized_result = training_data.tokenize(tokenizer_id=O5TokenizerID.O45_FC)
+        tokenizer_id = {
+            "o45_fc": O5TokenizerID.O45_FC,
+            "o5": O5TokenizerID.O5,
+        }[tokenizer_target]
+        tokenized_result = training_data.tokenize(tokenizer_id=tokenizer_id)
         return training_data, tokenized_result
 
     @staticmethod
@@ -2555,7 +2575,11 @@ class FcDuplexView:
         start_time = time.time()
         try:
             structure, source_path, sample_id, data_root = self._load_train_data_structure(request)
-            training_data, tokenized_result = self._load_sdk_train_data(structure, data_root)
+            training_data, tokenized_result = self._load_sdk_train_data(
+                structure,
+                data_root,
+                tokenizer_target=self._adapter.tokenizer_target,
+            )
             arrangement = tokenized_result.arrangement
             tokenized_data = tokenized_result.tokenized_data
             unit_audio_chunks = self._build_unit_audio_chunks_from_arrangement(
@@ -2899,6 +2923,7 @@ class UnifiedProcessor(BaseProcessor):
             _br = _deploy.get_mode(_dep_mode).build(_cfg)
             self.model = _br.model
             self._deploy = _br
+            self._warm_fc_token2wav_if_configured()
             self._chat_view = ChatView(self.model, self.ref_audio_path)
             self._half_duplex_view = HalfDuplexView(self.model, self.ref_audio_path)
             self._duplex_view = DuplexView(self.model, self.ref_audio_path, self.duplex_config)
@@ -3033,6 +3058,8 @@ class UnifiedProcessor(BaseProcessor):
             compile_time = time.time() - compile_start
             logger.info(f"torch.compile + warmup done in {compile_time:.1f}s")
 
+        self._warm_fc_token2wav_if_configured()
+
         # Create View instances
         self._chat_view = ChatView(self.model, self.ref_audio_path)
         self._half_duplex_view = HalfDuplexView(self.model, self.ref_audio_path)
@@ -3046,6 +3073,39 @@ class UnifiedProcessor(BaseProcessor):
 
         total_time = time.time() - start
         logger.info(f"UnifiedProcessor initialization complete in {total_time:.1f}s")
+
+    def _warm_fc_token2wav_if_configured(self) -> None:
+        """在 Backend ready 前预热 O5 FC 的 prompt-specific Token2Wav cache。
+
+        当部署 Profile 已提供 reference audio 且启用 TTS preload 时，首个 Session 不应
+        再承担数十秒的 prompt cache 初始化。TP2 worker rank 不负责 TTS 输出，因此跳过。
+
+        返回:
+            无返回值；预热失败会中止 Backend 启动，避免健康检查误报可用。
+        """
+
+        if (
+            self.fc_model_family != "o5"
+            or not self.preload_both_tts
+            or not self.ref_audio_path
+        ):
+            return
+        deployment = getattr(self, "_deploy", None)
+        if deployment is not None and not bool(deployment.is_driver):
+            return
+        capability = getattr(self.model, "fc_duplex", None)
+        warm = getattr(capability, "warm_token2wav", None)
+        if warm is None:
+            raise RuntimeError(
+                "O5 FC capability lacks warm_token2wav; cannot declare Backend ready"
+            )
+        start = time.time()
+        warm(prompt_wav_path=self.ref_audio_path)
+        logger.info(
+            "O5 FC Token2Wav prompt cache warmed before ready in %.1fs: %s",
+            time.time() - start,
+            self.ref_audio_path,
+        )
 
     def _release_resources(self) -> None:
         """Release model resources."""

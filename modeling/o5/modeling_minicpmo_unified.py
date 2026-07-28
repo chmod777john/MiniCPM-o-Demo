@@ -546,6 +546,15 @@ class FcDuplexCapability:
                 dtype=torch.long,
                 device=device,
             )
+        # Prompt-specific Token2Wav cache belongs to the loaded model/capability,
+        # not to one FC Session. Rebuilding it in every prepare blocks the first
+        # user interaction for tens of seconds.
+        self.token2wav_initialized = False
+        self.token2wav_buffer = []
+        self.flow_cache_base = None
+        self.hift_cache_base = None
+        self.pre_lookahead = 0
+        self._token2wav_prompt_wav_path: Optional[str] = None
         self._reset_streaming_state()
         logger.info("[FcDuplexCapability] initialized")
 
@@ -773,12 +782,18 @@ class FcDuplexCapability:
         self._think_buf, self._tool_call_buf = [], []
         self.tts_text_start_pos = 0
         self.tts_past_key_values = None
-        self.token2wav_initialized = False
         self.token2wav_buffer = []
-        self.flow_cache_base = self.hift_cache_base = None
-        self.pre_lookahead = 0
 
-    def _init_token2wav_cache(self):
+    def _init_token2wav_cache(self, prompt_wav_path: str) -> None:
+        """为一个 reference WAV 构造可复用的 Token2Wav 基础缓存。
+
+        参数:
+            prompt_wav_path: 当前部署或 Session 使用的参考音频路径。
+
+        返回:
+            无返回值；缓存保存在 capability 上并跨 Session 复用。
+        """
+
         if getattr(self.model, "tts", None) is None:
             raise RuntimeError("TTS model is not initialized")
         if getattr(self.model.tts, "audio_tokenizer", None) is None:
@@ -788,18 +803,40 @@ class FcDuplexCapability:
             )
         tokenizer = self.model.tts.audio_tokenizer
         tokenizer.cache = None
-        flow_cache, hift_cache = tokenizer.set_stream_cache(self.prompt_wav_path)
+        canonical_prompt_path = os.path.realpath(prompt_wav_path)
+        flow_cache, hift_cache = tokenizer.set_stream_cache(canonical_prompt_path)
         self.flow_cache_base = torch_clone_recursive(flow_cache)
         self.hift_cache_base = torch_clone_recursive(hift_cache)
         self.pre_lookahead = int(tokenizer.flow.pre_lookahead_len)
+        self._token2wav_prompt_wav_path = canonical_prompt_path
         self.token2wav_initialized = True
 
-    def _reset_token2wav(self):
+    def _reset_token2wav(self) -> None:
+        """从已构造的 prompt base cache 恢复一个空的 Session 流状态。"""
+
         if self.token2wav_initialized:
             tokenizer = self.model.tts.audio_tokenizer
             tokenizer.stream_cache = torch_clone_recursive(self.flow_cache_base)
             tokenizer.hift_cache_dict = torch_clone_recursive(self.hift_cache_base)
             self.token2wav_buffer = [4218] * 3
+
+    def warm_token2wav(self, *, prompt_wav_path: str) -> None:
+        """在服务 ready 前预热并复用 prompt-specific Token2Wav cache。
+
+        参数:
+            prompt_wav_path: 部署 Profile 固定的参考音频路径。
+
+        返回:
+            无返回值；相同 canonical path 已预热时只重置轻量 Session 状态。
+        """
+
+        canonical_prompt_path = os.path.realpath(prompt_wav_path)
+        if (
+            not self.token2wav_initialized
+            or self._token2wav_prompt_wav_path != canonical_prompt_path
+        ):
+            self._init_token2wav_cache(canonical_prompt_path)
+        self._reset_token2wav()
 
     def _tts_condition(self, results):
         tts = self.model.tts
@@ -831,8 +868,7 @@ class FcDuplexCapability:
         if not self.prompt_wav_path:
             raise ValueError("prompt_wav_path is required when generate_audio=True")
         if not self.token2wav_initialized:
-            self._init_token2wav_cache()
-            self._reset_token2wav()
+            self.warm_token2wav(prompt_wav_path=self.prompt_wav_path)
         prep = time.time()
         condition = self._tts_condition(results)
         prep_cost = time.time() - prep
@@ -894,8 +930,7 @@ class FcDuplexCapability:
         if self.generate_audio:
             if not prompt_wav_path:
                 raise ValueError("prompt_wav_path is required when generate_audio=True")
-            self._init_token2wav_cache()
-            self._reset_token2wav()
+            self.warm_token2wav(prompt_wav_path=prompt_wav_path)
         prefix, suffix = self._system_parts(system_prompt, self._tools, ref_audio is not None)
         self._feed_ids(prefix)
         if ref_audio is not None:
@@ -950,6 +985,7 @@ class FcDuplexCapability:
         reason = term_id = None
         terms = {
             self.sid(self.K.SPOKEN_SLOT_EOS): "spoken_slot_eos",
+            self.sid(self.K.SPOKEN_TURN_EOS): "spoken_turn_eos",
             self.sid(self.K.LISTEN): "listen",
             self.sid(self.K.TTS_PAD): "tts_pad",
         }
@@ -971,8 +1007,7 @@ class FcDuplexCapability:
             if tid in terms:
                 terminated, reason, term_id = True, terms[tid], tid
                 break
-        self._feed_ids([self.sid(self.K.AI_SPOKEN_SLOT_END)])
-        self._spoken_slot_open = False
+        self._close_spoken_slot(append_spoken_slot_eos=turn_eos)
         audio = self._spoken_audio(tts_results, turn_eos)
         self._current_unit_info.update(
             is_listen=bool(is_listen), is_speaking=bool(is_speaking), spoken_ids=ids,
@@ -992,6 +1027,24 @@ class FcDuplexCapability:
             "spoken_termination_reason": reason, "spoken_termination_token_id": term_id,
             "cost_llm": time.time() - start, **audio,
         }
+
+    def _close_spoken_slot(self, *, append_spoken_slot_eos: bool = False) -> None:
+        """按 SDK 顺序关闭当前 spoken slot。
+
+        参数:
+            append_spoken_slot_eos: turn 已结束时是否先补
+                ``SPOKEN_SLOT_EOS``，再写 ``AI_SPOKEN_SLOT_END``。
+
+        返回:
+            无返回值；关闭 token 会进入模型 KV。
+        """
+
+        close_ids = []
+        if append_spoken_slot_eos:
+            close_ids.append(self.sid(self.K.SPOKEN_SLOT_EOS))
+        close_ids.append(self.sid(self.K.AI_SPOKEN_SLOT_END))
+        self._feed_ids(close_ids)
+        self._spoken_slot_open = False
 
     def _open_non_spoken(self):
         if not self._non_spoken_slot_open:
@@ -1075,8 +1128,7 @@ class FcDuplexCapability:
         if self._non_spoken_slot_open:
             self.streaming_non_spoken_generate(close_reason="budget_reached")
         if self._spoken_slot_open:
-            self._feed_ids([self.sid(self.K.AI_SPOKEN_SLOT_END)])
-            self._spoken_slot_open = False
+            self._close_spoken_slot()
         self._feed_ids([self.sid(self.K.UNIT_END)])
         info = dict(self._current_unit_info)
         self.units_info.append(info)

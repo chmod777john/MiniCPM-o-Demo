@@ -190,7 +190,11 @@ def unit_index_from_input_id(input_id: Optional[str]) -> Optional[int]:
 def prepare_case(case_path: Path, *, normalize_tools: bool) -> Dict[str, Any]:
     structure = make_sdk_compatible_train_data(read_json(case_path))
     data_root = case_path.parent
-    training_data, tokenized_result = FcDuplexView._load_sdk_train_data(structure, data_root)
+    training_data, tokenized_result = FcDuplexView._load_sdk_train_data(
+        structure,
+        data_root,
+        tokenizer_target="o5",
+    )
     arrangement = tokenized_result.arrangement
     config = FcDuplexConfig()
     unit_chunks = FcDuplexView._build_unit_audio_chunks_from_arrangement(
