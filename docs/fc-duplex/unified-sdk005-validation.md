@@ -1,5 +1,9 @@
 # Unified O45/O5 FC SDK 0.0.5 Validation
 
+用户实际体验结论统一维护在
+[`model-user-test-results.md`](model-user-test-results.md)；本文只保留自动化和
+模型级验证证据。
+
 ## Scope
 
 This record validates branch `duplex-fc-unified-sdk005` with one shared
