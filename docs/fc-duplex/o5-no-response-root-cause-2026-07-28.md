@@ -172,7 +172,41 @@ ordinary token，并且前面没有 `<think>` 或 `<tool_call>`。当前 View �
 - checkpoint free-running protocol 稳定性；
 - 首次 prepare 被中断后残留的模型状态。
 
-### 2. O5 `dump_trace` 未实现
+### 2. O5 spoken turn 关闭序列与训练协议不一致
+
+O45 与 SDK parser 的正确边界是：
+
+```text
+<|spoken_turn_eos|> → <|spoken_slot_eos|> → </ai_spoken_slot>
+```
+
+O45 generation loop 将 `SPOKEN_TURN_EOS` 放在自然停止集合中，命中后立即停止，并由
+`_close_spoken_slot(append_spoken_slot_eos=True)` 补齐 `SPOKEN_SLOT_EOS`。
+
+O5 当前实现存在两个确定性差异：
+
+- `streaming_spoken_generate()` 的 `terms` 不包含 `SPOKEN_TURN_EOS`，采样到 turn
+  EOS 后仍可能继续生成；
+- 关闭 spoken slot 时只 feed `AI_SPOKEN_SLOT_END`，没有在 turn EOS 后补
+  `SPOKEN_SLOT_EOS`。
+
+这是明确的 O5 内层训推协议缺口，会污染 spoken turn 结束后的 KV 状态和后续 Unit。
+它不能解释模型在第一个 spoken slot 就选择 `listen`，且本次 TrainingData 精确回放仍
+完成了 spoken/tool-call，因此不列为当前“不响应”的 P0 根因，但后续实现修复必须对齐
+O45 和 SDK parser。
+
+### 3. Offline helper 写死 O45_FC tokenizer
+
+`FcDuplexView._load_sdk_train_data()` 当前固定使用
+`O5TokenizerID.O45_FC`，没有根据 Adapter 的 `tokenizer_target` 选择 O5。这不会影响
+在线 Semantic API 的模型 primitive，但会让 View 自带的 TrainingData offline
+辅助路径以151772-row ID 空间 tokenize O5 case，污染离线 token-exact 对拍。
+
+本次 Graph ON/OFF 结论来自独立 `FcApiTrainingDataEvaluator` 的 O5 target 路径，不依赖
+该 helper；因此现有结论不受影响。后续修复时必须让 offline helper 显式接收 target，
+禁止根据默认值猜测。
+
+### 4. O5 `dump_trace` 未实现
 
 每次 Session close 都会触发：
 
@@ -183,7 +217,7 @@ NotImplementedError: o5 FC Adapter 不支持 dump_trace
 这是观测能力缺失，不是模型不响应的根因。但它遮蔽了最需要的原始 token / top-k
 证据，应单独修复。
 
-### 3. 重复连接错误
+### 5. 重复连接错误
 
 少数快速重连触发：
 
@@ -204,7 +238,9 @@ unsupported runtime message type: session.init
    必然错误、共享外层 scheduler 调用顺序错误。**
 3. **待定位 P1：warm 后的 Live 真人语音会使部分 checkpoint 产生
    ordinary-before-opener；TrainingData 精确回放则 spoken/think/tool-call 全部正常。**
-4. **待补 Gate：O5 training/inference waveform、feature、position 与同-policy
+4. **已确认 P1：O5 spoken turn 缺少 `SPOKEN_TURN_EOS` 自然停止和
+   `SPOKEN_SLOT_EOS` 补齐，属于确定性训推协议缺口，但不是首个 slot 不响应的根因。**
+5. **待补 Gate：O5 training/inference waveform、feature、position 与同-policy
    post-APM 对拍，以及 DCP teacher-forced top1。Training 文档中这两项仍明确未完成。**
 
 ## 下一步验证顺序
@@ -213,10 +249,12 @@ unsupported runtime message type: session.init
 2. warm 后回放同一段用户 Live 录音，确认 spoken/tool-call 是否恢复。
 3. 为 O5 Capability 增加原始 generated token ID、display name、top-k logits 和
    classification trace；不要只记录被 View 丢弃后的空文本。
-4. 用同一 checkpoint、同一 waveform 做：
+4. 将 O5 spoken close sequence 对齐为
+   `spoken_turn_eos → spoken_slot_eos → ai_spoken_slot_end`，并补跨 Unit KV 回归。
+5. 用同一 checkpoint、同一 waveform 做：
    - Training/Megatron full-forward teacher-forced；
    - HF eager incremental；
    - TP2 Graph OFF；
    - TP2 Graph ON。
-5. 只有四路在首个分叉点对不上时，才修改对应 inference 内层；不要通过放宽 parser
+6. 只有四路在首个分叉点对不上时，才修改对应 inference 内层；不要通过放宽 parser
    把 ordinary token 强行伪装成合法 think/tool-call。
