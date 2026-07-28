@@ -273,12 +273,13 @@ async def run_probe(args: argparse.Namespace) -> dict[str, Any]:
     session_created: dict[str, Any] | None = None
 
     log(f"connect {url}")
-    async with websockets.connect(
+    ws = await websockets.connect(
         url,
         ssl=ssl_ctx,
         open_timeout=args.open_timeout,
         max_size=args.max_message_mb * 1024 * 1024,
-    ) as ws:
+    )
+    try:
         await wait_for_queue(ws, timeout_s=args.event_timeout_s)
         session_created = await init_session(ws, args)
         log(f"session.created id={session_created.get('session_id')}")
@@ -325,6 +326,8 @@ async def run_probe(args: argparse.Namespace) -> dict[str, Any]:
 
         with contextlib.suppress(Exception):
             await ws.send(json.dumps({"type": "session.close", "reason": "probe_done"}))
+    finally:
+        await ws.close()
 
     canonical_units = [
         {

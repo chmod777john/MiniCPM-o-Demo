@@ -12,9 +12,13 @@ import argparse
 import asyncio
 import base64
 import copy
+import hashlib
+import importlib.metadata as importlib_metadata
 import json
 import logging
 import os
+import platform
+import secrets
 import time
 import uuid
 from contextlib import asynccontextmanager, suppress
@@ -125,6 +129,101 @@ def _coalesce(*values: Any, default: Any = None) -> Any:
     return default
 
 
+def _model_dump(obj: Any) -> Dict[str, Any]:
+    if hasattr(obj, "model_dump"):
+        return dict(obj.model_dump())
+    if hasattr(obj, "dict"):
+        return dict(obj.dict())
+    return dict(obj or {})
+
+
+def _runtime_env_snapshot() -> Dict[str, Any]:
+    keys = (
+        "O5_DEPLOY_MODE",
+        "O5_BACKBONE_DIR",
+        "O5_LLM_CACHE",
+        "O5_LLM_GRAPH",
+        "O5_TTS_GRAPH",
+        "O5_TTS_FAST",
+        "O5_LMHEAD",
+        "O5_FUSE_VISION_AUDIO",
+        "O5_VISION_BATCH",
+        "O5_EXPERTS_IMPLEMENTATION",
+        "O5_ATTN_IMPLEMENTATION",
+        "O5_PRELOAD_BOTH_TTS",
+        "O5_TTS_ARGMAX",
+        "O5_DETERMINISTIC_REPLAY",
+        "O5_SESSION_SEED",
+        "O5_STARTUP_SEED",
+        "TTS_N_TIMESTEPS",
+        "TTS_TOP_P",
+        "TTS_TOP_K",
+        "TTS_TEMPERATURE",
+        "TOKENIZERS_PARALLELISM",
+    )
+    return {key: os.environ.get(key) for key in keys if os.environ.get(key) is not None}
+
+
+def _package_versions() -> Dict[str, Optional[str]]:
+    versions: Dict[str, Optional[str]] = {
+        "python": platform.python_version(),
+    }
+    for name in ("torch", "transformers", "flash-attn", "flash-linear-attention", "fla-core", "causal-conv1d"):
+        try:
+            versions[name] = importlib_metadata.version(name)
+        except importlib_metadata.PackageNotFoundError:
+            versions[name] = None
+    return versions
+
+
+def _sha256_base64(value: Any) -> Optional[str]:
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        return hashlib.sha256(base64.b64decode(value)).hexdigest()
+    except Exception:
+        return None
+
+
+def _torch_initial_seed() -> Optional[int]:
+    try:
+        import torch
+
+        return int(torch.initial_seed())
+    except Exception:
+        return None
+
+
+def _new_session_seed() -> int:
+    # numpy.random.seed only accepts 32-bit values; keep the assigned seed
+    # inside that range so PyTorchBackend.seed_runtime can seed all RNGs.
+    return secrets.randbits(31)
+
+
+def _env_truthy(key: str) -> bool:
+    return os.environ.get(key, "0").lower() in {"1", "true", "yes", "on"}
+
+
+def _deterministic_replay_seed() -> int:
+    value = _coalesce(os.environ.get("O5_SESSION_SEED"), os.environ.get("O5_STARTUP_SEED"), default="0")
+    return int(value)
+
+
+def _apply_deterministic_duplex_defaults(config: Dict[str, Any]) -> None:
+    # This is an eval/replay mode only. Production defaults stay in DuplexConfig.
+    # The goal is to make browser sessions replayable by canonical offline code.
+    config.setdefault("decode_mode", "greedy")
+    config.setdefault("temperature", 0.0)
+    config.setdefault("top_k", 0)
+    config.setdefault("top_p", 1.0)
+
+
+def _resolved_duplex_config(config: Dict[str, Any]) -> Dict[str, Any]:
+    from core.schemas.duplex import DuplexConfig
+
+    return _model_dump(DuplexConfig(**dict(config or {})))
+
+
 def _get_input_payload(message: Dict[str, Any]) -> Dict[str, Any]:
     value = message.get("input")
     if not isinstance(value, dict):
@@ -227,6 +326,7 @@ class BackendProtocolSession:
         self._finalize_task: Optional[asyncio.Task[None]] = None
         self._op_lock = asyncio.Lock()
         self._active_response_id: Optional[str] = None
+        self._replay_manifest: Optional[Dict[str, Any]] = None
 
     async def send(self, event_type: str, **fields: Any) -> None:
         data = {"type": event_type, **{k: v for k, v in fields.items() if v is not None}}
@@ -242,13 +342,14 @@ class BackendProtocolSession:
         if hasattr(self.backend, "set_trace_session_id"):
             await asyncio.to_thread(self.backend.set_trace_session_id, self.session_id)
         if self.mode == "full_duplex":
-            await self._init_duplex(params)
+            self._replay_manifest = await self._init_duplex(params)
         self.initialized = True
         await self.send(
             "session.created",
             session_id=self.session_id,
             mode=self.mode,
             metrics=self._safe_metrics(),
+            replay_manifest=self._replay_manifest,
         )
 
     async def push(self, message: Dict[str, Any]) -> None:
@@ -309,19 +410,47 @@ class BackendProtocolSession:
                 await asyncio.to_thread(self.backend.set_trace_session_id, None)
         await self.state.forget(self.session_id)
 
-    async def _init_duplex(self, params: Dict[str, Any]) -> None:
-        config = _first_dict(params.get("config"), params.get("duplex"))
+    async def _init_duplex(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        raw_config = _first_dict(params.get("config"), params.get("duplex"))
+        config = dict(raw_config)
         seed_value = _coalesce(params.get("seed"), config.get("seed") if config else None)
-        seed = int(seed_value) if seed_value is not None else None
-        if seed is not None and hasattr(self.backend, "seed_runtime"):
+        seed_requested = seed_value is not None
+        deterministic_replay = _env_truthy("O5_DETERMINISTIC_REPLAY")
+        if deterministic_replay:
+            _apply_deterministic_duplex_defaults(config)
+        if seed_requested:
+            seed = int(seed_value)
+            seed_source = "request"
+        elif deterministic_replay:
+            seed = _deterministic_replay_seed()
+            seed_source = "deterministic_replay"
+        else:
+            seed = _new_session_seed()
+            seed_source = "auto"
+        if hasattr(self.backend, "seed_runtime"):
             await asyncio.to_thread(self.backend.seed_runtime, seed)
         if "use_tts" in params:
-            config = dict(config)
             config["generate_audio"] = bool(params.get("use_tts"))
+        resolved_config = _resolved_duplex_config(config)
+        effective_llm_seed = seed if seed is not None else _torch_initial_seed()
         if config:
-            await asyncio.to_thread(self.backend.set_duplex_config, config)
+            await asyncio.to_thread(self.backend.set_duplex_config, resolved_config)
 
         voice = _first_dict(params.get("voice"), params.get("defaults"))
+        llm_ref_sha = _sha256_base64(
+            _coalesce(
+                params.get("ref_audio_base64"),
+                voice.get("ref_audio_base64"),
+                voice.get("ref_audio"),
+            )
+        )
+        tts_ref_sha = _sha256_base64(
+            _coalesce(
+                params.get("tts_ref_audio_base64"),
+                voice.get("tts_ref_audio_base64"),
+                voice.get("tts_ref_audio"),
+            )
+        )
         refs = resolve_duplex_voice_refs(
             ref_audio_path=_coalesce(params.get("ref_audio_path"), voice.get("ref_audio_path")),
             ref_audio_base64=_coalesce(
@@ -345,12 +474,45 @@ class BackendProtocolSession:
                 ),
                 ref_audio_path=refs.llm_ref_audio_path,
                 prompt_wav_path=refs.tts_ref_audio_path,
-                length_penalty=float(config.get("length_penalty", 1.1) if config else 1.1),
-                sampling=config or None,
-                llm_seed=seed,
+                length_penalty=float(resolved_config.get("length_penalty", 1.1)),
+                sampling=resolved_config,
+                llm_seed=effective_llm_seed,
             )
         finally:
             refs.cleanup()
+        return {
+            "schema_version": 1,
+            "session_id": self.session_id,
+            "mode": self.mode,
+            "requested": {
+                "seed": int(seed_value) if seed_requested else None,
+                "config": dict(raw_config),
+                "system_prompt": _coalesce(
+                    params.get("system_prompt"),
+                    params.get("instructions"),
+                    default="You are a helpful assistant.",
+                ),
+                "use_tts": params.get("use_tts"),
+                "max_slice_nums": params.get("max_slice_nums"),
+                "ref_audio_path": params.get("ref_audio_path"),
+                "tts_ref_audio_path": params.get("tts_ref_audio_path"),
+                "ref_audio_sha256": llm_ref_sha,
+                "tts_ref_audio_sha256": tts_ref_sha,
+            },
+            "resolved": {
+                "seed": seed,
+                "seed_auto_assigned": seed_source == "auto",
+                "seed_source": seed_source,
+                "deterministic_replay": deterministic_replay,
+                "llm_seed": effective_llm_seed,
+                "duplex_config": resolved_config,
+            },
+            "runtime": {
+                "server_config": dict(SERVER_CONFIG),
+                "env": _runtime_env_snapshot(),
+                "packages": _package_versions(),
+            },
+        }
 
     async def _push_turn_based(self, payload: Dict[str, Any]) -> None:
         async with self._op_lock:

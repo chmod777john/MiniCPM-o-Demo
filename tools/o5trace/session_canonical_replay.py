@@ -10,6 +10,7 @@ worktree. Older sessions that only contain WAV files are rejected.
 from __future__ import annotations
 
 import argparse
+import base64
 import hashlib
 import io
 import json
@@ -24,11 +25,13 @@ import torch
 from PIL import Image
 from transformers import AutoModel
 
+from core.schemas.duplex import DuplexConfig
 from thin_duplex_video_probe import (
     INPUT_SAMPLE_RATE,
     OUTPUT_SAMPLE_RATE,
     audio_meta,
     configure_seed,
+    generate_with_optional_argmax,
     install_token_trace,
     reset_vocoder_static_state,
 )
@@ -122,6 +125,17 @@ def load_ref_audio(path: Path) -> np.ndarray:
         return audio.astype(np.float32, copy=False)
 
 
+def restore_ref_audio_from_base64(init_payload: dict[str, Any], out_dir: Path) -> Optional[str]:
+    value = init_payload.get("ref_audio_base64")
+    if not isinstance(value, str) or not value:
+        return None
+    raw = base64.b64decode(value)
+    ref_audio = np.frombuffer(raw, dtype="<f4").astype(np.float32, copy=True)
+    path = out_dir / "ref_audio_from_session.wav"
+    write_wav(path, ref_audio, sample_rate=INPUT_SAMPLE_RATE)
+    return str(path)
+
+
 def session_init_payload(events: list[dict[str, Any]]) -> dict[str, Any]:
     for event in events:
         frame = event.get("frame")
@@ -130,6 +144,62 @@ def session_init_payload(events: list[dict[str, Any]]) -> dict[str, Any]:
             if isinstance(payload, dict):
                 return payload
     raise ValueError("recorded session has no session.init payload")
+
+
+def session_replay_manifest(events: list[dict[str, Any]]) -> dict[str, Any]:
+    for event in events:
+        frame = event.get("frame")
+        if not isinstance(frame, dict) or frame.get("type") != "session.created":
+            continue
+        manifest = frame.get("replay_manifest")
+        if isinstance(manifest, dict):
+            return manifest
+    return {}
+
+
+def model_dump(obj: Any) -> dict[str, Any]:
+    if hasattr(obj, "model_dump"):
+        return dict(obj.model_dump())
+    if hasattr(obj, "dict"):
+        return dict(obj.dict())
+    return dict(obj or {})
+
+
+def resolved_duplex_config(init_payload: dict[str, Any], manifest: dict[str, Any]) -> dict[str, Any]:
+    resolved = manifest.get("resolved") if isinstance(manifest.get("resolved"), dict) else {}
+    manifest_config = resolved.get("duplex_config") if isinstance(resolved, dict) else None
+    if isinstance(manifest_config, dict) and manifest_config:
+        return dict(manifest_config)
+
+    config = init_payload.get("config") if isinstance(init_payload.get("config"), dict) else {}
+    config = dict(config)
+    if "use_tts" in init_payload:
+        config["generate_audio"] = bool(init_payload.get("use_tts"))
+    return model_dump(DuplexConfig(**config))
+
+
+def resolved_seed(init_payload: dict[str, Any], config: dict[str, Any], manifest: dict[str, Any]) -> int:
+    resolved = manifest.get("resolved") if isinstance(manifest.get("resolved"), dict) else {}
+    raw_config = init_payload.get("config") if isinstance(init_payload.get("config"), dict) else {}
+    for value in (
+        resolved.get("llm_seed") if isinstance(resolved, dict) else None,
+        resolved.get("seed") if isinstance(resolved, dict) else None,
+        init_payload.get("seed"),
+        raw_config.get("seed"),
+        config.get("seed"),
+    ):
+        if value is not None:
+            return int(value)
+    return 0
+
+
+def manifest_tts_argmax(manifest: dict[str, Any]) -> Optional[bool]:
+    runtime = manifest.get("runtime") if isinstance(manifest.get("runtime"), dict) else {}
+    env = runtime.get("env") if isinstance(runtime.get("env"), dict) else {}
+    value = env.get("O5_TTS_ARGMAX") if isinstance(env, dict) else None
+    if value is None:
+        return None
+    return str(value).lower() in {"1", "true", "yes", "on"}
 
 
 def input_events(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -267,6 +337,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--first-chunk-ms", type=int, default=1035)
     parser.add_argument("--cnn-redundancy-ms", type=int, default=20)
     parser.add_argument("--trace-token2wav", action="store_true")
+    parser.add_argument(
+        "--tts-argmax",
+        choices=("auto", "0", "1"),
+        default="auto",
+        help="Replay TTS sampling as argmax; auto follows session replay_manifest when available.",
+    )
     parser.add_argument("--overwrite", action="store_true")
     return parser.parse_args()
 
@@ -289,13 +365,19 @@ def main() -> int:
 
     events = read_jsonl(stream_path)
     init_payload = session_init_payload(events)
-    config = init_payload.get("config") if isinstance(init_payload.get("config"), dict) else {}
-    seed = int(init_payload.get("seed", config.get("seed", 0)) or 0)
+    manifest = session_replay_manifest(events)
+    config = resolved_duplex_config(init_payload, manifest)
+    seed = resolved_seed(init_payload, config, manifest)
     chunk_ms = int(config.get("chunk_ms", 1000) or 1000)
     system_prompt = str(init_payload.get("system_prompt") or "Streaming Omni Conversation.")
     ref_audio_path = init_payload.get("ref_audio_path")
     if not ref_audio_path:
-        raise ValueError("basic canonical replay requires session.init.payload.ref_audio_path")
+        ref_audio_path = restore_ref_audio_from_base64(init_payload, out_dir)
+    if not ref_audio_path:
+        raise ValueError(
+            "basic canonical replay requires session.init.payload.ref_audio_path "
+            "or session.init.payload.ref_audio_base64"
+        )
     ref_audio_path = str(ref_audio_path)
 
     canonical_root = Path(args.canonical_root)
@@ -334,7 +416,7 @@ def main() -> int:
     generate_kwargs = {
         "prompt_wav_path": ref_audio_path,
         "max_new_speak_tokens_per_chunk": int(config.get("max_new_speak_tokens_per_chunk", 20) or 20),
-        "decode_mode": str(config.get("decode_mode", "greedy") or "greedy"),
+        "decode_mode": str(config.get("decode_mode", "sampling") or "sampling"),
         "temperature": float(config.get("temperature", 0.7) or 0.7),
         "top_k": int(config.get("top_k", 20) or 20),
         "top_p": float(config.get("top_p", 0.8) or 0.8),
@@ -343,8 +425,15 @@ def main() -> int:
         "text_repetition_penalty": float(config.get("text_repetition_penalty", 1.05) or 1.05),
         "text_repetition_window_size": int(config.get("text_repetition_window_size", 512) or 512),
     }
+    force_listen_count = int(config.get("force_listen_count", 0) or 0)
+    tts_argmax = manifest_tts_argmax(manifest)
+    if args.tts_argmax != "auto":
+        tts_argmax = args.tts_argmax == "1"
+    if tts_argmax is None:
+        tts_argmax = False
 
     units: list[dict[str, Any]] = []
+    audio_parts: list[np.ndarray] = []
     for idx, event in enumerate(unit_events):
         if token_trace is not None:
             token_trace["current_unit"] = event_input_id(event, idx)
@@ -355,11 +444,17 @@ def main() -> int:
             frame_list=frames or None,
             max_slice_nums=event_max_slice_nums(event),
         )
-        result = generate_with_force_listen(duplex, event_force_listen(event), generate_kwargs)
+        force_listen = event_force_listen(event) or idx < force_listen_count
+        result = generate_with_optional_argmax(
+            lambda: generate_with_force_listen(duplex, force_listen, generate_kwargs),
+            bool(tts_argmax),
+        )
         waveform = result.get("audio_waveform")
         meta = audio_meta(waveform)
         if waveform is not None and meta["samples"] > 0:
-            write_wav(out_dir / f"unit_{idx:03d}.wav", np.asarray(waveform, dtype=np.float32))
+            part = np.asarray(waveform, dtype=np.float32)
+            audio_parts.append(part)
+            write_wav(out_dir / f"unit_{idx:03d}.wav", part)
         units.append({
             "unit_id": idx,
             "input_id": event_input_id(event, idx),
@@ -382,12 +477,19 @@ def main() -> int:
         "seed": seed,
         "chunk_ms": chunk_ms,
         "system_prompt": system_prompt,
+        "replay_manifest": manifest or None,
+        "resolved_duplex_config": config,
         "ref_audio_path": ref_audio_path,
         "generate_kwargs": generate_kwargs,
+        "force_listen_count": force_listen_count,
+        "tts_argmax": bool(tts_argmax),
         "vocoder_state": vocoder_state,
         "token_trace": "token_trace.json" if token_trace is not None else None,
+        "continuous_audio": "continuous.wav" if audio_parts else None,
         "units": units,
     }
+    if audio_parts:
+        write_wav(out_dir / "continuous.wav", np.concatenate(audio_parts))
     if token_trace is not None:
         trace_to_write = dict(token_trace)
         trace_to_write.pop("current_unit", None)
