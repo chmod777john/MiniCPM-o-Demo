@@ -197,10 +197,14 @@ status: pending_retest
 training_job: 629255
 model: REF-AUDIO-001 Full4850 LLM+TTS Step400
 profile: o5_629255_refaudio_full4850_llm_tts_sdk005_step400
-deploy_job: 631948
-code_commit: a505ed6
+deploy_job: 632039
+code_commit: 84e9a31
 url: https://47.95.219.248:7001/fc_board
 ```
+
+当前服务遵循模型忠实基线：O5 与 O45 一样不吞
+ordinary-before-opener；模型协议违规会原样失败并保留 raw trace，不再为了页面“看起来
+正常”隐藏输出。
 
 机器验证：
 

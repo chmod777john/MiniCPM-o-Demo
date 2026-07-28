@@ -262,7 +262,8 @@ a505ed6  环境开关控制的 spoken/non-spoken 首步 top-k margin probe；
          正式服务默认关闭，诊断回放时开启。
 ```
 
-最终 TP2 + LLM Graph 稳定服务 `tasks/631948` 使用相同修复代码，margin probe 默认关闭。
+最终 TP2 + LLM Graph 模型忠实基线 `tasks/632039` 使用 commit `84e9a31`：margin probe
+默认关闭，ordinary-before-opener 与 O45 一样 fail-fast，不再隐藏模型协议违规。
 机器验证来自等价修复服务：
 
 ```text
