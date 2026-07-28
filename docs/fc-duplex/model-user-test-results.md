@@ -13,6 +13,8 @@ prepare 完成前就被关闭，不能继续解释为“4个 checkpoint 均已�
 - `normal`：用户确认主要交互正常，不再重复部署。
 - `failed`：用户确认关键能力不可用，需要保留证据后关闭。
 - `pending`：转换已完成，尚未交给用户测试。
+- `evaluated`：验收已完成，但不同能力维度有明确的通过与失败，不能压成整体
+  `normal/failed`。
 
 ## 已完成测试
 
@@ -189,6 +191,42 @@ closed: 2026-07-28
 至此已登记的10个 O5 candidate checkpoint 已全部完成用户测试；10/10 均未通过，
 而同一外层 API、前端和调度框架下的 O45FC 已通过。该分布强烈指向 O5 专属的模型内层
 推理、特殊 token 或 adapter 边界，而不是10个训练 checkpoint 独立失效。
+
+## REF-AUDIO 同期严格 A/B 用户验收
+
+```text
+status: evaluated
+training_job: 629563
+model: REF-AUDIO Windtunnel Control Step2000
+profile: o5_629563_refaudio_windtunnel_control_sdk005_step2000
+deploy_job: 633075
+url: https://47.95.219.248:7001/fc_board
+closed: 2026-07-28
+
+status: evaluated
+training_job: 629564
+model: REF-AUDIO Windtunnel Treatment Step2000
+profile: o5_629564_refaudio_windtunnel_treatment_sdk005_step2000
+deploy_job: 633076
+url: https://47.95.219.248:7040/fc_board
+closed: 2026-07-28
+```
+
+两条服务都使用 SDK 0.0.5、TP2 + LLM Graph、模型忠实推理基线。转换实测两条
+checkpoint 都包含198个 `tts.*`；`629563` 的 Control 只表示 MVP2 ranks 没有
+SDK-native TTS supervision，不能覆盖成 clean-base frozen TTS。
+
+用户主观结论：
+
+- 两条模型的 FC 功能和触发均正常。
+- Control `629563` 的语音与此前缺少 FC TTS supervision 的模型接近，仍有字词读错，
+  音色不理想。
+- Treatment `629564` 的字词基本能读对，优于 Control；但音色非常差，整体语音质量仍
+  不满足要求。
+
+当前 A/B 支持的边界结论是：SDK-native FC TTS supervision 改善了字词正确性，但没有
+解决音色质量。该结论来自本次用户主观验收，不替代固定集的 ASR 字错率、speaker
+similarity 和 MOS 量化。
 
 ## 修复后待用户复测
 

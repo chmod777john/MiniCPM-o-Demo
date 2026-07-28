@@ -1,0 +1,42 @@
+{
+  "profile_id": "o5_629563_refaudio_windtunnel_control_sdk005_step2000",
+  "model_family": "o5",
+  "sdk_version": "0.0.5",
+  "tokenizer_target": "o5",
+  "required_model_rows": 248168,
+  "modeling_package": "modeling.o5",
+  "model_path": "/user/weihongliang/MiniCPM-o-4_6",
+  "pt_path": "/user/sunweiyue/training/o5-demo-conversions/refaudio_control_629563_iter2000/model.pt",
+  "checkpoint_sha256": "615f9f858e652d59bb19acd202f7d9f9a1d50565aaef080ccd7399a3d6add001",
+  "reference_audio_path": "/user/sunweiyue/training/o5-mvp-specialized/datasets/full4850_delivery/media/system_reference/HTRef06.wav",
+  "case_folder": "/user/sunweiyue/training/o5-mvp-specialized/datasets/full4850_delivery",
+  "unit_policy": {
+    "unit_sec": 1.0,
+    "non_spoken_budgets_while_listening": [
+      30
+    ],
+    "non_spoken_budgets_while_speaking": [
+      15
+    ],
+    "prefill_second_per_unit": [
+      0.2
+    ],
+    "ai_tts_second_per_unit": [
+      0.3
+    ],
+    "decode_ms_per_step": [
+      15.0
+    ],
+    "ai_spoken_playback_delay_sec": 0.2,
+    "spoken_prelook_sec": 0.3
+  },
+  "non_spoken_scheduling": "quality",
+  "deployment_mode": "tp2",
+  "backbone_dir": "/user/sunweiyue/training/o5-demo-conversions/refaudio_control_629563_iter2000/backbone",
+  "backbone_manifest_sha256": "0965b4ae8c0c584dbfc34325d0a2a8b0ecc08c5ebf84f15272404290a32005e8",
+  "tp_size": 2,
+  "llm_graph": true,
+  "llm_cache": 32768,
+  "spmd_heartbeat_interval_sec": 30.0,
+  "attn_implementation": "auto"
+}
