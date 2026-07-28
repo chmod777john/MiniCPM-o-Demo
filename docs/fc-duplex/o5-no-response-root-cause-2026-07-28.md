@@ -260,9 +260,11 @@ unsupported runtime message type: session.init
 
 a505ed6  环境开关控制的 spoken/non-spoken 首步 top-k margin probe；
          正式服务默认关闭，诊断回放时开启。
+
+ee93a92  warm/cold/cache 同输入完整 logits、token、KV 等价性门禁。
 ```
 
-最终 TP2 + LLM Graph 模型忠实基线 `tasks/632039` 使用 commit `84e9a31`：margin probe
+最终 TP2 + LLM Graph 模型忠实基线 `tasks/632505` 使用 commit `ee93a92`：margin probe
 默认关闭，ordinary-before-opener 与 O45 一样 fail-fast，不再隐藏模型协议违规。
 机器验证来自等价修复服务：
 
@@ -287,6 +289,19 @@ tool call: display_object_on_board(name="红外感应相机")
 warnings: 0
 runtime errors: 0
 ```
+
+warm/cache 是否属于模型忠实基础设施已经通过同进程 A/B：
+
+```text
+startup warm 前后： 30/30 logits exact，output_ids/KV exact
+cache reuse 前后：  30/30 logits exact，output_ids/KV exact
+cold first created: 28.022s
+warmed created:      1.289s
+```
+
+跨进程 cold-vs-cold 本身即非 bitwise（`max_abs=3.890625`），但30/30 argmax 相同；
+因此跨进程差异不能归因于 warmup。完整记录见
+[`o5-warm-cache-equivalence-2026-07-28.md`](o5-warm-cache-equivalence-2026-07-28.md)。
 
 P0 首次 Session 假死已完成机器验证；仍需用户用 Live 真人语音复测 P1
 ordinary-before-opener / 泛化行为。
@@ -336,6 +351,11 @@ non-spoken margin 也支持同一判断：
 `speak`/tool logit bias 修补的问题；bias 会引入不可控误触发。正确方向是提高
 checkpoint 在 Live 真人语音及节奏变体上的监督覆盖和决策 margin。
 
+用户后续复测认为成功概率有所提高，并确认 AI 语音内容连贯、字词正确；音色主观弱于
+O45。该反馈说明当前 TTS 链路具备可懂度，但不能证明音色回归来自 Demo runtime。
+音色问题可能继承自风洞共同基础模型，必须通过 O45/O5 同文本、同 reference audio、
+同响度匿名 A/B，并加入 clean base / 风洞起点对照后再归因。
+
 ## 下一步验证顺序
 
 1. 将6条 Live Session 录音登记为固定回归集，逐条回放确认 greedy 决策可重复。
@@ -343,10 +363,12 @@ checkpoint 在 Live 真人语音及节奏变体上的监督覆盖和决策 margi
 3. 在训练侧增加真人语音、短指令、立即出现对象、不同开口 offset 与单阶段/两阶段变体。
 4. 把 `listen-speak` 和 `no_action-tool_call_start` margin 纳入 teacher-forced /
    free-running Gate；不能只看 CE loss 和 top1 accuracy。
-5. 用同一 checkpoint、同一 waveform 做：
+5. TTS 固定文本/reference audio/响度，对 O45、O5 clean base、风洞起点和629255做
+   匿名听感，分开报告字词正确性、连贯性、自然度和音色相似度。
+6. 用同一 checkpoint、同一 waveform 做：
    - Training/Megatron full-forward teacher-forced；
    - HF eager incremental；
    - TP2 Graph OFF；
    - TP2 Graph ON。
-6. 只有四路在首个分叉点对不上时，才修改对应 inference 内层；不要通过放宽 parser
+7. 只有四路在首个分叉点对不上时，才修改对应 inference 内层；不要通过放宽 parser
    把 ordinary token 强行伪装成合法 think/tool-call。

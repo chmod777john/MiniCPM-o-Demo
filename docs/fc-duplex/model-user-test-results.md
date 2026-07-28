@@ -197,8 +197,8 @@ status: pending_retest
 training_job: 629255
 model: REF-AUDIO-001 Full4850 LLM+TTS Step400
 profile: o5_629255_refaudio_full4850_llm_tts_sdk005_step400
-deploy_job: 632039
-code_commit: 84e9a31
+deploy_job: 632505
+code_commit: ee93a92
 url: https://47.95.219.248:7001/fc_board
 ```
 
@@ -214,6 +214,8 @@ ordinary-before-opener；模型协议违规会原样失败并保留 raw trace，
   1次 think 和正确工具调用，warning/error 均为0。
 - Session close 已成功落盘原始 O5 token trace，不再抛 `dump_trace`
   `NotImplementedError`。
+- 同进程 startup warm 与 cold、prompt cache reuse 与 rebuild 均达到30/30首步 logits
+  exact、完整 output IDs/KV exact；预热只移动初始化成本，不改变模型输出。
 
 前述10/10是修复前的用户体验结论；最后4个 Session 当时没有越过首次 prepare，不能用于
 否定对应 checkpoint 的 generation 能力。当前只对 `629255` 开放修复后 Live 复测。
@@ -265,6 +267,19 @@ free-running 决策稳定性。成功样本具有“规则说明 → 模型确�
 
 所以1/6成功属于决策 margin 过薄导致的轨迹翻转，不是服务随机丢 Session。后续 Gate
 必须检查协议关键 token margin，不能只检查 top1。
+
+### 最新主观反馈（2026-07-28）
+
+用户继续测试模型忠实服务后反馈：
+
+- 主观成功概率相比第一轮有所提高；本轮未固定测试次数，暂不更新 `1/6` 定量记录。
+- 已能听到 AI 语音。
+- 语音内容连贯、字词正确，intelligibility 正常。
+- 音色弱于 O45，但该差异可能来自风洞共同基础模型的音色能力；尚未做同文本、同
+  reference audio、同响度的匿名 A/B。
+
+当前将“FC 成功率”和“TTS 音色”分成两个训练问题，不通过推理 bias、强制触发或音色
+后处理改善展示。
 
 部署约定：
 
