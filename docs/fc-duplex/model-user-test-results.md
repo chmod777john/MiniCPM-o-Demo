@@ -131,16 +131,37 @@ closed: 2026-07-28
 - `629254` 另出现过一次 `backend already has an active session`，属于重复建连竞态；
   它不能解释4个模型共同不输出的现象。
 
-## 后续待部署模型
+## 当前待用户测试
 
-转换完成、尚未部署：
+最后4个服务已于 2026-07-28 完成 HTTPS、Gateway 和 TP2 Worker 健康检查：
 
 ```text
-629253  REF-AUDIO-001 Full4850 LLM-only Step400
-629255  REF-AUDIO-001 Full4850 LLM+TTS Step400
-623666  Strict Treatment Step2000
-621851  Mixed Pilot Step3000
+629253
+  model: REF-AUDIO-001 Full4850 LLM-only Step400
+  profile: o5_629253_refaudio_full4850_llm_sdk005_step400
+  deploy_job: 631113
+  url: https://47.95.219.248:7001/fc_board
+
+629255
+  model: REF-AUDIO-001 Full4850 LLM+TTS Step400
+  profile: o5_629255_refaudio_full4850_llm_tts_sdk005_step400
+  deploy_job: 631114
+  url: https://47.95.219.248:7002/fc_board
+
+623666
+  model: Strict Treatment Step2000
+  profile: o5_623666_strict_treatment_sdk005_step2000
+  deploy_job: 631115
+  url: https://47.95.219.248:7011/fc_board
+
+621851
+  model: Mixed Pilot Step3000
+  profile: o5_621851_mixed_pilot_sdk005_step3000
+  deploy_job: 631116
+  url: https://47.95.219.248:7014/fc_board
 ```
+
+这4个完成后，已登记的10个 O5 candidate checkpoint 将全部完成用户测试。
 
 部署约定：
 
