@@ -200,7 +200,8 @@ class O5FcDuplexModelAdapter(_BasePassthroughFcDuplexModelAdapter):
     model_family: Literal["o5"] = "o5"
     tokenizer_target: Literal["o5"] = "o5"
     supports_stateless_resume = False
-    drops_unclassified_non_spoken_tokens = True
+    # 忠实基线必须暴露模型协议违规，不能为了 Session 看起来可用而吞掉原始输出。
+    drops_unclassified_non_spoken_tokens = False
 
 
 def create_fc_duplex_model_adapter(

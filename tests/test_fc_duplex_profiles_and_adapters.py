@@ -206,6 +206,7 @@ def test_o5_adapter_exposes_matching_tokenizer_and_defers_resume() -> None:
     adapter = O5FcDuplexModelAdapter(_FakeModel(O5TokenizerID.O5))
 
     assert adapter.protocol_tokenizer.target == "o5"
+    assert adapter.drops_unclassified_non_spoken_tokens is False
     assert adapter.resume_boundary_status() == {
         "status": "unavailable",
         "reason": "resume_not_supported",
