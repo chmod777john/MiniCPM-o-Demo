@@ -356,6 +356,17 @@ O45。该反馈说明当前 TTS 链路具备可懂度，但不能证明音色回
 音色问题可能继承自风洞共同基础模型，必须通过 O45/O5 同文本、同 reference audio、
 同响度匿名 A/B，并加入 clean base / 风洞起点对照后再归因。
 
+随后使用 `629253` Full4850 LLM-only + clean-base frozen TTS 做直接对照。用户确认：
+
+- `629253` 与 `629255` 的偶发无响应体感基本一致；
+- `629253` 语音明显更不连贯，音色和韵律更差，并出现读错；
+- `629255` 的语音连贯且字词正确。
+
+两者数据规模、SDK、reference audio 和主要 LLM 任务一致，关键变量是 `629255` 接受
+SDK-native TTS supervision。该 A/B 支持“训练 TTS 有效”：它改善 speaking 后的内容
+正确性、连贯性、音色和韵律，但不改变 FC 是否进入 speaking 的决策 margin。基础模型
+音色仍可能限制绝对上限，但已不能解释两者之间的全部差距。
+
 ## 下一步验证顺序
 
 1. 将6条 Live Session 录音登记为固定回归集，逐条回放确认 greedy 决策可重复。
@@ -363,8 +374,9 @@ O45。该反馈说明当前 TTS 链路具备可懂度，但不能证明音色回
 3. 在训练侧增加真人语音、短指令、立即出现对象、不同开口 offset 与单阶段/两阶段变体。
 4. 把 `listen-speak` 和 `no_action-tool_call_start` margin 纳入 teacher-forced /
    free-running Gate；不能只看 CE loss 和 top1 accuracy。
-5. TTS 固定文本/reference audio/响度，对 O45、O5 clean base、风洞起点和629255做
-   匿名听感，分开报告字词正确性、连贯性、自然度和音色相似度。
+5. TTS 已完成 `629253` frozen-base vs `629255` trained-TTS 主观 A/B，确认 TTS 训练有效；
+   继续固定文本/reference audio/响度，对 O45、O5 clean base、629253 和629255做匿名
+   听感，量化字词正确性、连贯性、自然度和音色相似度。
 6. 用同一 checkpoint、同一 waveform 做：
    - Training/Megatron full-forward teacher-forced；
    - HF eager incremental；

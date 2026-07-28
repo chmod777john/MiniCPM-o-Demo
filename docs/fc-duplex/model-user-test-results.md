@@ -281,6 +281,29 @@ free-running 决策稳定性。成功样本具有“规则说明 → 模型确�
 当前将“FC 成功率”和“TTS 音色”分成两个训练问题，不通过推理 bias、强制触发或音色
 后处理改善展示。
 
+### `629253` LLM-only + clean-base TTS 对照
+
+```text
+status: usable_with_tts_quality_regression
+training_job: 629253
+model: REF-AUDIO-001 Full4850 LLM-only Step400 + clean-base frozen TTS
+profile: o5_629253_refaudio_full4850_llm_sdk005_step400
+deploy_job: 632640
+url: https://47.95.219.248:7001/fc_board
+```
+
+用户结论：
+
+- 模型可用。
+- 偶发无响应的体感与 `629255` 基本一致，说明该问题不由是否训练 TTS 决定。
+- 语音不连贯，音色和韵律都弱于 `629255`，并出现读错。
+- `629255` 在相同 Full4850 主任务上额外训练 TTS 后，连贯性、字词正确性、音色和韵律
+  均有主观改善。
+
+判定：本轮 SDK-native TTS training 有效。它没有解决 FC `listen/speak` margin，
+但改善了模型真正进入 speaking 后的语音质量。后续不应再把 `629255` 的音色差距完全
+归因于共同基础模型；更准确的结论是 TTS 训练已明显改善基础音色，但相对 O45 仍有差距。
+
 部署约定：
 
 - 同一时段最多并行部署4个 O5 TP2 模型，每个模型占2张 A100。
