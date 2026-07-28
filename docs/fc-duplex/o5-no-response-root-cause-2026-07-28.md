@@ -373,11 +373,15 @@ SDK-native TTS supervision。该 A/B 支持“训练 TTS 有效”：它改善 s
    `" spoken"`，而不是 `<|no_action|>`、`<think>` 或 `<tool_call>`；模型忠实 parser
    fail-fast，所以 Session 约1秒关闭。这是 step100 checkpoint 的协议学习失败。
 2. `623666` Strict Treatment Step2000 的 FC 功能正常，但语音质量与未训练 TTS 的
-   `629253` 接近，说明较长 Agent/LLM 训练不自动带来 TTS 音质改善。
+   `629253` 接近。
+3. `621851` Mixed Pilot Step3000 的 FC 功能同样正常，整体表现与 `623666` 接近，
+   语音质量仍差。
 
 因此不能把“功能可用”“稳定遵守 FC control token”“TTS 音质”合并成一个指标：
 MVP100 主要失败在协议控制 token，Strict/629253 主要缺少 TTS 质量，629255 则证明
-SDK-native TTS supervision 能改善 speaking 后的语音。
+SDK-native TTS supervision 能改善 speaking 后的语音。`623666/621851` 的全局 legacy
+TTS ranks 不等价于对 FC `ai_spoken` sidecar 做监督，较长 Agent/LLM 训练也不会自动
+改善 FC TTS 音质。
 
 ## 下一步验证顺序
 

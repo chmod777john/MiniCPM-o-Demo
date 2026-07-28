@@ -332,8 +332,15 @@ non-spoken opener/control token。禁止恢复“warning 后吞 token”的体�
 - 偶发无响应体感未单独量化；
 - 语音质量较差，与未训练 TTS 的 `629253` 接近。
 
-该结果进一步支持：Agent/FC 能力与 TTS 音质是独立训练轴；没有 SDK-native TTS
-supervision 的 checkpoint 即使 FC 功能可用，语音仍可能不连贯、音色/韵律较差。
+`621851` Mixed Pilot Step3000：
+
+- FC 功能正常，与 `623666` 整体表现接近；
+- 语音质量同样较差。
+
+两条风洞路线的 MVP/Agent 数据都没有提供 SDK-native FC `ai_spoken` TTS supervision；
+全局 legacy audio/omni ranks 可能仍更新 TTS 参数，但没有学习本次 FC spoken sidecar。
+结果进一步支持：Agent/FC 能力与 FC TTS 音质是独立训练轴；即使 FC 功能正常，缺少
+SDK-native TTS supervision 时，语音仍可能不连贯、音色/韵律较差。
 
 部署约定：
 
