@@ -211,7 +211,6 @@ class PyTorchBackend:
             prompt_wav_path: Optional[str],
             is_last_chunk: bool = False,
             force_flush: bool = False,
-            defer_flush: bool = False,
         ) -> Any:
             assert self._token_trace is not None
             self._token_trace["generated_tts_chunks"].append({
@@ -219,7 +218,6 @@ class PyTorchBackend:
                 "new_tokens": self._token_meta(new_tokens),
                 "is_last_chunk": bool(is_last_chunk),
                 "force_flush": bool(force_flush),
-                "defer_flush": bool(defer_flush),
             })
             self._write_token_trace()
             return original_generate_waveform(
@@ -227,7 +225,6 @@ class PyTorchBackend:
                 prompt_wav_path,
                 is_last_chunk=is_last_chunk,
                 force_flush=force_flush,
-                defer_flush=defer_flush,
             )
 
         duplex._generate_waveform_from_tokens = types.MethodType(traced_generate_waveform, duplex)
