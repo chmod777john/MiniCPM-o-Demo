@@ -5,28 +5,6 @@
 本协议以单 WebSocket 有序状态机为基础，只公开业务和 stateless resume 真正需要的信息。
 协议不暴露 token ID，不重复传输同一语义，不为当前不存在的并发能力预埋 ID。
 
-### 1.1 单 Job 多 GPU 临时验证入口
-
-在单个 Cybertron `agent-dev` Job 内，可用
-`scripts/start_o45_fc_api_multi_gpu.sh` 为每张可见 GPU 启动独立的
-Backend、Worker 和 Gateway：
-
-```bash
-MODEL_PATH=/path/to/model \
-PT_PATH=/path/to/model.pt \
-REF_AUDIO_PATH=/path/to/ref.wav \
-LOG_DIR=/tmp/o45-fc-multi-api \
-bash scripts/start_o45_fc_api_multi_gpu.sh
-```
-
-`NUM_GPUS` 默认取 `CUDA_VISIBLE_DEVICES` 的设备数，未设置时为 `1`。Gateway、
-Backend、Worker 端口分别从 `8009`、`22500`、`23510` 递增，也可通过
-`BASE_GATEWAY_PORT`、`BASE_BACKEND_PORT`、`BASE_WORKER_PORT` 覆盖。启动器只安装并
-验证一次正式 `minicpm-o5-sdk==0.0.5` wheel；所有实例禁用 FRP，并写入
-`${LOG_DIR}/gpu_<id>/`。全部 `/health` 就绪后，Job 日志会输出可供批量调用方解析的
-`[MULTI_API_READY]` 行及各 Gateway `base_urls`。结束父进程或任一实例异常退出时，
-启动器只清理本次启动的子进程。
-
 ## 2. 不变量
 
 - 一个 WebSocket 只承载一个 Session。

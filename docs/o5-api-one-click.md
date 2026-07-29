@@ -78,6 +78,9 @@ Health:    http://<host>:8009/health
 FC Board:  http://<host>:8009/fc_board
 ```
 
+TrainingData 驱动的调用样例、事件含义和推理产物说明见
+[`fc-duplex/api-usage.md`](fc-duplex/api-usage.md)。
+
 健康检查：
 
 ```bash

@@ -100,6 +100,9 @@ Worker Pool (:22400+)
 CodeUp 固定版本克隆方式、健康检查和内部/外部设置边界见
 [`docs/o5-api-one-click.md`](docs/o5-api-one-click.md)。
 
+API 请求、事件语义、TrainingData 输入投影和推理产物格式见
+[`docs/fc-duplex/api-usage.md`](docs/fc-duplex/api-usage.md)。
+
 ### 部署步骤
 快速部署方式是 Docker Compose。裸机部署请参考 Dockerfile 和 entrypoint 来确定依赖与启动方式，并保持 Gateway、Python Worker、Backend 三个启动环节一致。
 
