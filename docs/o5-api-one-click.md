@@ -1,7 +1,7 @@
 # O5 API 一键启动
 
-本文只说明如何用已经准备好的 O5 模型目录启动 API，不涉及 checkpoint 来源、转换、
-评测方法或 Cybertron/CCTL 调度。
+本文只说明如何用已经准备好的 O5 模型目录启动 API，不涉及 checkpoint 来源、转换
+或评测方法。
 
 ## 1. 克隆可复现版本
 
@@ -133,7 +133,7 @@ Demo 维护者在
 - O5 SDK 版本与 UnitPolicy；
 - TP2、LLM Graph、cache、attention；
 - Gateway、Backend、Worker 内部地址和端口；
-- FRP/HTTPS 默认关闭。
+- Gateway 默认使用 HTTP。
 
 参考音频、评测 case、system prompt 和评测指标不属于部署设置，由 API 请求或上层评测系统决定。
 

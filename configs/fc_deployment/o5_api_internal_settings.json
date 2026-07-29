@@ -34,6 +34,5 @@
   "worker_host": "127.0.0.1",
   "worker_port": 22410,
   "gateway_internal_port": 8010,
-  "enable_frp": false,
   "gateway_https": false
 }

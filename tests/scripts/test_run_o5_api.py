@@ -237,6 +237,5 @@ def test_service_environment_projects_only_public_overrides(
     assert environment["O5_DEMO_CONFIG_PATH"] == str(
         prepared.service_config_path
     )
-    assert environment["ENABLE_FRP"] == "0"
     assert environment["GATEWAY_HTTPS"] == "0"
     assert environment["PATH"] == "/usr/bin"

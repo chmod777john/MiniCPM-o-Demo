@@ -80,7 +80,6 @@ class O5ApiRuntimeSettings(BaseModel):
     worker_host: str = "127.0.0.1"
     worker_port: int = Field(default=22410, ge=1, le=65535)
     gateway_internal_port: int = Field(default=8010, ge=1, le=65535)
-    enable_frp: Literal[False] = False
     gateway_https: Literal[False] = False
 
 
@@ -450,7 +449,6 @@ def build_service_environment(
             "TORCHINDUCTOR_CACHE_DIR": str(
                 prepared.cache_dir / "torchinductor"
             ),
-            "ENABLE_FRP": "1" if internal.enable_frp else "0",
             "GATEWAY_HTTPS": "1" if internal.gateway_https else "0",
         }
     )
