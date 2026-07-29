@@ -1,0 +1,39 @@
+{
+  "schema_version": "o5_api_internal_settings.v1",
+  "runtime_python": "/user/weihongliang/MiniCPM-o-Demo-wt-o5-inference-refactor-2026-06-30/.venv-accel/bin/python",
+  "base_model_path": "/user/weihongliang/MiniCPM-o-4_6",
+  "sdk_version": "0.0.5",
+  "unit_policy": {
+    "unit_sec": 1.0,
+    "non_spoken_budgets_while_listening": [
+      30
+    ],
+    "non_spoken_budgets_while_speaking": [
+      15
+    ],
+    "prefill_second_per_unit": [
+      0.2
+    ],
+    "ai_tts_second_per_unit": [
+      0.3
+    ],
+    "decode_ms_per_step": [
+      15.0
+    ],
+    "ai_spoken_playback_delay_sec": 0.2,
+    "spoken_prelook_sec": 0.3
+  },
+  "non_spoken_scheduling": "quality",
+  "llm_cache": 32768,
+  "spmd_heartbeat_interval_sec": 30.0,
+  "attn_implementation": "auto",
+  "gateway_host": "0.0.0.0",
+  "gateway_port": 8009,
+  "backend_host": "127.0.0.1",
+  "backend_port": 22510,
+  "worker_host": "127.0.0.1",
+  "worker_port": 22410,
+  "gateway_internal_port": 8010,
+  "enable_frp": false,
+  "gateway_https": false
+}

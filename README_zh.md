@@ -79,6 +79,27 @@ Worker Pool (:22400+)
 1. 确保你有一张显存大于 28GB 的 NVIDIA GPU。
 2. 确保你的机器安装了 Linux 操作系统。
 
+### O5 TP2 共享环境一键启动
+
+在已提供共享 Python/CUDA/SDK 环境和公共 O5 基础资产的内部环境中，无需重新安装依赖。
+准备至少两张可见 GPU 后，只需传入包含完整 PT 和 TP2 backbone 的模型目录：
+
+```bash
+./run_o5_api.sh <model-dir>
+```
+
+可选指定统一存储目录和 Gateway 端口：
+
+```bash
+./run_o5_api.sh <model-dir> \
+  --storage-dir <storage-dir> \
+  --port 8009
+```
+
+该入口不包含 CCTL、FRP、参考音频或评测配置。模型目录契约、CodeUp 固定版本克隆方式、
+健康检查和内部/外部设置边界见
+[`docs/o5-api-one-click.md`](docs/o5-api-one-click.md)。
+
 ### 部署步骤
 快速部署方式是 Docker Compose。裸机部署请参考 Dockerfile 和 entrypoint 来确定依赖与启动方式，并保持 Gateway、Python Worker、Backend 三个启动环节一致。
 

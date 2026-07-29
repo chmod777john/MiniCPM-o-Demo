@@ -5,8 +5,9 @@ Worker 和 Gateway 统一读取此文件。
 
 配置来源优先级（高 → 低）：
     1. CLI 参数（worker.py / gateway.py 的 argparse）
-    2. config.json（与本文件同级目录，gitignored）
-    3. Pydantic 默认值（本文件中定义）
+    2. O5_DEMO_CONFIG_PATH 指向的运行配置
+    3. config.json（与本文件同级目录，gitignored）
+    4. Pydantic 默认值（本文件中定义）
 
 首次部署时，复制 config.example.json 为 config.json 并修改 model_path：
     cp config.example.json config.json
@@ -28,7 +29,12 @@ from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
 
-_CONFIG_PATH = os.path.join(os.path.dirname(__file__), "config.json")
+_CONFIG_PATH = os.path.abspath(
+    os.environ.get(
+        "O5_DEMO_CONFIG_PATH",
+        os.path.join(os.path.dirname(__file__), "config.json"),
+    )
+)
 _EXAMPLE_PATH = os.path.join(os.path.dirname(__file__), "config.example.json")
 
 
