@@ -6,6 +6,8 @@ additive 4D mask buffer (valid=0, masked=-inf), flipping position `pos` valid be
 import torch
 from transformers.cache_utils import StaticCache
 
+from .cache_limits import CacheLimitExceeded
+
 
 class TTSGraphRunner:
     def __init__(self, llama, max_cache_len=8192):
@@ -77,11 +79,7 @@ class TTSGraphRunner:
             except Exception: pass
 
     def _warn_overflow(self, pos):
-        if not getattr(self, "_overflowed", False):
-            self._overflowed = True
-            print(f"[tts_graph] WARNING: TTS position {pos} >= max_cache_len {self.max_cache_len}; "
-                  f"clamping (continuous-speech turn too long). Audio may degrade at the tail; no crash.",
-                  flush=True)
+        raise CacheLimitExceeded("tts", max(int(pos) - 1, 0), int(pos), self.max_cache_len)
 
     def prefill(self, inputs_embeds, cache_position):
         if self.cache is None:
@@ -89,7 +87,7 @@ class TTSGraphRunner:
         with torch.inference_mode():
             mv = int(cache_position[-1]) + 1
             if mv > self.max_cache_len:
-                self._warn_overflow(mv); mv = self.max_cache_len
+                self._warn_overflow(mv)
             mask2d = torch.zeros(1, self.max_cache_len, dtype=torch.long, device=self.device)
             mask2d[:, :mv] = 1
             h = self.llama(inputs_embeds=inputs_embeds, position_ids=cache_position.unsqueeze(0),
@@ -103,7 +101,7 @@ class TTSGraphRunner:
             self._init(inputs_embeds.shape[-1])
         with torch.inference_mode():
             if pos >= self.max_cache_len:
-                self._warn_overflow(pos); pos = self.max_cache_len - 1
+                self._warn_overflow(pos + 1)
             self._emb.copy_(inputs_embeds); self._pos.fill_(pos); self._cpos.fill_(pos)
             self._mask[..., pos] = 0.0   # this token's position becomes valid; [0..pos] now 0, rest -inf
             if self._failed or not self._captured:
