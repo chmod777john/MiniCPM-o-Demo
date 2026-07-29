@@ -191,6 +191,7 @@ class DuplexConfig(BaseModel):
         text_repetition_window_size: 重复检测窗口大小
         listen_prob_scale: listen 概率缩放
         tts_temperature: TTS 温度
+        tts_repetition_penalty: TTS 重复惩罚
         chunk_ms: 每个 chunk 的毫秒数
         sample_rate: 音频采样率
     """
@@ -272,6 +273,11 @@ class DuplexConfig(BaseModel):
         ge=0.0,
         le=2.0,
         description="TTS 温度"
+    )
+    tts_repetition_penalty: float = Field(
+        1.10,
+        ge=1.0,
+        description="TTS 重复惩罚"
     )
     
     # 流参数
@@ -689,5 +695,4 @@ class DuplexOfflineOutput(BaseModel):
         default_factory=list, 
         description="每个 chunk 的结果"
     )
-
 

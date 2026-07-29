@@ -889,6 +889,20 @@ class DuplexView:
         ):
             if hasattr(duplex, attr):
                 setattr(duplex, attr, getattr(self.config, attr))
+
+        if hasattr(duplex, "tts_temperature"):
+            current_temperature = getattr(duplex, "tts_temperature")
+            temperature = float(self.config.tts_temperature)
+            if torch.is_tensor(current_temperature):
+                duplex.tts_temperature = torch.tensor(
+                    [temperature],
+                    dtype=current_temperature.dtype,
+                    device=current_temperature.device,
+                )
+            else:
+                duplex.tts_temperature = temperature
+        if hasattr(duplex, "tts_repetition_penalty"):
+            duplex.tts_repetition_penalty = float(self.config.tts_repetition_penalty)
     
     def prepare(
         self,
