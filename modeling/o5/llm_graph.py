@@ -25,6 +25,8 @@ import os
 import torch
 from transformers.cache_utils import StaticCache
 
+from .cache_limits import CacheLimitExceeded
+
 
 _NO_DIST_CALL = object()
 
@@ -275,23 +277,17 @@ class LLMGraphRunner:
         self._reset_local()
 
     def _warn_overflow(self, pos):
-        if not getattr(self, "_overflowed", False):
-            self._overflowed = True
-            print(f"[llm_graph] WARNING: LLM position {pos} >= max_cache_len {self.max_cache_len}; "
-                  f"clamping. A >{self.max_cache_len}-token session: reset sessions or raise max_cache_len "
-                  f"(the demo sliding_window does NOT trim a StaticCache). No crash; tail may degrade.",
-                  flush=True)
+        raise CacheLimitExceeded("llm", max(int(pos) - 1, 0), int(pos), self.max_cache_len)
 
     def _prefill_local(self, inputs_embeds, start_pos):
         """Variable-length prefill via the non-graph StaticCache path. inputs_embeds: [1,L,H]."""
         with torch.inference_mode():
             L = inputs_embeds.shape[1]
-            if L > self.max_cache_len:              # pathological single prefill > ceiling: keep last window
-                self._warn_overflow(L); inputs_embeds = inputs_embeds[:, -self.max_cache_len:, :]
-                L = self.max_cache_len; start_pos = 0
+            if L > self.max_cache_len:
+                self._warn_overflow(L)
             end = start_pos + L
             if end > self.max_cache_len:
-                self._warn_overflow(end); end = self.max_cache_len; start_pos = max(0, end - L)
+                self._warn_overflow(end)
             cpos = torch.arange(start_pos, start_pos + L, device=self.device)
             mask2d = torch.zeros(1, self.max_cache_len, dtype=torch.long, device=self.device)
             mask2d[:, :start_pos + L] = 1
@@ -315,7 +311,7 @@ class LLMGraphRunner:
         """Single-token decode at absolute position `pos` (== cache length before this token)."""
         with torch.inference_mode():
             if pos >= self.max_cache_len:
-                self._warn_overflow(pos); pos = self.max_cache_len - 1
+                self._warn_overflow(pos + 1)
             self._emb.copy_(inputs_embeds)
             self._pos.fill_(pos); self._cpos.fill_(pos)
             self._mask[..., pos] = 0.0

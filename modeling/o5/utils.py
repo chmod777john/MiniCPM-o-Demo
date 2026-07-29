@@ -30,6 +30,8 @@ import torch.nn.functional as F
 import torch.nn.utils.parametrize as P
 from transformers.cache_utils import DynamicCache
 
+from .cache_limits import CacheLimitExceeded
+
 logger = logging.getLogger(__name__)
 
 # === [PATCH] Qwen3.5MoE linear-attention chunked-prefill cache fix ===========
@@ -1518,6 +1520,21 @@ class StreamDecoder:
         # Tuple cache format
         return self.cache[0][0].shape[2]
 
+    def get_cache_limit(self) -> int:
+        """Return the configured LLM graph cache ceiling."""
+        raw_limit = os.environ.get("O5_LLM_CACHE")
+        if raw_limit not in (None, ""):
+            limit = int(raw_limit)
+        else:
+            config = getattr(self.m, "config", None)
+            if config is None:
+                model = getattr(self.m, "model", None)
+                config = getattr(model, "config", None)
+            limit = int(getattr(config, "max_position_embeddings", 8192))
+        if limit <= 0:
+            raise ValueError(f"O5_LLM_CACHE must be positive, got {limit}")
+        return limit
+
     def get_total_generated_tokens(self) -> int:
         return sum(len(u.get("generated_tokens", [])) for u in self._unit_history)
 
@@ -2277,7 +2294,7 @@ class StreamDecoder:
             self._llm_runner = LLMGraphRunner(
                 raw_llm.model,
                 raw_llm.lm_head,
-                max_cache_len=int(os.environ.get("O5_LLM_CACHE", "8192")),
+                max_cache_len=self.get_cache_limit(),
                 distributed=distributed,
             )
             raw_llm._shared_llm_graph_runner = self._llm_runner
@@ -2295,19 +2312,17 @@ class StreamDecoder:
 
         from .opt_flags import OPT as _OPT
         if bool(_OPT.get("llm_graph")):
+            current_cache_len = self.get_cache_length()
+            cache_limit = self.get_cache_limit()
+            if current_cache_len + L > cache_limit:
+                raise CacheLimitExceeded(
+                    "llm",
+                    current_cache_len,
+                    current_cache_len + L,
+                    cache_limit,
+                )
             _r = self.ensure_llm_graph_runner()
             _pos = self._static_pos
-            if _pos + L > _r.max_cache_len:
-                # Session exceeds the graph StaticCache ceiling. StaticLayer auto-advances its own write
-                # index (cumulative_length), so writing past max_cache_len device-asserts. Reset the session
-                # (context lost) to stay crash-safe. NOTE: the demo sliding_window does NOT help here -- it
-                # silently no-ops on a StaticCache (no .crop). For long sessions with llm_graph, options are:
-                # periodic session reset (bounds cache), raise max_cache_len (VRAM permitting), or disable
-                # llm_graph (DynamicCache path supports real cache trimming).
-                logger.warning("[llm_graph] session cache full (%d+%d > %d); resetting session (context lost). "
-                               "sliding_window does NOT trim a StaticCache; reset sessions or raise max_cache_len.",
-                               _pos, L, _r.max_cache_len)
-                _r.reset(); self._static_pos = 0; _pos = 0
             if L == 1:
                 _h = _r.decode(embeds.unsqueeze(0), _pos)
             else:

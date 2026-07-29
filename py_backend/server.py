@@ -38,6 +38,7 @@ from py_backend.chat_util import (
     parse_raw_messages,
     parse_worker_chat_request_message,
 )
+from modeling.o5.cache_limits import CacheLimitExceeded
 
 
 logger = logging.getLogger("backend_server")
@@ -400,28 +401,42 @@ class BackendProtocolSession:
             return
         raise RuntimeError(f"unsupported mode: {self.mode}")
 
-    async def close(self, *, reason: str = "client_closed", emit_event: bool = True) -> None:
+    async def close(
+        self,
+        *,
+        reason: str = "client_closed",
+        emit_event: bool = True,
+        diagnostic: Optional[Dict[str, Any]] = None,
+    ) -> None:
         if self.closed:
             return
         self.closed = True
-        await self._drain_finalize()
+        with suppress(Exception):
+            await self._drain_finalize()
 
         if self.mode == "full_duplex":
             if self._fc_runtime is not None:
-                await self._fc_runtime.close()
+                with suppress(Exception):
+                    await self._fc_runtime.close()
             else:
                 with suppress(Exception):
                     await asyncio.to_thread(self.backend.duplex_stop)
-                await self._drain_finalize()
-                await asyncio.to_thread(self.backend.duplex_cleanup)
-
+                with suppress(Exception):
+                    await self._drain_finalize()
+                with suppress(Exception):
+                    await asyncio.to_thread(self.backend.duplex_cleanup)
         if hasattr(self.backend, "set_trace_session_id"):
             with suppress(Exception):
                 await asyncio.to_thread(self.backend.set_trace_session_id, None)
 
         if emit_event:
             with suppress(Exception):
-                await self.send("session.closed", session_id=self.session_id, reason=reason)
+                await self.send(
+                    "session.closed",
+                    session_id=self.session_id,
+                    reason=reason,
+                    diagnostic=diagnostic,
+                )
         with suppress(Exception):
             await self.ws.close(code=1000, reason=reason)
         await self.state.forget(self.session_id)
@@ -985,6 +1000,20 @@ async def backend_ws(ws: WebSocket) -> None:
         else:
             with suppress(Exception):
                 await ws.close(code=1008, reason="resume_failed")
+    except CacheLimitExceeded as exc:
+        logger.warning(
+            "cache limit reached: session=%s cache=%s current=%s requested=%s limit=%s",
+            session.session_id if session is not None else None,
+            exc.cache_name,
+            exc.current_length,
+            exc.requested_length,
+            exc.limit,
+        )
+        if session is not None:
+            await session.close(reason="cache_limit", diagnostic=exc.as_dict())
+        else:
+            with suppress(Exception):
+                await ws.close(code=1000, reason="cache_limit")
     except Exception as exc:
         if session is not None:
             await session.fatal("backend_error", message=str(exc))
