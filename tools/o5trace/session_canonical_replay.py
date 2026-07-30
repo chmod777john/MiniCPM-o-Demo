@@ -277,9 +277,7 @@ def load_canonical_duplex(
     tmp_model_dir: Path,
     token2wav_dir: Path,
     device: str,
-    chunk_ms: int,
-    first_chunk_ms: int,
-    cnn_redundancy_ms: int,
+    duplex_kwargs: dict[str, Any],
     attn_implementation: str,
 ):
     canonical_root = canonical_root.resolve()
@@ -314,10 +312,7 @@ def load_canonical_duplex(
     try:
         duplex = model.as_duplex(
             device=device,
-            generate_audio=True,
-            chunk_ms=chunk_ms,
-            first_chunk_ms=first_chunk_ms,
-            cnn_redundancy_ms=cnn_redundancy_ms,
+            **duplex_kwargs,
         )
     finally:
         model.init_tts = original_init_tts
@@ -401,6 +396,24 @@ def main() -> int:
     if args.max_units > 0:
         unit_events = unit_events[: args.max_units]
 
+    duplex_kwargs = {
+        "generate_audio": bool(config_value(config, "generate_audio", True)),
+        "max_new_speak_tokens_per_chunk": int(config_value(config, "max_new_speak_tokens_per_chunk", 20)),
+        "text_repetition_penalty": float(config_value(config, "text_repetition_penalty", 1.05)),
+        "temperature": float(config_value(config, "temperature", 0.7)),
+        "top_k": int(config_value(config, "top_k", 100)),
+        "top_p": float(config_value(config, "top_p", 0.8)),
+        "text_repetition_window_size": int(config_value(config, "text_repetition_window_size", 512)),
+        "listen_prob_scale": float(config_value(config, "listen_prob_scale", 1.0)),
+        "force_listen_count": int(config_value(config, "force_listen_count", 0)),
+        "tts_temperature": float(config_value(config, "tts_temperature", 0.8)),
+        "tts_repetition_penalty": float(config_value(config, "tts_repetition_penalty", 1.05)),
+        "chunk_ms": chunk_ms,
+        "first_chunk_ms": args.first_chunk_ms,
+        "cnn_redundancy_ms": args.cnn_redundancy_ms,
+        "sample_rate": int(config_value(config, "sample_rate", INPUT_SAMPLE_RATE)),
+    }
+
     configure_seed(seed)
     if args.device.startswith("cuda"):
         torch.cuda.set_device(torch.device(args.device))
@@ -410,9 +423,7 @@ def main() -> int:
         tmp_model_dir=tmp_model_dir,
         token2wav_dir=token2wav_dir,
         device=args.device,
-        chunk_ms=chunk_ms,
-        first_chunk_ms=args.first_chunk_ms,
-        cnn_redundancy_ms=args.cnn_redundancy_ms,
+        duplex_kwargs=duplex_kwargs,
         attn_implementation=args.attn_implementation,
     )
     token_trace = install_token_trace(duplex, model) if args.trace_token2wav else None
@@ -494,6 +505,7 @@ def main() -> int:
         "replay_manifest": manifest or None,
         "resolved_duplex_config": config,
         "ref_audio_path": ref_audio_path,
+        "duplex_kwargs": duplex_kwargs,
         "generate_kwargs": generate_kwargs,
         "force_listen_count": force_listen_count,
         "tts_argmax": bool(tts_argmax),
