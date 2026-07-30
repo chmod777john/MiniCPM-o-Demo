@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import inspect
 import importlib
 import json
 import os
@@ -245,6 +246,7 @@ def install_token_trace(duplex: Any, model: Any) -> dict[str, Any]:
     }
 
     original_generate_waveform = duplex._generate_waveform_from_tokens
+    waveform_params = inspect.signature(original_generate_waveform).parameters
 
     def traced_generate_waveform(
         self,
@@ -261,13 +263,13 @@ def install_token_trace(duplex: Any, model: Any) -> dict[str, Any]:
             "force_flush": bool(force_flush),
             "defer_flush": bool(defer_flush),
         })
-        return original_generate_waveform(
-            new_tokens,
-            prompt_wav_path,
-            is_last_chunk=is_last_chunk,
-            force_flush=force_flush,
-            defer_flush=defer_flush,
-        )
+        kwargs = {
+            "is_last_chunk": is_last_chunk,
+            "force_flush": force_flush,
+        }
+        if "defer_flush" in waveform_params:
+            kwargs["defer_flush"] = defer_flush
+        return original_generate_waveform(new_tokens, prompt_wav_path, **kwargs)
 
     duplex._generate_waveform_from_tokens = types.MethodType(traced_generate_waveform, duplex)
 
