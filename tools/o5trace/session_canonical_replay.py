@@ -49,6 +49,11 @@ def sha_bytes(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+def config_value(config: dict[str, Any], name: str, default: Any) -> Any:
+    value = config.get(name)
+    return default if value is None else value
+
+
 def read_jsonl(path: Path) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     with path.open("r", encoding="utf-8") as f:
@@ -300,14 +305,23 @@ def load_canonical_duplex(
         torch_dtype=torch.bfloat16,
     )
     model.eval().to(device)
-    return model, model.as_duplex(
-        device=device,
-        generate_audio=True,
-        tts_model_dir=str(token2wav_dir),
-        chunk_ms=chunk_ms,
-        first_chunk_ms=first_chunk_ms,
-        cnn_redundancy_ms=cnn_redundancy_ms,
-    )
+    original_init_tts = model.init_tts
+
+    def init_tts_with_recorded_assets(model_dir=None, *args, **kwargs):
+        return original_init_tts(model_dir=model_dir or str(token2wav_dir), *args, **kwargs)
+
+    model.init_tts = init_tts_with_recorded_assets
+    try:
+        duplex = model.as_duplex(
+            device=device,
+            generate_audio=True,
+            chunk_ms=chunk_ms,
+            first_chunk_ms=first_chunk_ms,
+            cnn_redundancy_ms=cnn_redundancy_ms,
+        )
+    finally:
+        model.init_tts = original_init_tts
+    return model, duplex
 
 
 def generate_with_force_listen(duplex: Any, force_listen: bool, kwargs: dict[str, Any]) -> dict[str, Any]:
@@ -415,15 +429,15 @@ def main() -> int:
 
     generate_kwargs = {
         "prompt_wav_path": ref_audio_path,
-        "max_new_speak_tokens_per_chunk": int(config.get("max_new_speak_tokens_per_chunk", 20) or 20),
-        "decode_mode": str(config.get("decode_mode", "sampling") or "sampling"),
-        "temperature": float(config.get("temperature", 0.7) or 0.7),
-        "top_k": int(config.get("top_k", 20) or 20),
-        "top_p": float(config.get("top_p", 0.8) or 0.8),
-        "listen_prob_scale": float(config.get("listen_prob_scale", 1.0) or 1.0),
+        "max_new_speak_tokens_per_chunk": int(config_value(config, "max_new_speak_tokens_per_chunk", 20)),
+        "decode_mode": str(config_value(config, "decode_mode", "sampling")),
+        "temperature": float(config_value(config, "temperature", 0.7)),
+        "top_k": int(config_value(config, "top_k", 20)),
+        "top_p": float(config_value(config, "top_p", 0.8)),
+        "listen_prob_scale": float(config_value(config, "listen_prob_scale", 1.0)),
         "listen_top_k": config.get("listen_top_k"),
-        "text_repetition_penalty": float(config.get("text_repetition_penalty", 1.05) or 1.05),
-        "text_repetition_window_size": int(config.get("text_repetition_window_size", 512) or 512),
+        "text_repetition_penalty": float(config_value(config, "text_repetition_penalty", 1.05)),
+        "text_repetition_window_size": int(config_value(config, "text_repetition_window_size", 512)),
     }
     force_listen_count = int(config.get("force_listen_count", 0) or 0)
     tts_argmax = manifest_tts_argmax(manifest)
