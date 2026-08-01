@@ -2309,7 +2309,10 @@ class StreamDecoder:
             self._static_pos = _pos + L
             self.cache = _r.cache
             if return_logits:
-                return self.m.lm_head(_h[:, -1:])[:, -1], _h
+                logits = self.m.lm_head(_h[:, -1:])[:, -1]
+                # CUDA graph decode reuses the same output buffer on every replay.
+                hidden = _h.clone() if L == 1 else _h
+                return logits, hidden
             return
         if bool(_OPT.get("llm_static")):
             from transformers.cache_utils import StaticCache
