@@ -40,6 +40,7 @@ def _apply_safe_engine_env(args: argparse.Namespace) -> None:
     os.environ["O5_EXPERTS_IMPLEMENTATION"] = args.experts_implementation
     _set_env_flag("O5_LLM_GRAPH", args.llm_graph)
     _set_env_flag("O5_TTS_GRAPH", args.tts_graph)
+    _set_env_flag("O5_VOCODER_GRAPH", args.vocoder_graph)
     _set_env_flag("O5_TTS_FAST", args.tts_fast)
     _set_env_flag("O5_LMHEAD", args.lmhead)
     _set_env_flag("O5_FUSE_VISION_AUDIO", args.fuse_vision_audio)
@@ -187,6 +188,7 @@ def _engine_summary(args: argparse.Namespace) -> dict[str, Any]:
         "tts_fast": args.tts_fast,
         "lmhead": args.lmhead,
         "tts_graph": args.tts_graph,
+        "vocoder_graph": args.vocoder_graph,
         "fuse_vision_audio": args.fuse_vision_audio,
         "batch_vision_feed": args.batch_vision_feed,
         "llm_graph": args.llm_graph,
@@ -469,6 +471,7 @@ def main() -> int:
     parser.add_argument("--o5-llm-cache", type=int, default=32768)
     parser.add_argument("--llm-graph", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--tts-graph", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--vocoder-graph", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--tts-fast", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--lmhead", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--fuse-vision-audio", action=argparse.BooleanOptionalAction, default=True)
