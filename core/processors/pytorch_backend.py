@@ -121,19 +121,11 @@ class PyTorchBackend:
 
     @staticmethod
     def _seed_process(seed: int) -> None:
-        os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
-        os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
         random.seed(seed)
         np.random.seed(seed)
         torch.manual_seed(seed)
         if torch.cuda.is_available():
             torch.cuda.manual_seed_all(seed)
-        torch.backends.cuda.matmul.allow_tf32 = False
-        torch.backends.cudnn.allow_tf32 = False
-        torch.backends.cudnn.benchmark = False
-        torch.backends.cudnn.deterministic = True
-        if hasattr(torch, "set_float32_matmul_precision"):
-            torch.set_float32_matmul_precision("highest")
 
     @staticmethod
     def _token_meta(tokens: Any) -> Dict[str, Any]:
@@ -539,26 +531,6 @@ class PyTorchBackend:
 
     def seed_runtime(self, seed: int) -> None:
         self._seed_process(seed)
-
-        model = getattr(self.processor, "model", None) if self.processor is not None else None
-        audio_tokenizer = getattr(getattr(model, "tts", None), "audio_tokenizer", None)
-        flow = getattr(audio_tokenizer, "flow", None)
-        decoder = getattr(flow, "decoder", None)
-        rand_noise = getattr(decoder, "rand_noise", None)
-        if decoder is not None and torch.is_tensor(rand_noise):
-            devices = [rand_noise.device] if rand_noise.is_cuda else []
-            with torch.random.fork_rng(devices=devices, enabled=True):
-                torch.manual_seed(seed)
-                if torch.cuda.is_available():
-                    torch.cuda.manual_seed_all(seed)
-                rand_noise.copy_(torch.randn_like(rand_noise))
-            for obj in (decoder, getattr(decoder, "estimator", None)):
-                if obj is None:
-                    continue
-                for attr in ("cnn_cache_buffer", "att_cache_buffer"):
-                    buf = getattr(obj, attr, None)
-                    if torch.is_tensor(buf):
-                        buf.zero_()
 
     @staticmethod
     def _argmax_multinomial(input_tensor: torch.Tensor, num_samples: int, replacement: bool = False, *, generator=None, out=None):
