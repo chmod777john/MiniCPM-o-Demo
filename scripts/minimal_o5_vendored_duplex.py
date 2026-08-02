@@ -132,8 +132,8 @@ def main():
 
     duplex = MiniCPMODuplex.from_existing_model(
         model,
-        force_listen_count=3,
-        top_k=20,
+        force_listen_count=0,
+        top_k=100,
         n_timesteps=5,
     )
     duplex.prepare(
