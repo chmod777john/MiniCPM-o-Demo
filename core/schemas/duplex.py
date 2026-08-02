@@ -56,11 +56,11 @@ Listen/Speak 状态：
 
 **force_listen_count 的意义**：
 
-这是一个"启动保护期"，确保模型在开始时先听用户说完一段话，而不是立即开始回复。
+这是一个"启动保护期"，可以让模型在开始时先听用户说完一段话，而不是立即开始回复。
 
-- 默认值：3（即前 3 秒强制 listen）
+- 默认值：0
 - 设置为 0：模型立即自主判断
-- 真实场景中，我们不知道用户会说多长时间，所以这是一个固定的配置值
+- 设置为 N：前 N 次生成强制 listen
 
 **[CRITICAL] System Prompt 格式**：
 
@@ -89,7 +89,7 @@ task_input = DuplexOfflineInput(
     system_prompt="你是一个友好的助手。",
     user_audio_path="/path/to/user_audio.wav",
     ref_audio_path="/path/to/reference.wav",
-    config=DuplexConfig(force_listen_count=3)
+    config=DuplexConfig(force_listen_count=0)
 )
 
 # 2. 手动控制（更细粒度）
@@ -207,9 +207,9 @@ class DuplexConfig(BaseModel):
     
     # [CRITICAL] 启动保护期
     force_listen_count: int = Field(
-        3, 
+        0, 
         ge=0, 
-        description="强制 listen 的次数（固定配置，默认 3）"
+        description="强制 listen 的次数（默认 0，与 o46 canonical 对齐）"
     )
     
     # LLM 生成参数
@@ -229,7 +229,7 @@ class DuplexConfig(BaseModel):
         description="采样温度"
     )
     top_k: int = Field(
-        20, 
+        100, 
         ge=0, 
         description="Top-K 采样"
     )
@@ -555,7 +555,7 @@ class DuplexOfflineInput(BaseModel):
             system_prompt="你是一个友好的助手，请简短回复。",
             user_audio_path="/path/to/user_audio.wav",
             ref_audio_path="/path/to/reference.wav",
-            config=DuplexConfig(force_listen_count=3)
+            config=DuplexConfig(force_listen_count=0)
         )
         output = processor.offline_inference(task_input)
         ```
@@ -695,4 +695,3 @@ class DuplexOfflineOutput(BaseModel):
         default_factory=list, 
         description="每个 chunk 的结果"
     )
-

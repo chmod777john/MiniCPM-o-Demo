@@ -17,7 +17,7 @@ logger = logging.getLogger("deploy.modes")
 
 _DEFAULT_DUP = {
     "generate_audio": True, "ls_mode": "explicit", "max_new_speak_tokens_per_chunk": 20,
-    "temperature": 0.7, "top_k": 20, "top_p": 0.8, "force_listen_count": 3,
+    "temperature": 0.7, "top_k": 100, "top_p": 0.8, "force_listen_count": 0,
 }
 
 
