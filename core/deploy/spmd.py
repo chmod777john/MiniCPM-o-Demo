@@ -22,6 +22,8 @@ from __future__ import annotations
 import inspect
 from typing import Any
 
+from MiniCPMO45.cache_limits import CacheLimitExceeded
+
 
 class SpmdMirror:
     def __init__(self, model: Any, is_driver: bool, rank: int, world_size: int):
@@ -86,7 +88,14 @@ class SpmdMirror:
                 return
             if method == "noop":
                 continue
-            result = getattr(self.model, method)(*args, **kwargs)
+            try:
+                result = getattr(self.model, method)(*args, **kwargs)
+            except CacheLimitExceeded:
+                # The driver closes the session and mirrors duplex_stop and
+                # duplex_cleanup next. Keep this rank alive until those
+                # commands arrive; an uncaught exception here would make
+                # torchrun tear down the whole TP2 process group.
+                continue
             if inspect.isgenerator(result):
                 for _ in result:
                     pass

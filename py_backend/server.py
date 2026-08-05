@@ -143,6 +143,7 @@ def _runtime_env_snapshot() -> Dict[str, Any]:
         "O5_DEPLOY_MODE",
         "O5_BACKBONE_DIR",
         "O5_LLM_CACHE",
+        "O5_CACHE_CLOSE_MARGIN",
         "O5_LLM_GRAPH",
         "O5_TTS_GRAPH",
         "O5_TTS_FAST",
@@ -671,6 +672,16 @@ class BackendProtocolSession:
     async def _push_full_duplex(self, payload: Dict[str, Any]) -> None:
         async with self._op_lock:
             await self._wait_finalize()
+
+            # Stop a TP2 session before the next prefill can cross the static
+            # cache boundary. The guard runs on rank 0 before any mirrored
+            # model call, so rank 1 remains in its SPMD receive loop and can
+            # perform the normal stop/cleanup sequence.
+            cache_diagnostic = self._cache_limit_diagnostic()
+            if cache_diagnostic is not None:
+                await self.close(reason="cache_limit", diagnostic=cache_diagnostic)
+                return
+
             input_id = payload.get("input_id")
             audio_base64 = _extract_audio_base64(payload)
             if not audio_base64:
@@ -784,6 +795,39 @@ class BackendProtocolSession:
                 self._finalize_done.set()
 
         self._finalize_task = asyncio.create_task(_run())
+
+    def _cache_limit_diagnostic(self) -> Optional[Dict[str, Any]]:
+        """Return a terminal cache diagnostic before a TP2 prefill is mirrored.
+
+        The model-side guard is intentionally still kept as a last-resort
+        check. This driver-side margin prevents the normal request path from
+        entering a rank-divergent model call when only a small amount of
+        static cache remains.
+        """
+        if self.mode != "full_duplex" or not getattr(self.backend, "spmd_is_driver", False):
+            return None
+
+        metrics = self._safe_metrics()
+        current = int(metrics.get("kv_cache_length") or 0)
+        raw_limit = os.environ.get("O5_LLM_CACHE")
+        if raw_limit in (None, ""):
+            raw_limit = SERVER_CONFIG.get("llm_cache_len", 8192)
+        limit = int(raw_limit)
+        if limit <= 0:
+            return None
+
+        margin = int(os.environ.get("O5_CACHE_CLOSE_MARGIN", "512"))
+        margin = max(1, min(margin, limit))
+        if current < limit - margin:
+            return None
+
+        return {
+            "cache_name": "llm",
+            "current_length": current,
+            "requested_length": min(limit, current + margin),
+            "limit": limit,
+            "close_margin": margin,
+        }
 
     async def _drain_finalize(self) -> None:
         task = self._finalize_task
