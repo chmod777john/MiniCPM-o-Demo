@@ -46,8 +46,14 @@ export class SessionVideoRecorder {
 
         // Subtitle state
         this._subtitleEnabled = false;
-        /** @type {Array<{text: string, active: boolean}>} */
+        /**
+         * Burned-caption queue. Only the first item is rendered; completed
+         * items advance after a short minimum display time.
+         * @type {Array<{text: string, active: boolean, displayStartedAt?: number, visibleUntil?: number}>}
+         */
         this._subtitleMessages = [];
+        this._subtitleMaxQueue = 6;
+        this._subtitleMinDisplayMs = 200;
         this._subtitleHeight = 25;          // % of canvas height from bottom
         this._subtitleOpacityBottom = 0.9;
         this._subtitleOpacityTop = 0.15;
@@ -214,35 +220,48 @@ export class SessionVideoRecorder {
     }
 
     /**
-     * Update subtitle text for the current (active) turn.
-     * Creates a new message entry on first call after finalize/start.
-     * Subsequent calls update the same entry (streaming text).
+     * Update the current subtitle. Completed turns are queued briefly so a
+     * burst of subtitle events cannot overwrite every earlier turn before
+     * the canvas gets a frame to draw it.
      * @param {string} text
      */
     setSubtitleText(text) {
         if (!this._subtitleEnabled) return;
-        const msgs = this._subtitleMessages;
-        const last = msgs.length > 0 ? msgs[msgs.length - 1] : null;
+        if (!text) {
+            this._subtitleMessages = [];
+            return;
+        }
+
+        const last = this._subtitleMessages[this._subtitleMessages.length - 1];
         if (last && last.active) {
             last.text = text;
-        } else {
-            msgs.push({ text, active: true });
-            // Trim old messages to prevent unbounded growth (visual limit is height %)
-            while (msgs.length > 20) msgs.shift();
+            return;
         }
+
+        // Keep the currently visible item and discard only the oldest queued
+        // item when a burst exceeds the bound.
+        if (this._subtitleMessages.length >= this._subtitleMaxQueue) {
+            this._subtitleMessages.splice(this._subtitleMessages.length > 1 ? 1 : 0, 1);
+        }
+        this._subtitleMessages.push({ text, active: true });
     }
 
     /**
-     * Finalize current subtitle turn — text stays visible and gradually fades
-     * as new messages push it upward (like fullscreen chat overlay).
+     * Finalize the current subtitle turn. It remains visible for a short
+     * minimum interval, then the next queued turn is promoted.
      * Call from session.onSpeakEnd.
      */
     finalizeSubtitle() {
         if (!this._subtitleEnabled) return;
-        const msgs = this._subtitleMessages;
-        const last = msgs.length > 0 ? msgs[msgs.length - 1] : null;
+        const last = this._subtitleMessages[this._subtitleMessages.length - 1];
         if (last && last.active) {
             last.active = false;
+            if (last.displayStartedAt != null) {
+                last.visibleUntil = Math.max(
+                    last.visibleUntil || 0,
+                    performance.now() + this._subtitleMinDisplayMs,
+                );
+            }
         }
     }
 
@@ -440,9 +459,9 @@ export class SessionVideoRecorder {
     // ==================== Subtitle Rendering ====================
 
     /**
-     * Draw stacked subtitle messages from bottom to top with gradient opacity.
-     * Mimics fullscreen chat overlay: newest message at bottom (opaque),
-     * older messages pushed upward and fading toward transparent.
+     * Draw one subtitle at a time with a position-based opacity gradient.
+     * Completed turns advance through the bounded queue after their minimum
+     * display interval; subtitles are never visually stacked.
      *
      * @param {CanvasRenderingContext2D} ctx
      * @param {number} w - Canvas width
@@ -450,13 +469,27 @@ export class SessionVideoRecorder {
      * @param {number} fontSize
      */
     _drawSubtitleStack(ctx, w, h, fontSize) {
-        const msgs = this._subtitleMessages;
-        if (msgs.length === 0) return;
+        const now = performance.now();
+        let msg = null;
+        while (this._subtitleMessages.length > 0) {
+            const candidate = this._subtitleMessages[0];
+            if (candidate.displayStartedAt == null) {
+                candidate.displayStartedAt = now;
+                if (!candidate.active) {
+                    candidate.visibleUntil = now + this._subtitleMinDisplayMs;
+                }
+            }
+            if (candidate.active || now < candidate.visibleUntil) {
+                msg = candidate;
+                break;
+            }
+            this._subtitleMessages.shift();
+        }
+        if (!msg || !msg.text) return;
 
         const padding = Math.round(fontSize * 0.5);
         const lineHeight = Math.round(fontSize * 1.4);
         const maxTextWidth = w - padding * 6;
-        const msgGap = Math.round(fontSize * 0.35);
         const radius = Math.round(fontSize * 0.4);
         const maxBgWidth = Math.min(w - padding * 2, maxTextWidth + padding * 3);
 
@@ -464,28 +497,16 @@ export class SessionVideoRecorder {
         ctx.textAlign = 'center';
         ctx.textBaseline = 'top';
 
-        // Pre-compute each message's wrapped lines and block height
-        /** @type {Array<{lines: string[], blockH: number, msgIdx: number}>} */
-        const blocks = [];
-        for (let i = 0; i < msgs.length; i++) {
-            if (!msgs[i].text) continue;
-            const lines = this._wrapText(ctx, msgs[i].text, maxTextWidth);
-            blocks.push({
-                lines,
-                blockH: lines.length * lineHeight + padding * 2,
-                msgIdx: i,
-            });
-        }
-        if (blocks.length === 0) return;
-
-        // Draw from bottom to top, limited to subtitle area.
-        // Opacity is based on Y position (like CSS mask-image gradient):
-        //   bottom edge → opacityBottom,  ceiling → opacityTop
+        // Keep the newest lines that fit. A block that is taller than the
+        // subtitle area must still render; the old stack renderer skipped it.
         const bottomMargin = Math.round(fontSize * 0.6);
         const subtitleFloor = h - bottomMargin;
         const subtitleCeiling = h - Math.round(h * this._subtitleHeight / 100);
         const areaHeight = subtitleFloor - subtitleCeiling;
-        let curY = subtitleFloor;
+        const maxLines = Math.max(1, Math.floor((areaHeight - padding * 2) / lineHeight));
+        const lines = this._wrapText(ctx, msg.text, maxTextWidth).slice(-maxLines);
+        const blockH = lines.length * lineHeight + padding * 2;
+        const blockTop = subtitleFloor - blockH;
 
         /** Map a Y coordinate to opacity via linear gradient across the subtitle area. */
         const opacityAtY = (y) => {
@@ -496,32 +517,22 @@ export class SessionVideoRecorder {
                 + t * (this._subtitleOpacityTop - this._subtitleOpacityBottom);
         };
 
-        for (let bi = blocks.length - 1; bi >= 0; bi--) {
-            const block = blocks[bi];
-            const blockTop = curY - block.blockH;
+        const bgX = (w - maxBgWidth) / 2;
+        const textStartY = blockTop + padding;
 
-            // Don't draw if block extends above the subtitle area ceiling
-            if (blockTop < subtitleCeiling) break;
+        // Background pill — opacity based on block's vertical midpoint
+        const midY = blockTop + blockH / 2;
+        const bgOpacity = opacityAtY(midY);
+        ctx.fillStyle = `rgba(0, 0, 0, ${(0.55 * bgOpacity).toFixed(2)})`;
+        this._roundRect(ctx, bgX, blockTop, maxBgWidth, blockH, radius);
+        ctx.fill();
 
-            const bgX = (w - maxBgWidth) / 2;
-            const textStartY = blockTop + padding;
-
-            // Background pill — opacity based on block's vertical midpoint
-            const midY = blockTop + block.blockH / 2;
-            const bgOpacity = opacityAtY(midY);
-            ctx.fillStyle = `rgba(0, 0, 0, ${(0.55 * bgOpacity).toFixed(2)})`;
-            this._roundRect(ctx, bgX, blockTop, maxBgWidth, block.blockH, radius);
-            ctx.fill();
-
-            // Text lines — each line gets its own position-based opacity
-            for (let li = 0; li < block.lines.length; li++) {
-                const lineY = textStartY + li * lineHeight;
-                const lineOpacity = opacityAtY(lineY);
-                ctx.fillStyle = `rgba(255, 255, 255, ${lineOpacity.toFixed(2)})`;
-                ctx.fillText(block.lines[li], w / 2, lineY);
-            }
-
-            curY = blockTop - msgGap;
+        // Text lines — each line gets its own position-based opacity
+        for (let li = 0; li < lines.length; li++) {
+            const lineY = textStartY + li * lineHeight;
+            const lineOpacity = opacityAtY(lineY);
+            ctx.fillStyle = `rgba(255, 255, 255, ${lineOpacity.toFixed(2)})`;
+            ctx.fillText(lines[li], w / 2, lineY);
         }
     }
 
