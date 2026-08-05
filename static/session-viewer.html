@@ -72,6 +72,7 @@
         }
         .area-hd .sub { color: #bbb; font-weight: 400; font-size: 11px; }
         .area-sec video { width: 100%; border-radius: 8px; max-height: 384px; background: #000; }
+        .area-sec audio { width: 100%; }
 
         /* Shared audio ctrl */
         .audio-ctrl {
@@ -350,16 +351,20 @@
         const candidates = [
             { rel: 'frontend_replay.webm', type: 'video/webm' },
             { rel: 'frontend_replay.mp4', type: 'video/mp4' },
+            { rel: 'frontend_replay.wav', type: 'audio/wav' },
         ];
         let hit = null;
         for (const c of candidates) {
             if (await assetExists(c.rel)) { hit = c; break; }
         }
         if (!hit) return;
+        const mediaTag = hit.type.startsWith('audio/')
+            ? `<audio controls preload="metadata" src="${aUrl(hit.rel)}"></audio>`
+            : `<video controls playsinline preload="metadata" src="${aUrl(hit.rel)}" type="${hit.type}"></video>`;
         host.innerHTML = `
             <section class="area-sec">
                 <div class="area-hd">Frontend replay <span class="sub">${esc(hit.rel)}</span></div>
-                <video controls playsinline preload="metadata" src="${aUrl(hit.rel)}" type="${hit.type}"></video>
+                ${mediaTag}
             </section>`;
     }
 
@@ -411,7 +416,11 @@
 
             let label, body = '';
             if (type === 'session.init')      { label = 'session.init';  body = renderSessionInit(f.payload || {}); }
-            else if (type === 'session.created') { label = 'session.created'; body = `<code>${esc(f.session_id||'')}</code> <span class="ev-sub">${esc(f.mode||'')}</span>`; }
+            else if (type === 'session.created') {
+                label = 'session.created';
+                body = `<code>${esc(f.session_id||'')}</code> <span class="ev-sub">${esc(f.mode||'')}</span>`;
+                body += renderReplayManifest(f.replay_manifest);
+            }
             else if (type === 'session.closed')  { label = 'session.closed'; body = `<span class="ev-sub">${esc(f.reason||'')}</span>`; }
             else if (type === 'input.append') {
                 label = 'input ▲';
@@ -516,6 +525,45 @@
         rows.push(`<details class="init-detail"><summary>Payload JSON</summary>${miniJson(displayPayload(payload))}</details>`);
         return `<div class="init-summary">${rows.join('')}</div>`;
     }
+
+    function renderReplayManifest(manifest) {
+        if (!manifest || typeof manifest !== 'object') return '';
+        const resolved = manifest.resolved || {};
+        const runtime = manifest.runtime || {};
+        const server = runtime.server_config || {};
+        const env = runtime.env || {};
+        const rows = [];
+
+        const addRow = (key, value) => {
+            if (value === undefined || value === null || value === '') return;
+            const rendered = typeof value === 'object' ? JSON.stringify(value) : String(value);
+            rows.push(`<div class="init-row"><span class="init-key">${esc(key)}</span><span class="init-val">${esc(rendered)}</span></div>`);
+        };
+
+        addRow('model path', server.model_path);
+        addRow('checkpoint', server.pt_path);
+        addRow('backbone path', env.O5_BACKBONE_DIR || server.backbone_dir);
+        addRow('deployment', env.O5_DEPLOY_MODE || server.deployment_mode);
+        addRow('attention', env.O5_ATTN_IMPLEMENTATION || server.attn_implementation);
+        addRow('LLM cache', env.O5_LLM_CACHE || server.llm_cache_len);
+        addRow('seed', resolved.seed);
+        addRow('seed source', resolved.seed_source);
+        addRow('deterministic replay', resolved.deterministic_replay);
+        addRow('duplex config', resolved.duplex_config);
+
+        const o5Env = Object.fromEntries(
+            Object.entries(env).filter(([key]) => key.startsWith('O5_'))
+        );
+        if (Object.keys(o5Env).length) addRow('O5 environment', o5Env);
+        if (runtime.packages) addRow('packages', runtime.packages);
+
+        return `<details class="init-detail replay-manifest">
+            <summary>Replay manifest</summary>
+            <div class="init-summary">${rows.join('')}</div>
+            ${miniJson(displayPayload(manifest))}
+        </details>`;
+    }
+
     function summarizeMessages(messages) {
         try {
             return messages.map(m => {
