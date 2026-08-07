@@ -57,6 +57,14 @@ class TtsPolicy(str, Enum):
     MERGE_FROZEN = "merge-frozen"
 
 
+class PreparationStage(str, Enum):
+    """制备阶段边界（唯一主链路拆分用）。"""
+
+    ALL = "all"
+    DCP_TO_PT = "dcp_to_pt"
+    PT_TO_BACKBONE = "pt_to_backbone"
+
+
 @dataclass(frozen=True)
 class O5CheckpointPreparationRequest:
     """一次 O5 checkpoint 制备请求。"""
@@ -79,6 +87,7 @@ class O5CheckpointPreparationRequest:
     expected_backbone_key_count: int
     expected_backbone_shard_count: int
     keep_intermediate: bool
+    stage: str = PreparationStage.ALL.value
 
 
 @dataclass(frozen=True)
@@ -129,16 +138,19 @@ def prepare_o5_fc_checkpoint(
     *,
     resume: bool = False,
 ) -> O5CheckpointPreparationManifest:
-    """执行完整 O5 FC Demo checkpoint 制备流程。
+    """执行 O5 FC Demo checkpoint 制备流程。
 
     参数:
-        request: 已规范化为绝对路径的制备请求。
+        request: 已规范化为绝对路径的制备请求；``stage`` 可为
+            ``all`` / ``dcp_to_pt`` / ``pt_to_backbone``。
         resume: 是否允许从同一请求留下的完整阶段产物继续执行。
 
     返回:
         含最终 PT SHA256、词表行数、TTS tensor 数和 backbone 路径的 Manifest。
+        ``dcp_to_pt`` 阶段的 backbone 字段为占位 0 / 空目录说明。
     """
 
+    stage = PreparationStage(request.stage)
     _validate_request_inputs(request)
     output_dir = Path(request.output_dir)
     _initialize_output_directory(output_dir, request=request, resume=resume)
@@ -148,7 +160,7 @@ def prepare_o5_fc_checkpoint(
     merge_manifest = deploy_pt.with_suffix(deploy_pt.suffix + ".manifest.json")
     frozen_tts_merged = intermediate_pt.is_file() or merge_manifest.is_file()
 
-    if not deploy_pt.is_file():
+    if stage is not PreparationStage.PT_TO_BACKBONE and not deploy_pt.is_file():
         if not intermediate_pt.is_file():
             converted_pt = _convert_canonical_checkpoint(request)
             converted_inspection = _inspect_checkpoint(
@@ -177,6 +189,9 @@ def prepare_o5_fc_checkpoint(
             )
             frozen_tts_merged = True
 
+    if not deploy_pt.is_file():
+        raise FileNotFoundError(f"缺少 model.pt，无法继续 stage={stage.value}: {deploy_pt}")
+
     inspection = _inspect_checkpoint(
         deploy_pt,
         expected_rows=request.expected_rows,
@@ -184,6 +199,36 @@ def prepare_o5_fc_checkpoint(
         expected_tts_tensor_count=request.expected_tts_tensor_count,
         require_tts=True,
     )
+
+    kept_intermediate: str | None = None
+    if intermediate_pt.is_file():
+        if request.keep_intermediate or stage is PreparationStage.DCP_TO_PT:
+            kept_intermediate = str(intermediate_pt.resolve())
+        else:
+            intermediate_pt.unlink()
+
+    if stage is PreparationStage.DCP_TO_PT:
+        manifest = O5CheckpointPreparationManifest(
+            schema_version=1,
+            request=request,
+            deploy_pt=str(deploy_pt.resolve()),
+            deploy_pt_sha256=_sha256_file(deploy_pt),
+            deploy_pt_size_bytes=deploy_pt.stat().st_size,
+            backbone_dir="",
+            embedding_rows=inspection.embedding_rows,
+            lm_head_rows=inspection.lm_head_rows,
+            tensor_count=inspection.tensor_count,
+            tts_tensor_count=inspection.tts_tensor_count,
+            backbone_tensor_count=0,
+            backbone_shard_count=0,
+            backbone_embedding_rows=0,
+            backbone_lm_head_rows=0,
+            frozen_tts_merged=frozen_tts_merged,
+            intermediate_pt=kept_intermediate,
+        )
+        _write_json_atomic(output_dir / MANIFEST_FILENAME, asdict(manifest))
+        return manifest
+
     backbone_dir = _prepare_backbone(
         request=request,
         deploy_pt=deploy_pt,
@@ -197,12 +242,9 @@ def prepare_o5_fc_checkpoint(
         expected_shard_count=request.expected_backbone_shard_count,
     )
 
-    kept_intermediate: str | None = None
-    if intermediate_pt.is_file():
-        if request.keep_intermediate:
-            kept_intermediate = str(intermediate_pt.resolve())
-        else:
-            intermediate_pt.unlink()
+    if intermediate_pt.is_file() and not request.keep_intermediate:
+        intermediate_pt.unlink()
+        kept_intermediate = None
 
     manifest = O5CheckpointPreparationManifest(
         schema_version=1,
@@ -229,22 +271,32 @@ def prepare_o5_fc_checkpoint(
 def _validate_request_inputs(request: O5CheckpointPreparationRequest) -> None:
     """在执行昂贵转换前校验所有输入路径和策略组合。"""
 
-    _require_directory(Path(request.source_checkpoint_dir), "原始 DCP checkpoint")
-    _require_directory(Path(request.base_model_dir), "canonical base model")
-    _require_directory(Path(request.model_path), "O5 model_path")
-    converter = Path(request.converter_script)
-    if not converter.is_file():
-        raise FileNotFoundError(f"canonical converter 不存在: {converter}")
-    extractor = Path(request.backbone_extractor_script)
-    if not extractor.is_file():
-        raise FileNotFoundError(f"原始 O5 backbone extractor 不存在: {extractor}")
-    backbone_python = Path(request.backbone_python)
-    if not backbone_python.is_file():
-        raise FileNotFoundError(f"backbone Python 不存在: {backbone_python}")
-    _require_directory(
-        Path(request.backbone_pythonpath),
-        "backbone SDK PYTHONPATH",
-    )
+    stage = PreparationStage(request.stage)
+    if stage is not PreparationStage.PT_TO_BACKBONE:
+        _require_directory(Path(request.source_checkpoint_dir), "原始 DCP checkpoint")
+        converter = Path(request.converter_script)
+        if not converter.is_file():
+            raise FileNotFoundError(f"canonical converter 不存在: {converter}")
+        _require_directory(Path(request.base_model_dir), "canonical base model")
+    else:
+        deploy_pt = Path(request.output_dir) / "model.pt"
+        if not deploy_pt.is_file():
+            raise FileNotFoundError(
+                f"pt_to_backbone 需要已有 model.pt: {deploy_pt}"
+            )
+    # model_path / backbone 工具仅 pt_to_backbone|all 需要；dcp_to_pt 在 para 上不应依赖它们
+    if stage is not PreparationStage.DCP_TO_PT:
+        _require_directory(Path(request.model_path), "O5 model_path")
+        extractor = Path(request.backbone_extractor_script)
+        if not extractor.is_file():
+            raise FileNotFoundError(f"原始 O5 backbone extractor 不存在: {extractor}")
+        backbone_python = Path(request.backbone_python)
+        if not backbone_python.is_file():
+            raise FileNotFoundError(f"backbone Python 不存在: {backbone_python}")
+        _require_directory(
+            Path(request.backbone_pythonpath),
+            "backbone SDK PYTHONPATH",
+        )
     positive_fields = {
         "expected_rows": request.expected_rows,
         "expected_tensor_count": request.expected_tensor_count,
@@ -257,9 +309,14 @@ def _validate_request_inputs(request: O5CheckpointPreparationRequest) -> None:
             raise ValueError(f"{field_name} 必须大于 0")
     if request.mtp_layer < 0:
         raise ValueError("mtp_layer 不能小于 0")
-    if TtsPolicy(request.tts_policy) is TtsPolicy.MERGE_FROZEN:
+    policy = TtsPolicy(request.tts_policy)
+    if policy is TtsPolicy.MERGE_FROZEN:
         _require_frozen_tts_base(request)
-    elif request.frozen_tts_base_pt is not None:
+    elif (
+        policy is not TtsPolicy.CHECKPOINT_ONLY
+        and request.frozen_tts_base_pt is not None
+    ):
+        # checkpoint-only 不消费 frozen TTS；para 上也不应要求 70G clean-base 存在
         frozen_base = Path(request.frozen_tts_base_pt)
         if not frozen_base.is_file():
             raise FileNotFoundError(f"冻结 TTS base PT 不存在: {frozen_base}")
@@ -328,13 +385,37 @@ def _is_safe_resume_request_correction(
     }
     if not changed_fields:
         return True
+    has_model_pt = (output_dir / "model.pt").is_file()
+    has_backbone = (output_dir / "backbone").exists()
+    # model.pt 产出前：允许修正 para-first / checkpoint-only 相关字段
+    pre_pt_mutable = {
+        "stage",
+        "source_checkpoint_dir",
+        "frozen_tts_base_pt",
+        "base_model_dir",
+        "tts_policy",
+        "model_path",
+        "backbone_python",
+        "backbone_pythonpath",
+        "backbone_extractor_script",
+    }
+    if not has_model_pt and changed_fields <= pre_pt_mutable:
+        return True
+    # 主链路拆分：model.pt 已在后允许 dcp_to_pt → pt_to_backbone
+    #（stage / 源占位 / para stub vs 廊坊完整 base_model_dir）
+    post_pt_stage_split = {
+        "stage",
+        "source_checkpoint_dir",
+        "base_model_dir",
+    }
+    if has_model_pt and not has_backbone and changed_fields <= post_pt_stage_split:
+        return True
+    if changed_fields <= {"stage", "source_checkpoint_dir"}:
+        return has_model_pt
     if changed_fields == {"tts_policy"}:
-        return (
-            not (output_dir / "model.pt").exists()
-            and not (output_dir / "backbone").exists()
-        )
+        return not has_model_pt and not has_backbone
     if changed_fields == {"backbone_python"}:
-        return not (output_dir / "backbone").exists()
+        return not has_backbone
     return False
 
 
@@ -379,6 +460,8 @@ def _convert_canonical_checkpoint(
         request.dtype,
         "--mtp-layer",
         str(request.mtp_layer),
+        # para-first：源集群只需 config + rotary stub；完整 base 校验在廊坊侧资产上已证明过
+        "--skip-validate",
     ]
     _run_command(command, cwd=REPOSITORY_ROOT)
     if not temporary_pt.is_file():
@@ -820,8 +903,16 @@ def _executable_path(value: str | Path) -> str:
 def _build_request(args: argparse.Namespace) -> O5CheckpointPreparationRequest:
     """从已解析 CLI 参数构造稳定、可比对的请求对象。"""
 
+    stage = PreparationStage(args.stage)
+    if stage is not PreparationStage.PT_TO_BACKBONE and not args.source_checkpoint_dir:
+        raise ValueError("stage=dcp_to_pt/all 时必须提供 --source-checkpoint-dir")
+    source_dir = (
+        _absolute_path(args.source_checkpoint_dir)
+        if args.source_checkpoint_dir
+        else _absolute_path(args.output_dir)
+    )
     return O5CheckpointPreparationRequest(
-        source_checkpoint_dir=_absolute_path(args.source_checkpoint_dir),
+        source_checkpoint_dir=source_dir,
         output_dir=_absolute_path(args.output_dir),
         base_model_dir=_absolute_path(args.base_model_dir),
         model_path=_absolute_path(args.model_path),
@@ -831,9 +922,13 @@ def _build_request(args: argparse.Namespace) -> O5CheckpointPreparationRequest:
         backbone_pythonpath=_absolute_path(args.backbone_pythonpath),
         tts_policy=args.tts_policy,
         frozen_tts_base_pt=(
-            _absolute_path(args.frozen_tts_base_pt)
-            if args.frozen_tts_base_pt is not None
-            else None
+            None
+            if TtsPolicy(args.tts_policy) is TtsPolicy.CHECKPOINT_ONLY
+            else (
+                _absolute_path(args.frozen_tts_base_pt)
+                if args.frozen_tts_base_pt is not None
+                else None
+            )
         ),
         dtype=args.dtype,
         mtp_layer=args.mtp_layer,
@@ -843,6 +938,7 @@ def _build_request(args: argparse.Namespace) -> O5CheckpointPreparationRequest:
         expected_backbone_key_count=args.expected_backbone_key_count,
         expected_backbone_shard_count=args.expected_backbone_shard_count,
         keep_intermediate=args.keep_intermediate,
+        stage=stage.value,
     )
 
 
@@ -854,8 +950,18 @@ def main() -> int:
             "Prepare deployable SDK 0.0.5 O5 PT + TP2 backbone from Megatron DCP"
         )
     )
-    parser.add_argument("--source-checkpoint-dir", required=True)
+    parser.add_argument(
+        "--source-checkpoint-dir",
+        default=None,
+        help="Formal DCP iter 目录；stage=pt_to_backbone 时可省略",
+    )
     parser.add_argument("--output-dir", required=True)
+    parser.add_argument(
+        "--stage",
+        choices=[stage.value for stage in PreparationStage],
+        default=PreparationStage.ALL.value,
+        help="all=完整；dcp_to_pt=只产出 model.pt；pt_to_backbone=只抽 backbone",
+    )
     parser.add_argument("--base-model-dir", default=str(DEFAULT_BASE_MODEL))
     parser.add_argument("--model-path", default=str(DEFAULT_MODEL_PATH))
     parser.add_argument("--converter-script", default=str(DEFAULT_CONVERTER))

@@ -13,6 +13,8 @@ WORKTREE = os.environ["WORKTREE"]; sys.path.insert(0, WORKTREE); sys.path.insert
 MODEL_PATH = os.environ["MODEL_PATH"]
 PT_PATH = os.environ["PT_PATH"]
 OUT = os.environ.get("BACKBONE_DIR", "/user/weihongliang/wangkaiqi/o5_backbone_hf")
+# 0-GPU / CPU-only Job 没有 CUDA；若 config 默认 flash_attention_2，
+# transformers 会在 CPU 上直接 ImportError。抽取权重不需要真实 attention kernel。
 os.environ.setdefault("ATTN_IMPLEMENTATION", "sdpa")
 
 from transformers import AutoConfig
@@ -20,14 +22,30 @@ from accelerate import init_empty_weights
 
 def log(*a): print(*a, flush=True)
 
+def _force_attn_implementation(config: object, impl: str) -> None:
+    """强制顶层与嵌套 config 使用非 flash attention，兼容 CPU-only 抽取。"""
+    if config is None:
+        return
+    for attr in ("_attn_implementation", "_attn_implementation_internal"):
+        if hasattr(config, attr):
+            setattr(config, attr, impl)
+    if hasattr(config, "attn_implementation"):
+        try:
+            setattr(config, "attn_implementation", impl)
+        except Exception:
+            pass
+    for nest_name in ("llm_config", "text_config", "vision_config", "audio_config"):
+        _force_attn_implementation(getattr(config, nest_name, None), impl)
+
 def main():
     t0 = time.time()
+    attn_impl = os.environ["ATTN_IMPLEMENTATION"]
     cfg = AutoConfig.from_pretrained(MODEL_PATH, trust_remote_code=True)
-    cfg._attn_implementation = os.environ["ATTN_IMPLEMENTATION"]
+    _force_attn_implementation(cfg, attn_impl)
     cfg._name_or_path = MODEL_PATH; cfg.name_or_path = MODEL_PATH
     import minimal_o5_unified_model_duplex as probe
     MiniCPMO = probe.MiniCPMO
-    log("building MiniCPMO on meta ...")
+    log(f"building MiniCPMO on meta (attn={attn_impl}) ...")
     with init_empty_weights():
         model = MiniCPMO(cfg)
     log(f"loading full state_dict from {PT_PATH} ...")
