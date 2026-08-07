@@ -9,7 +9,7 @@
 
 ```text
 o5-no-fc-speedup-tp2
-HEAD: 129a65483a46ddaba13967a2a180ff29728606e3
+HEAD: 7180ecd40792d1bfe653393247b362c00da90d68
 ```
 
 `MODEL_PATH` 不要指向 Demo 根目录，而是指向模型代码和配置目录。按下面的方式获取指定分支：
