@@ -22,11 +22,19 @@ import types
 from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING
 
 import numpy as np
 import soundfile as sf
 import torch
 import torch.nn.functional as F
+
+from core.fc_duplex.system_prefill import (
+    FcEmbeddingResizeInfo,
+    FcModelPrepareResult,
+    build_fc_system_prefill_plan,
+    materialize_fc_system_embeddings,
+)
 
 from .modeling_minicpmo import gen_logits
 from .modeling_minicpmo import MiniCPMO as BaseMiniCPMO
@@ -35,6 +43,12 @@ from .processing_minicpmo import MiniCPMOProcessor
 from .utils import StreamDecoder
 from .utils import torch_clone_recursive
 from .utils import TTSSamplingParams
+
+if TYPE_CHECKING:
+    from minicpm_o5_sdk import O5SystemContent
+    from minicpm_o5_sdk.protocols.duplex.training_data.system import (
+        O5SystemAudioSegment,
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -428,17 +442,13 @@ class MiniCPMO(BaseMiniCPMO):
 
     def fc_duplex_prepare(
         self,
-        system_prompt: str,
-        tools=None,
-        ref_audio: Optional[np.ndarray] = None,
-        prompt_wav_path: Optional[str] = None,
-        generate_audio: Optional[bool] = None,
-    ) -> dict:
+        system_content: "O5SystemContent",
+        tts_prompt_audio_path: str | None,
+        generate_audio: bool | None,
+    ) -> FcModelPrepareResult:
         return self._require_fc_duplex().prepare(
-            system_prompt=system_prompt,
-            tools=tools,
-            ref_audio=ref_audio,
-            prompt_wav_path=prompt_wav_path,
+            system_content=system_content,
+            tts_prompt_audio_path=tts_prompt_audio_path,
             generate_audio=generate_audio,
         )
 
@@ -516,7 +526,7 @@ class FcDuplexCapability:
             [kwargs.get("tts_temperature", 0.8)], dtype=torch.float, device=device
         )
         self.tts_repetition_penalty = kwargs.get("tts_repetition_penalty", 1.05)
-        self.prompt_wav_path = None
+        self.tts_prompt_audio_path: str | None = None
 
         if not hasattr(model, "processor") or model.processor is None:
             model.processor = MiniCPMOProcessor.from_pretrained(
@@ -662,21 +672,6 @@ class FcDuplexCapability:
         except Exception:
             return tools
 
-    def _system_parts(self, system_prompt: str, tools=None, has_ref_audio=False):
-        prefix = [self.sid(self.K.IM_START), *self.encode_text(system_prompt or "")]
-        suffix = []
-        if has_ref_audio:
-            prefix.append(self.sid(self.K.AUDIO_START))
-            suffix.append(self.sid(self.K.AUDIO_END))
-        tools = self._normalize_tools(tools)
-        if tools:
-            block = self._serializer.render_tool_system_block(tools)
-            suffix.extend(self.encode_text(block.preamble))
-            suffix.extend(self.encode_text(block.definitions))
-            suffix.extend(self.encode_text(block.guidelines))
-        suffix.append(self.sid(self.K.IM_END))
-        return prefix, suffix
-
     def _event_ids(self, events) -> list:
         if not events:
             return []
@@ -703,11 +698,16 @@ class FcDuplexCapability:
         ids.append(self.sid(self.K.INPUT_EVENT_SLOT_END))
         return ids
 
-    def _resize_embeddings(self) -> dict:
+    def _resize_embeddings(self) -> FcEmbeddingResizeInfo:
         self._ensure_protocol()
         required = self.max_special_id + 1
         current = int(self.model.llm.get_input_embeddings().weight.shape[0])
-        info = {"old_vocab": current, "new_vocab": current, "resized": False, "need": required}
+        info: FcEmbeddingResizeInfo = {
+            "old_vocab": current,
+            "new_vocab": current,
+            "resized": False,
+            "need": required,
+        }
         if current < required:
             self.model.llm.resize_token_embeddings(required)
             new_size = int(self.model.llm.get_input_embeddings().weight.shape[0])
@@ -932,14 +932,16 @@ class FcDuplexCapability:
     def warm_prepare(
         self,
         *,
-        ref_audio: np.ndarray,
-        prompt_wav_path: str,
+        system_content: "O5SystemContent",
+        tts_prompt_audio_path: str | None,
+        generate_audio: bool | None,
     ) -> None:
         """在服务 ready 前执行一次完整 O5 FC prepare 热路径。
 
         参数:
-            ref_audio: 16kHz mono float32 reference waveform。
-            prompt_wav_path: 与 waveform 对应的参考音频路径。
+            system_content: SDK system 多模态语义内容。
+            tts_prompt_audio_path: Token2Wav 使用的提示音频路径。
+            generate_audio: 是否生成 spoken waveform；None 保留 capability 配置。
 
         返回:
             无返回值；APM、system LLM prefill 和 Token2Wav prompt cache 完成预热后，
@@ -947,11 +949,9 @@ class FcDuplexCapability:
         """
 
         self.prepare(
-            system_prompt="",
-            tools=None,
-            ref_audio=np.asarray(ref_audio, dtype=np.float32),
-            prompt_wav_path=prompt_wav_path,
-            generate_audio=True,
+            system_content=system_content,
+            tts_prompt_audio_path=tts_prompt_audio_path,
+            generate_audio=generate_audio,
         )
         self.cleanup()
 
@@ -982,10 +982,14 @@ class FcDuplexCapability:
         }
         if not self.generate_audio or (not results and not end_of_turn):
             return empty
-        if not self.prompt_wav_path:
-            raise ValueError("prompt_wav_path is required when generate_audio=True")
+        if not self.tts_prompt_audio_path:
+            raise ValueError(
+                "tts_prompt_audio_path is required when generate_audio=True"
+            )
         if not self.token2wav_initialized:
-            self.warm_token2wav(prompt_wav_path=self.prompt_wav_path)
+            self.warm_token2wav(
+                prompt_wav_path=self.tts_prompt_audio_path
+            )
         prep = time.time()
         condition = self._tts_condition(results)
         prep_cost = time.time() - prep
@@ -1016,12 +1020,14 @@ class FcDuplexCapability:
         while len(self.token2wav_buffer) >= chunk_size + self.pre_lookahead:
             pcm.append(self.model.tts.audio_tokenizer.stream(
                 self.token2wav_buffer[:chunk_size + self.pre_lookahead],
-                prompt_wav=self.prompt_wav_path,
+                prompt_wav=self.tts_prompt_audio_path,
             ))
             self.token2wav_buffer = self.token2wav_buffer[chunk_size:]
         if end_of_turn and self.token2wav_buffer:
             pcm.append(self.model.tts.audio_tokenizer.stream(
-                self.token2wav_buffer, prompt_wav=self.prompt_wav_path, last_chunk=True
+                self.token2wav_buffer,
+                prompt_wav=self.tts_prompt_audio_path,
+                last_chunk=True,
             ))
             self.token2wav_buffer = []
             self._reset_token2wav()
@@ -1036,36 +1042,67 @@ class FcDuplexCapability:
             "cost_token2wav": time.time() - wav_start,
         }
 
-    def prepare(self, system_prompt, tools=None, ref_audio=None, prompt_wav_path=None, generate_audio=None):
+    def _embed_system_audio(
+        self,
+        segment: "O5SystemAudioSegment",
+    ) -> torch.Tensor:
+        """加载并编码一个 SDK system audio segment。"""
+
+        waveform = segment.audio.get_tensor().detach().cpu().numpy()
+        data = self.processor.process_audio(
+            [np.asarray(waveform, dtype=np.float32)]
+        )
+        nested = self.model.get_audio_embedding(
+            data,
+            chunk_length=self.model.config.audio_chunk_length,
+        )
+        embedding_parts = [item for group in nested for item in group]
+        if not embedding_parts:
+            raise ValueError("system audio 未生成任何模型 embedding")
+        return torch.cat(embedding_parts, dim=0)
+
+    def prepare(
+        self,
+        system_content: "O5SystemContent",
+        tts_prompt_audio_path: str | None,
+        generate_audio: bool | None,
+    ) -> FcModelPrepareResult:
         self._prepare_sequence += 1
         resize_info = self._resize_embeddings()
         self._reset_streaming_state()
-        self._tools = self._normalize_tools(tools)
+        self._tools = list(system_content.tools)
         if generate_audio is not None:
             self.generate_audio = bool(generate_audio)
-        self.prompt_wav_path = prompt_wav_path
+        self.tts_prompt_audio_path = tts_prompt_audio_path
         self.model.init_streaming_processor()
         if self.generate_audio:
-            if not prompt_wav_path:
-                raise ValueError("prompt_wav_path is required when generate_audio=True")
-            self.warm_token2wav(prompt_wav_path=prompt_wav_path)
-        prefix, suffix = self._system_parts(system_prompt, self._tools, ref_audio is not None)
-        self._feed_ids(prefix)
-        if ref_audio is not None:
-            data = self.processor.process_audio([np.asarray(ref_audio, dtype=np.float32)])
-            nested = self.model.get_audio_embedding(
-                data, chunk_length=self.model.config.audio_chunk_length
+            if not self.tts_prompt_audio_path:
+                raise ValueError(
+                    "tts_prompt_audio_path is required when generate_audio=True"
+                )
+            self.warm_token2wav(
+                prompt_wav_path=self.tts_prompt_audio_path
             )
-            if nested:
-                self.decoder.feed(torch.cat([x for group in nested for x in group], dim=0))
-        self._feed_ids(suffix)
+        plan = build_fc_system_prefill_plan(
+            system=system_content,
+            tokenizer=self._sdk_tokenizer,
+            registry=self._registry,
+            tool_serializer=self._serializer,
+        )
+        system_embeddings = materialize_fc_system_embeddings(
+            plan=plan,
+            embed_token_ids=self.decoder.embed_tokens,
+            embed_audio=self._embed_system_audio,
+        )
+        self.output_ids.extend(plan.audit_token_ids)
+        self.decoder.feed(system_embeddings)
         return {
-            "prefill_ids": prefix + suffix,
+            "prefill_ids": plan.audit_token_ids,
             "resize_info": resize_info,
-            "output_render": self.render_token_stream(prefix + suffix),
+            "output_render": self.render_token_stream(plan.audit_token_ids),
             "generate_audio": self.generate_audio,
-            "prompt_wav_path": prompt_wav_path,
-            "has_ref_audio": ref_audio is not None,
+            "tts_prompt_audio_path": self.tts_prompt_audio_path,
+            "has_system_audio": plan.audio_segment_count > 0,
         }
 
     def streaming_prefill(

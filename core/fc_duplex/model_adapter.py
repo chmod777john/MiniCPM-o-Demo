@@ -8,6 +8,11 @@ from __future__ import annotations
 
 from typing import Any, Literal, Protocol, runtime_checkable
 
+from minicpm_o5_sdk import O5SystemContent
+from minicpm_o5_sdk.tokenizers.base import MiniCPMO5TokenizerAdapter
+
+from core.fc_duplex.system_prefill import FcModelPrepareResult
+
 
 @runtime_checkable
 class FcDuplexModelAdapter(Protocol):
@@ -19,15 +24,21 @@ class FcDuplexModelAdapter(Protocol):
     drops_unclassified_non_spoken_tokens: bool
 
     @property
-    def protocol_tokenizer(self) -> Any:
+    def protocol_tokenizer(self) -> MiniCPMO5TokenizerAdapter:
         """返回当前模型 target 对应的 SDK 0.0.5 tokenizer。"""
 
     @property
     def model_name(self) -> str:
         """返回只用于审计和 Resume identity 的模型名称。"""
 
-    def prepare(self, **kwargs: Any) -> dict[str, Any]:
-        """初始化一个 FC Duplex Session。"""
+    def prepare(
+        self,
+        *,
+        system_content: O5SystemContent,
+        tts_prompt_audio_path: str | None,
+        generate_audio: bool | None,
+    ) -> FcModelPrepareResult:
+        """按 v3 canonical contract 初始化一个 FC Duplex Session。"""
 
     def streaming_prefill(self, **kwargs: Any) -> dict[str, Any]:
         """把当前 Unit 输入和工具结果写入模型。"""
@@ -77,7 +88,7 @@ class _BasePassthroughFcDuplexModelAdapter:
         self._model = model
 
     @property
-    def protocol_tokenizer(self) -> Any:
+    def protocol_tokenizer(self) -> MiniCPMO5TokenizerAdapter:
         """返回模型 Capability 已绑定的 SDK tokenizer。"""
 
         capability = getattr(self._model, "fc_duplex", None)
@@ -108,10 +119,22 @@ class _BasePassthroughFcDuplexModelAdapter:
             or "unknown"
         )
 
-    def prepare(self, **kwargs: Any) -> dict[str, Any]:
-        """调用模型 FC prepare primitive。"""
+    def prepare(
+        self,
+        *,
+        system_content: O5SystemContent,
+        tts_prompt_audio_path: str | None,
+        generate_audio: bool | None,
+    ) -> FcModelPrepareResult:
+        """调用模型 FC v3 prepare primitive。"""
 
-        return dict(self._model.fc_duplex_prepare(**kwargs))
+        return dict(
+            self._model.fc_duplex_prepare(
+                system_content=system_content,
+                tts_prompt_audio_path=tts_prompt_audio_path,
+                generate_audio=generate_audio,
+            )
+        )
 
     def streaming_prefill(self, **kwargs: Any) -> dict[str, Any]:
         """调用模型 FC prefill primitive。"""

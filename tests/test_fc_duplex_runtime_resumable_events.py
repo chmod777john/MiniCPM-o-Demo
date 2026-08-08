@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 from typing import Any
+from typing import TypeAlias
 
 import pytest
 
@@ -24,6 +25,27 @@ from minicpm_o5_sdk import (
     load_builtin_tokenizer,
 )
 from py_backend.fc_duplex_runtime import FcDuplexSessionRuntime
+
+
+_ProductionFcDuplexSessionRuntime = FcDuplexSessionRuntime
+
+JsonValue: TypeAlias = (
+    str | int | float | bool | None | list["JsonValue"] | dict[str, "JsonValue"]
+)
+JsonObject: TypeAlias = dict[str, JsonValue]
+
+
+class FcDuplexSessionRuntime(_ProductionFcDuplexSessionRuntime):
+    """为调度单测补齐固定 v3 envelope，不提供生产兼容逻辑。"""
+
+    async def prepare(self, params: JsonObject) -> None:
+        payload: JsonObject = {
+            "protocol_version": "3",
+            "system": {"segments": [], "tools": []},
+            "generate_audio": False,
+            **params,
+        }
+        await super().prepare(payload)
 
 
 class _FakeRuntimeBackend:

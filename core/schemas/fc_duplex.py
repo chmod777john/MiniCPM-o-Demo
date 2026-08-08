@@ -8,7 +8,12 @@ execution logic.
 from enum import Enum
 from typing import Annotated, Any, Dict, List, Literal, Optional, Union
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+from core.fc_duplex.system_input import (
+    FcAudioPathInput,
+    FcSystemContentInput,
+)
 
 
 FcNonSpokenCloseReason = Literal["eos", "no_action", "budget_reached", "hold", "abort"]
@@ -179,13 +184,23 @@ class FcToolResponse(BaseModel):
 
 
 class FcDuplexPrepareRequest(BaseModel):
-    """Prepare an FC duplex session."""
+    """FC Semantic Realtime API v3 的唯一 prepare 输入。"""
 
-    system_prompt: str = Field("", description="System prompt text")
-    tools: Optional[List[Dict[str, Any]]] = Field(None, description="Tool definitions")
-    ref_audio_path: Optional[str] = Field(None, description="Reference audio path for FC TTS conditioning")
-    prompt_wav_path: Optional[str] = Field(None, description="Prompt wav path for Token2Wav streaming cache")
-    generate_audio: bool = Field(False, description="Whether to generate audio waveform from spoken text tokens")
+    model_config = ConfigDict(extra="forbid")
+
+    system: FcSystemContentInput
+    tts_prompt_audio: FcAudioPathInput | None = None
+    generate_audio: bool = False
+
+    @model_validator(mode="after")
+    def validate_tts_prompt_audio(self) -> "FcDuplexPrepareRequest":
+        """启用生成音频时强制显式提供 Token2Wav prompt。"""
+
+        if self.generate_audio and self.tts_prompt_audio is None:
+            raise ValueError(
+                "generate_audio=True 时必须显式提供 tts_prompt_audio"
+            )
+        return self
 
 
 class FcDuplexPrepareResult(BaseModel):
@@ -198,8 +213,14 @@ class FcDuplexPrepareResult(BaseModel):
     new_vocab_size: Optional[int] = Field(None, description="Vocabulary size after resize")
     required_vocab_size: Optional[int] = Field(None, description="Minimum vocabulary size required by FC special tokens")
     generate_audio: bool = Field(False, description="Whether TTS audio generation is enabled")
-    has_ref_audio: bool = Field(False, description="Whether reference audio was loaded and fed")
-    prompt_wav_path: Optional[str] = Field(None, description="Prompt wav path used by Token2Wav")
+    has_system_audio: bool = Field(
+        False,
+        description="Whether ordered system content contains at least one audio segment",
+    )
+    tts_prompt_audio_path: Optional[str] = Field(
+        None,
+        description="Independent TTS prompt audio path used by Token2Wav",
+    )
 
 
 class FcDuplexPrefillRequest(BaseModel):
@@ -393,16 +414,19 @@ class FcDuplexOutput(BaseModel):
 class FcDuplexOfflineInput(BaseModel):
     """Offline FC duplex input."""
 
-    system_prompt: str = Field("", description="System prompt text")
-    tools: Optional[List[Dict[str, Any]]] = Field(None, description="Tool definitions")
+    system: FcSystemContentInput = Field(
+        description="API v3 同构的有序 system segments 与嵌套工具定义",
+    )
+    tts_prompt_audio: FcAudioPathInput | None = Field(
+        None,
+        description="独立 Token2Wav 提示音频；generate_audio=True 时必须提供",
+    )
     user_audio_path: Optional[str] = Field(None, description="Input audio file path")
     audio_data: Optional[str] = Field(None, description="Base64 float32 PCM audio")
     unit_audio_chunks: Optional[List[Any]] = Field(
         None,
         description="Optional pre-scheduled per-unit float32 audio chunks; used by train-data arrangement scheduling",
     )
-    ref_audio_path: Optional[str] = Field(None, description="Reference audio path for FC TTS conditioning")
-    prompt_wav_path: Optional[str] = Field(None, description="Prompt wav path for Token2Wav streaming cache")
     generate_audio: bool = Field(False, description="Whether to generate audio waveform from spoken text tokens")
     image_paths: Optional[List[str]] = Field(None, description="Optional image path per unit")
     tool_responses_by_unit: Dict[int, List[FcToolResponse]] = Field(
@@ -426,6 +450,16 @@ class FcDuplexOfflineInput(BaseModel):
         description="Optional deterministic tool call ids for offline consistency tests",
     )
     config: FcDuplexConfig = Field(default_factory=FcDuplexConfig, description="Offline config")
+
+    @model_validator(mode="after")
+    def validate_tts_prompt_audio(self) -> "FcDuplexOfflineInput":
+        """Offline 路径与 Realtime v3 使用同一显式 TTS 输入规则。"""
+
+        if self.generate_audio and self.tts_prompt_audio is None:
+            raise ValueError(
+                "generate_audio=True 时必须显式提供 tts_prompt_audio"
+            )
+        return self
 
 
 class FcDuplexOfflineOutput(FcDuplexOutput):
@@ -472,11 +506,23 @@ class FcDuplexTrainDataRequest(BaseModel):
     config: FcDuplexConfig = Field(default_factory=FcDuplexConfig, description="Offline inference config")
     non_spoken_budget_per_unit: Optional[int] = Field(None, description="Override non-spoken budget per unit")
     generate_audio: bool = Field(False, description="Whether to generate and optionally save TTS audio")
-    ref_audio_path: Optional[str] = Field(None, description="Reference audio path; defaults to sample user audio")
-    prompt_wav_path: Optional[str] = Field(None, description="Token2Wav prompt path; defaults to ref_audio_path")
+    tts_prompt_audio: FcAudioPathInput | None = Field(
+        None,
+        description="独立 Token2Wav 提示音频；不从 system/user audio 隐式推断",
+    )
     output_artifact_dir: Optional[str] = Field(None, description="Directory to write source, streams, and audio artifacts")
     use_train_tool_call_ids: bool = Field(True, description="Use GT tool call ids for deterministic evaluation")
     inject_train_tool_responses: bool = Field(True, description="Inject GT tool responses after matching tool calls close")
+
+    @model_validator(mode="after")
+    def validate_tts_prompt_audio(self) -> "FcDuplexTrainDataRequest":
+        """TrainingData offline 路径禁止隐式猜测 TTS prompt。"""
+
+        if self.generate_audio and self.tts_prompt_audio is None:
+            raise ValueError(
+                "generate_audio=True 时必须显式提供 tts_prompt_audio"
+            )
+        return self
 
 
 class FcDuplexTrainDataResult(BaseModel):

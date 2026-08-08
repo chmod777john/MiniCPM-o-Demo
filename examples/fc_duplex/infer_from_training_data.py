@@ -54,14 +54,21 @@ from minicpm_o5_sdk.protocols.duplex import (
     assert_duplex_parse_roundtrip,
     build_user_audio_tensor_from_arrangement,
 )
+from minicpm_o5_sdk.protocols.duplex.training_data import O5SystemAudioSegment
 from pydantic import BaseModel, ConfigDict, Field
 
+from core.fc_duplex.system_input import (
+    FcAudioPathInput,
+    FcSystemAudioInput,
+    FcSystemContentInput,
+    FcSystemTextInput,
+)
 from core.fc_duplex_resume import build_fc_duplex_resume_plan
 
 
 JsonObject = dict[str, Any]
 DecodeTrack = Literal["spoken", "non_spoken"]
-PROTOCOL_VERSION = "fc-duplex-semantic-v2"
+PROTOCOL_VERSION = "3"
 AUDIO_SAMPLE_RATE = 16_000
 OUTPUT_AUDIO_SAMPLE_RATE = 24_000
 
@@ -535,18 +542,16 @@ def load_training_data_structure(
 
 def build_session_init_payload(
     *,
-    system_prompt: str,
-    tools: list[JsonObject],
+    system: FcSystemContentInput,
     unit_policy: O5UnitPolicy,
-    reference_audio_path: str | None,
+    tts_prompt_audio_path: str | None,
 ) -> JsonObject:
     """构造不包含评测信息的 FC Semantic API Session 初始化帧。
 
     参数:
-        system_prompt: TrainingData system 文本。
-        tools: TrainingData system 工具定义。
+        system: 保持 TrainingData segment 顺序和嵌套 tools 的 v3 system。
         unit_policy: TrainingData 显式 UnitPolicy。
-        reference_audio_path: 可选、服务端可读取的请求级参考音频路径。
+        tts_prompt_audio_path: 独立 TTS prompt；默认由调用方选择首段 system audio。
 
     返回:
         可直接发送的 ``session.init`` 帧。
@@ -557,8 +562,7 @@ def build_session_init_payload(
         "fc_duplex": True,
         "protocol_version": PROTOCOL_VERSION,
         "tokenizer_target": "o5",
-        "system_prompt": system_prompt,
-        "tools": tools,
+        "system": system.model_dump(mode="json"),
         "generate_audio": True,
         "unit_policy": unit_policy.model_dump(mode="json"),
         "config": {
@@ -567,9 +571,11 @@ def build_session_init_payload(
             "sample_rate": AUDIO_SAMPLE_RATE,
         },
     }
-    if reference_audio_path is not None:
-        payload["ref_audio_path"] = reference_audio_path
-        payload["prompt_wav_path"] = reference_audio_path
+    if tts_prompt_audio_path is not None:
+        payload["tts_prompt_audio"] = {
+            "source": "path",
+            "file_path": tts_prompt_audio_path,
+        }
     return {"type": "session.init", "payload": payload}
 
 
@@ -616,7 +622,7 @@ def build_api_inference_scenario(
             )
         unit_samples = audio_tensor.units
 
-    system_prompt, tools, reference_audio_path = _project_system(
+    system_input, tts_prompt_audio_path = _project_system(
         training_data.system,
         data_root=data_root,
     )
@@ -635,10 +641,9 @@ def build_api_inference_scenario(
         unit_policy=training_data.unit_policy,
         system=training_data.system,
         session_init=build_session_init_payload(
-            system_prompt=system_prompt,
-            tools=tools,
+            system=system_input,
             unit_policy=training_data.unit_policy,
-            reference_audio_path=reference_audio_path,
+            tts_prompt_audio_path=tts_prompt_audio_path,
         ),
         units=units,
         user_audio_samples=unit_samples.reshape(-1).numpy().copy(),
@@ -665,28 +670,36 @@ def _project_system(
     system: O5SystemContent | None,
     *,
     data_root: Path,
-) -> tuple[str, list[JsonObject], str | None]:
-    """把 TrainingData system 投影为 API 请求字段。"""
+) -> tuple[FcSystemContentInput, str | None]:
+    """把 SDK system 无损投影为 v3 wire system，并选取首段音频作为 TTS prompt。"""
 
     if system is None:
-        return "", [], None
-    text_parts: list[str] = []
-    reference_audio_path: str | None = None
+        return FcSystemContentInput(), None
+    segments: list[FcSystemTextInput | FcSystemAudioInput] = []
+    tts_prompt_audio_path: str | None = None
     for segment in system.segments:
         if isinstance(segment, O5SystemTextSegment):
-            text_parts.append(segment.text)
+            segments.append(FcSystemTextInput(text=segment.text))
             continue
+        if not isinstance(segment, O5SystemAudioSegment):
+            raise TypeError(f"不支持的 system segment: {type(segment).__name__}")
         file_path = segment.audio.file_path
         if file_path is None:
             raise ValueError("system reference audio 缺少 file_path")
-        reference_audio_path = str((data_root / file_path).resolve())
+        resolved_path = str((data_root / file_path).resolve())
+        segments.append(
+            FcSystemAudioInput(
+                audio=FcAudioPathInput(file_path=resolved_path)
+            )
+        )
+        if tts_prompt_audio_path is None:
+            tts_prompt_audio_path = resolved_path
     return (
-        "\n".join(text_parts),
-        [
-            tool.model_dump(mode="json")
-            for tool in system.tools
-        ],
-        reference_audio_path,
+        FcSystemContentInput(
+            segments=segments,
+            tools=list(system.tools),
+        ),
+        tts_prompt_audio_path,
     )
 
 

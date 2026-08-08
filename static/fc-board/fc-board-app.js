@@ -5,7 +5,7 @@ import { LiveMicProvider } from './live-mic-provider.js';
 import { AudioPlayer } from './audio-player.js';
 import { NsSegmentView } from './ns-segment-view.js';
 
-const DEFAULT_SYSTEM_PROMPT = `你是一个可以一边听用户说话、一边思考并调用工具的语音助手。用户让你把故事或描述中出现的动物、植物或具体物体放到画板上时，使用 display_object_on_board 工具。不要等用户完全讲完才思考；在你确认具体对象后，可以调用工具把对象放到画板。`;
+const DEFAULT_SYSTEM_TEXT = `你是一个可以一边听用户说话、一边思考并调用工具的语音助手。用户让你把故事或描述中出现的动物、植物或具体物体放到画板上时，使用 display_object_on_board 工具。不要等用户完全讲完才思考；在你确认具体对象后，可以调用工具把对象放到画板。`;
 
 const DISPLAY_OBJECT_TOOL = {
   type: 'function',
@@ -57,6 +57,7 @@ function rmsToDb(rms) {
 
 let micPeakDbSinceStart = MIC_METER_MIN_DB;
 let fcBoardDefaults = null;
+let systemSegments = [];
 let micLiveState = 'idle';
 let streamEventSeq = 0;
 const speechQueue = [];
@@ -96,8 +97,8 @@ const el = {
   kvMode: document.getElementById('kvMode'),
   kvCkpt: document.getElementById('kvCkpt'),
   kvTools: document.getElementById('kvTools'),
-  systemPrompt: document.getElementById('systemPrompt'),
-  refAudioPath: document.getElementById('refAudioPath'),
+  systemSegments: document.getElementById('systemSegments'),
+  ttsPromptAudioPath: document.getElementById('ttsPromptAudioPath'),
   nonSpokenScheduling: document.getElementById('nonSpokenScheduling'),
   checkpointProfileId: document.getElementById('checkpointProfileId'),
   nonSpokenBudgetWhileListening: document.getElementById('nonSpokenBudgetWhileListening'),
@@ -105,8 +106,11 @@ const el = {
   debugBudgetUsed: document.getElementById('debugBudgetUsed'),
   debugBudgetMax: document.getElementById('debugBudgetMax'),
   debugBudgetUpdated: document.getElementById('debugBudgetUpdated'),
-  resetSystemPrompt: document.getElementById('resetSystemPrompt'),
-  resetRefAudio: document.getElementById('resetRefAudio'),
+  addTextSegment: document.getElementById('addTextSegment'),
+  addAudioSegment: document.getElementById('addAudioSegment'),
+  resetSystemSegments: document.getElementById('resetSystemSegments'),
+  resetTtsPromptAudio: document.getElementById('resetTtsPromptAudio'),
+  useFirstSystemAudio: document.getElementById('useFirstSystemAudio'),
   debugToggle: document.getElementById('debugToggle'),
   debugDrawer: document.getElementById('debugDrawer'),
 };
@@ -130,12 +134,58 @@ function initPage() {
   loadFcBoardDefaults();
 }
 
-el.resetSystemPrompt?.addEventListener('click', () => {
-  el.systemPrompt.value = defaultSystemPrompt();
+el.addTextSegment?.addEventListener('click', () => {
+  systemSegments.push({ kind: 'text', text: '' });
+  renderSystemSegments();
 });
 
-el.resetRefAudio?.addEventListener('click', () => {
-  el.refAudioPath.value = defaultRefAudioPath();
+el.addAudioSegment?.addEventListener('click', () => {
+  systemSegments.push({ kind: 'audio', audio: { source: 'path', file_path: '' } });
+  renderSystemSegments();
+});
+
+el.resetSystemSegments?.addEventListener('click', () => {
+  systemSegments = cloneSystemSegments(defaultSystem().segments);
+  renderSystemSegments();
+});
+
+el.resetTtsPromptAudio?.addEventListener('click', () => {
+  el.ttsPromptAudioPath.value = defaultTtsPromptAudioPath();
+});
+
+el.useFirstSystemAudio?.addEventListener('click', () => {
+  const firstAudio = systemSegments.find((segment) => segment.kind === 'audio');
+  if (!firstAudio) {
+    setStatus('System has no audio segment');
+    return;
+  }
+  el.ttsPromptAudioPath.value = firstAudio.audio.file_path;
+});
+
+el.systemSegments?.addEventListener('input', (event) => {
+  const input = event.target.closest('[data-segment-value]');
+  if (!input) return;
+  const index = Number(input.dataset.segmentIndex);
+  const segment = systemSegments[index];
+  if (!segment) return;
+  if (segment.kind === 'text') segment.text = input.value;
+  else segment.audio.file_path = input.value;
+});
+
+el.systemSegments?.addEventListener('click', (event) => {
+  const button = event.target.closest('button[data-segment-action]');
+  if (!button) return;
+  const index = Number(button.dataset.segmentIndex);
+  const action = button.dataset.segmentAction;
+  if (!Number.isInteger(index) || index < 0 || index >= systemSegments.length) return;
+  if (action === 'remove') systemSegments.splice(index, 1);
+  if (action === 'up' && index > 0) {
+    [systemSegments[index - 1], systemSegments[index]] = [systemSegments[index], systemSegments[index - 1]];
+  }
+  if (action === 'down' && index < systemSegments.length - 1) {
+    [systemSegments[index + 1], systemSegments[index]] = [systemSegments[index], systemSegments[index + 1]];
+  }
+  renderSystemSegments();
 });
 
 el.debugToggle?.addEventListener('click', () => {
@@ -154,6 +204,13 @@ el.streamDialog?.addEventListener('click', (event) => {
 
 el.startMicLive.addEventListener('click', async () => {
   if (micLiveState !== 'idle' && micLiveState !== 'stopped' && micLiveState !== 'closed' && micLiveState !== 'error') return;
+  let sessionInitPayload;
+  try {
+    sessionInitPayload = buildSessionInitPayload();
+  } catch (err) {
+    setStatus(`Cannot start: ${err.message}`);
+    return;
+  }
   setMicLiveState('starting');
   clearViews();
   resetMicPeak();
@@ -164,7 +221,7 @@ el.startMicLive.addEventListener('click', async () => {
     console.warn('[AudioPlayer] init failed:', err);
   }
   try {
-    liveClient = await createRealtimeSession();
+    liveClient = await createRealtimeSession(sessionInitPayload);
     micProvider = createMicProvider(liveClient);
     await micProvider.start();
     setMicLiveState('live');
@@ -234,13 +291,20 @@ el.runFileReplay.addEventListener('click', async () => {
     setStatus('Please choose an audio file');
     return;
   }
+  let sessionInitPayload;
+  try {
+    sessionInitPayload = buildSessionInitPayload();
+  } catch (err) {
+    setStatus(`Cannot start: ${err.message}`);
+    return;
+  }
   clearViews();
   setStatus('Decoding file...');
   const chunks = await decodeFileToChunks(file, {
     padBeforeSec: Number(el.padBeforeSec.value || 0),
     padAfterSec: Number(el.padAfterSec.value || 2),
   });
-  const client = await createRealtimeSession();
+  const client = await createRealtimeSession(sessionInitPayload);
   setStatus(`Streaming ${chunks.length} chunks through /v1/realtime...`);
   el.userAudioPlayer.currentTime = 0;
   el.userAudioPlayer.play().catch(() => {});
@@ -256,9 +320,9 @@ el.runFileReplay.addEventListener('click', async () => {
   setStatus('File replay finished');
 });
 
-async function createRealtimeSession() {
+async function createRealtimeSession(payload = buildSessionInitPayload()) {
   const client = await createConnectedClient();
-  client.initSession(buildSessionInitPayload());
+  client.initSession(payload);
   return client;
 }
 
@@ -318,7 +382,13 @@ function createMicProvider(client) {
 }
 
 function buildSessionInitPayload() {
-  const refAudioPath = (el.refAudioPath?.value || '').trim();
+  const validatedSegments = systemSegments.map((segment, index) => (
+    validateSystemSegment(segment, index)
+  ));
+  const ttsPromptAudioPath = (el.ttsPromptAudioPath?.value || '').trim();
+  if (!ttsPromptAudioPath) {
+    throw new Error('TTS prompt audio path is required when generate_audio is true');
+  }
   const checkpointProfileId = (el.checkpointProfileId?.value || '').trim();
   if (!checkpointProfileId) throw new Error('Checkpoint Profile is not configured');
   const nonSpokenScheduling = ['quality', 'latency'].includes(el.nonSpokenScheduling?.value)
@@ -333,11 +403,18 @@ function buildSessionInitPayload() {
     'Speaking budget',
   );
   const payload = {
+    protocol_version: '3',
     mode: 'full_duplex',
     fc_duplex: true,
     checkpoint_profile_id: checkpointProfileId,
-    system_prompt: (el.systemPrompt?.value || '').trim() || defaultSystemPrompt(),
-    tools: defaultTools(),
+    system: {
+      segments: validatedSegments,
+      tools: validatedTools(),
+    },
+    tts_prompt_audio: {
+      source: 'path',
+      file_path: ttsPromptAudioPath,
+    },
     generate_audio: true,
     config: {
       runtime: 'fc_duplex',
@@ -350,7 +427,6 @@ function buildSessionInitPayload() {
       decode_mode: 'greedy',
     },
   };
-  if (refAudioPath) payload.ref_audio_path = refAudioPath;
   nsView.setBudgets(nonSpokenBudgetWhileListening, nonSpokenBudgetWhileSpeaking);
   return payload;
 }
@@ -371,8 +447,11 @@ async function loadFcBoardDefaults() {
 }
 
 function applyDefaults(defaults) {
-  if (el.systemPrompt) el.systemPrompt.value = defaults.default_system_prompt || DEFAULT_SYSTEM_PROMPT;
-  if (el.refAudioPath) el.refAudioPath.value = defaults.default_ref_audio_path || '';
+  systemSegments = cloneSystemSegments(defaultSystemFromDefaults(defaults).segments);
+  renderSystemSegments();
+  if (el.ttsPromptAudioPath) {
+    el.ttsPromptAudioPath.value = ttsPromptAudioPathFromDefaults(defaults);
+  }
   if (el.nonSpokenScheduling && ['quality', 'latency'].includes(defaults.non_spoken_scheduling)) {
     el.nonSpokenScheduling.value = defaults.non_spoken_scheduling;
   }
@@ -384,20 +463,101 @@ function applyDefaults(defaults) {
     el.nonSpokenBudgetWhileSpeaking.value = defaults.non_spoken_budget_while_speaking ?? '';
   }
   if (el.kvCkpt) el.kvCkpt.textContent = defaults.checkpoint_profile_id || 'No checkpoint profile';
-  if (el.kvTools) el.kvTools.textContent = defaultTools().map(tool => tool?.function?.name || tool?.name || 'tool').join(', ');
+  if (el.kvTools) el.kvTools.textContent = validatedTools().map(tool => tool?.function?.name || tool?.name || 'tool').join(', ');
 }
 
-function defaultSystemPrompt() {
-  return fcBoardDefaults?.default_system_prompt || DEFAULT_SYSTEM_PROMPT;
+function fallbackSystem() {
+  return {
+    segments: [{ kind: 'text', text: DEFAULT_SYSTEM_TEXT }],
+    tools: [DISPLAY_OBJECT_TOOL],
+  };
 }
 
-function defaultRefAudioPath() {
-  return fcBoardDefaults?.default_ref_audio_path || '';
+function defaultSystemFromDefaults(defaults) {
+  const system = defaults?.default_system;
+  if (!system || !Array.isArray(system.segments) || !Array.isArray(system.tools)) {
+    return fallbackSystem();
+  }
+  return system;
 }
 
-function defaultTools() {
-  const tools = fcBoardDefaults?.default_tools;
-  return Array.isArray(tools) && tools.length ? tools : [DISPLAY_OBJECT_TOOL];
+function defaultSystem() {
+  return defaultSystemFromDefaults(fcBoardDefaults);
+}
+
+function ttsPromptAudioPathFromDefaults(defaults) {
+  const audio = defaults?.default_tts_prompt_audio;
+  if (audio?.source !== 'path' || typeof audio.file_path !== 'string') return '';
+  return audio.file_path;
+}
+
+function defaultTtsPromptAudioPath() {
+  return ttsPromptAudioPathFromDefaults(fcBoardDefaults);
+}
+
+function validatedTools() {
+  const tools = defaultSystem().tools;
+  if (!Array.isArray(tools)) throw new Error('System tools must be an array');
+  return JSON.parse(JSON.stringify(tools));
+}
+
+function cloneSystemSegments(segments) {
+  if (!Array.isArray(segments)) return [];
+  return segments.map((segment, index) => validateSystemSegment(segment, index));
+}
+
+function validateSystemSegment(segment, index) {
+  if (!segment || typeof segment !== 'object' || Array.isArray(segment)) {
+    throw new Error(`System segment ${index + 1} must be an object`);
+  }
+  if (segment.kind === 'text') {
+    if (typeof segment.text !== 'string') {
+      throw new Error(`Text segment ${index + 1} must contain a string`);
+    }
+    return { kind: 'text', text: segment.text };
+  }
+  if (segment.kind === 'audio') {
+    if (
+      !segment.audio
+      || typeof segment.audio !== 'object'
+      || segment.audio.source !== 'path'
+      || typeof segment.audio.file_path !== 'string'
+      || !segment.audio.file_path.trim()
+    ) {
+      throw new Error(`Audio segment ${index + 1} requires a nonempty path source`);
+    }
+    return {
+      kind: 'audio',
+      audio: {
+        source: 'path',
+        file_path: segment.audio.file_path.trim(),
+      },
+    };
+  }
+  throw new Error(`System segment ${index + 1} has unsupported kind`);
+}
+
+function renderSystemSegments() {
+  if (!el.systemSegments) return;
+  el.systemSegments.innerHTML = systemSegments.map((segment, index) => {
+    const controls = `
+      <div class="segment-controls">
+        <button type="button" data-segment-action="up" data-segment-index="${index}" ${index === 0 ? 'disabled' : ''}>↑</button>
+        <button type="button" data-segment-action="down" data-segment-index="${index}" ${index === systemSegments.length - 1 ? 'disabled' : ''}>↓</button>
+        <button type="button" data-segment-action="remove" data-segment-index="${index}">Remove</button>
+      </div>`;
+    if (segment.kind === 'text') {
+      return `<article class="segment-item">
+        <div class="segment-head"><strong>${index + 1}. Text</strong>${controls}</div>
+        <textarea data-segment-value data-segment-index="${index}" rows="4" spellcheck="false">${escapeHtml(segment.text)}</textarea>
+      </article>`;
+    }
+    const filePath = segment?.audio?.file_path || '';
+    return `<article class="segment-item">
+      <div class="segment-head"><strong>${index + 1}. Audio path</strong>${controls}</div>
+      <input data-segment-value data-segment-index="${index}" type="text" spellcheck="false" value="${escapeHtml(filePath)}" placeholder="absolute path to audio" />
+    </article>`;
+  }).join('') || '<div class="segment-empty">No system segments. Add text or audio.</div>';
 }
 
 function applyApiEvent(event) {
@@ -944,9 +1104,11 @@ function summarizeStreamEvent(event) {
   if (type === 'session.init') {
     const payload = event.payload || {};
     return [
+      `protocol=${payload.protocol_version || '-'}`,
       `mode=${payload.mode || '-'}`,
       `fc_duplex=${Boolean(payload.fc_duplex)}`,
-      `tools=${(payload.tools || []).map((tool) => tool?.function?.name || '?').join(',') || '-'}`,
+      `segments=${Array.isArray(payload.system?.segments) ? payload.system.segments.length : 0}`,
+      `tools=${(payload.system?.tools || []).map((tool) => tool?.function?.name || '?').join(',') || '-'}`,
       `generate_audio=${Boolean(payload.generate_audio)}`,
     ].join(' · ');
   }

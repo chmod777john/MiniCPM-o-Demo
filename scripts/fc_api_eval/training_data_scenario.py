@@ -1,4 +1,4 @@
-"""把 SDK 0.0.5 TrainingData 投影为 Semantic API v2 确定性请求场景。
+"""把 SDK 0.0.5 TrainingData 投影为 Semantic API v3 确定性请求场景。
 
 该投影只消费 SDK public API：GT 来自 ``training_data.tokenize``，用户音频来自
 ``build_user_audio_tensor``；工具调用和 response 调度读取 arrangement 的离散 Unit
@@ -17,13 +17,21 @@ from minicpm_o5_sdk import (
     O5TokenizerID,
     O5ToolCallContent,
     O5ToolResponseEvent,
+    OpenAIToolDefinition,
 )
 from minicpm_o5_sdk.protocols.duplex import (
     O5DuplexArrangement,
     O5TokenProvenance,
     O5UserAudioTensor,
 )
+from minicpm_o5_sdk.protocols.duplex.training_data import O5SystemAudioSegment
 
+from core.fc_duplex.system_input import (
+    FcAudioPathInput,
+    FcSystemAudioInput,
+    FcSystemContentInput,
+    FcSystemTextInput,
+)
 from .models import (
     FcApiCheckpointProfile,
     FcApiDecodeSpan,
@@ -45,7 +53,7 @@ def build_training_data_scenario(
     profile: FcApiCheckpointProfile,
     data_root: Path,
 ) -> FcApiTrainingDataScenario:
-    """从 TrainingData 构造完整 Semantic API v2 请求与 GT。
+    """从 TrainingData 构造完整 Semantic API v3 请求与 GT。
 
     参数:
         training_data: 已加载媒体 loader 的 SDK TrainingData。
@@ -368,24 +376,33 @@ def _build_session_init(
 ) -> JsonObject:
     """构造保留完整 resolved UnitPolicy 的 session.init。"""
 
-    system_prompt_parts: list[str] = []
-    tools: list[JsonObject] = []
-    ref_audio_path: str | None = None
+    system_segments: list[FcSystemTextInput | FcSystemAudioInput] = []
+    tools: list[OpenAIToolDefinition] = []
+    tts_prompt_audio_path: str | None = None
     if training_data.system is not None:
-        tools = [
-            tool.model_dump(mode="json")
-            for tool in training_data.system.tools
-        ]
+        tools = list(training_data.system.tools)
         for segment in training_data.system.segments:
             if isinstance(segment, O5SystemTextSegment):
-                system_prompt_parts.append(segment.text)
+                system_segments.append(FcSystemTextInput(text=segment.text))
                 continue
+            if not isinstance(segment, O5SystemAudioSegment):
+                raise TypeError(
+                    "request_build_failed: unsupported system segment "
+                    f"{type(segment).__name__}"
+                )
             file_path = segment.audio.file_path
             if file_path is None:
                 raise ValueError(
                     "request_build_failed: system reference audio 缺少 file_path"
                 )
-            ref_audio_path = str((data_root / file_path).resolve())
+            resolved_path = str((data_root / file_path).resolve())
+            system_segments.append(
+                FcSystemAudioInput(
+                    audio=FcAudioPathInput(file_path=resolved_path)
+                )
+            )
+            if tts_prompt_audio_path is None:
+                tts_prompt_audio_path = resolved_path
 
     config: JsonObject = {
         "runtime": "fc_duplex",
@@ -397,12 +414,14 @@ def _build_session_init(
     payload: JsonObject = {
         "mode": "full_duplex",
         "fc_duplex": True,
-        "protocol_version": "fc-duplex-semantic-v2",
+        "protocol_version": "3",
         "checkpoint_profile_id": profile.profile_id,
         "model": profile.model,
         "tokenizer_target": profile.tokenizer_target,
-        "system_prompt": "\n".join(system_prompt_parts),
-        "tools": tools,
+        "system": FcSystemContentInput(
+            segments=system_segments,
+            tools=tools,
+        ).model_dump(mode="json"),
         "generate_audio": False,
         "evaluation": {
             "fixed_tool_call_ids": [
@@ -412,7 +431,9 @@ def _build_session_init(
         "unit_policy": unit_policy_json,
         "config": config,
     }
-    if ref_audio_path is not None:
-        payload["ref_audio_path"] = ref_audio_path
-        payload["prompt_wav_path"] = ref_audio_path
+    if tts_prompt_audio_path is not None:
+        payload["tts_prompt_audio"] = {
+            "source": "path",
+            "file_path": tts_prompt_audio_path,
+        }
     return {"type": "session.init", "payload": payload}

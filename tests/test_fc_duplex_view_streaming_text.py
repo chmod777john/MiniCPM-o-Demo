@@ -7,6 +7,8 @@ from typing import Any
 import pytest
 
 from core.fc_duplex.model_adapter import O45FcDuplexModelAdapter
+from core.fc_duplex.system_input import FcSystemContentInput
+from core.fc_duplex.system_prefill import FcModelPrepareResult
 from core.processors.unified import (
     FcDuplexView,
     FixedToolCallIdGenerator,
@@ -17,7 +19,11 @@ from core.schemas.fc_duplex import (
     FcNonSpokenGenerateRequest,
     FcSpokenGenerateRequest,
 )
-from minicpm_o5_sdk import O5TokenizerID, load_builtin_tokenizer
+from minicpm_o5_sdk import (
+    O5SystemContent,
+    O5TokenizerID,
+    load_builtin_tokenizer,
+)
 from py_backend.fc_duplex_runtime import FcDuplexSessionRuntime
 from core.processors.pytorch_backend import PyTorchBackend
 
@@ -37,8 +43,27 @@ class _FakeFcModel:
         self.non_spoken_results: list[dict[str, Any]] = []
         self.spoken_results: list[dict[str, Any]] = []
 
-    def fc_duplex_prepare(self, **_: Any) -> dict[str, Any]:
-        return {}
+    def fc_duplex_prepare(
+        self,
+        *,
+        system_content: O5SystemContent,
+        tts_prompt_audio_path: str | None,
+        generate_audio: bool | None,
+    ) -> FcModelPrepareResult:
+        del system_content
+        return {
+            "prefill_ids": [],
+            "resize_info": {
+                "old_vocab": 1,
+                "new_vocab": 1,
+                "resized": False,
+                "need": 1,
+            },
+            "output_render": "",
+            "generate_audio": bool(generate_audio),
+            "tts_prompt_audio_path": tts_prompt_audio_path,
+            "has_system_audio": False,
+        }
 
     def fc_duplex_streaming_non_spoken_generate(self, **_: Any) -> dict[str, Any]:
         return self.non_spoken_results.pop(0)
@@ -90,7 +115,7 @@ def test_view_uses_fixed_tool_call_ids_and_fails_when_exhausted() -> None:
     model = _FakeFcModel()
     view = FcDuplexView(O45FcDuplexModelAdapter(model))  # type: ignore[arg-type]
     view.prepare(
-        FcDuplexPrepareRequest(),
+        FcDuplexPrepareRequest(system=FcSystemContentInput()),
         tool_call_id_generator=FixedToolCallIdGenerator(["eval_call_001"]),
     )
 
@@ -110,7 +135,7 @@ def test_view_default_tool_call_id_generator_is_unchanged() -> None:
 
     model = _FakeFcModel()
     view = FcDuplexView(O45FcDuplexModelAdapter(model))  # type: ignore[arg-type]
-    view.prepare(FcDuplexPrepareRequest())
+    view.prepare(FcDuplexPrepareRequest(system=FcSystemContentInput()))
 
     call_id = view.tool_call_manager.register_tool_call(
         {"name": "get_weather", "arguments": {}}
@@ -128,6 +153,9 @@ def test_pytorch_backend_passes_fixed_ids_to_view_generator() -> None:
     backend.ref_audio_path = None
 
     backend.fc_duplex_prepare(
+        system=FcSystemContentInput(),
+        tts_prompt_audio=None,
+        generate_audio=False,
         fixed_tool_call_ids=["eval_call_001"],
     )
 
@@ -175,7 +203,7 @@ def test_non_spoken_text_delta_crosses_primitive_calls_without_replacement() -> 
         },
     ]
     view = FcDuplexView(O45FcDuplexModelAdapter(model))  # type: ignore[arg-type]
-    view.prepare(FcDuplexPrepareRequest())
+    view.prepare(FcDuplexPrepareRequest(system=FcSystemContentInput()))
 
     started = view.streaming_non_spoken_generate(FcNonSpokenGenerateRequest())
     pending = view.streaming_non_spoken_generate(FcNonSpokenGenerateRequest())
@@ -214,7 +242,7 @@ def test_spoken_stream_keeps_pending_text_across_units_until_turn_eos() -> None:
         },
     ]
     view = FcDuplexView(O45FcDuplexModelAdapter(model))  # type: ignore[arg-type]
-    view.prepare(FcDuplexPrepareRequest())
+    view.prepare(FcDuplexPrepareRequest(system=FcSystemContentInput()))
 
     first = view.streaming_spoken_generate(FcSpokenGenerateRequest())
     assert _step_kinds(first) == ["protocol", "text_pending"]
@@ -246,7 +274,7 @@ def test_view_marks_non_roundtrippable_safe_delta_as_non_resumable() -> None:
         }
     ]
     view = FcDuplexView(O45FcDuplexModelAdapter(model))  # type: ignore[arg-type]
-    view.prepare(FcDuplexPrepareRequest())
+    view.prepare(FcDuplexPrepareRequest(system=FcSystemContentInput()))
 
     result = view.streaming_spoken_generate(FcSpokenGenerateRequest())
 
@@ -280,7 +308,7 @@ def test_spoken_repeated_speak_across_units_reuses_turn_stream() -> None:
         },
     ]
     view = FcDuplexView(O45FcDuplexModelAdapter(model))  # type: ignore[arg-type]
-    view.prepare(FcDuplexPrepareRequest())
+    view.prepare(FcDuplexPrepareRequest(system=FcSystemContentInput()))
 
     first = view.streaming_spoken_generate(FcSpokenGenerateRequest())
     second = view.streaming_spoken_generate(FcSpokenGenerateRequest())
@@ -309,7 +337,7 @@ def test_spoken_listen_before_turn_eos_is_runtime_error() -> None:
         },
     ]
     view = FcDuplexView(O45FcDuplexModelAdapter(model))  # type: ignore[arg-type]
-    view.prepare(FcDuplexPrepareRequest())
+    view.prepare(FcDuplexPrepareRequest(system=FcSystemContentInput()))
     view.streaming_spoken_generate(FcSpokenGenerateRequest())
 
     with pytest.raises(RuntimeError, match="listen before spoken_turn_eos"):
@@ -331,7 +359,7 @@ def test_budget_reached_preserves_think_stream_for_direct_closer() -> None:
         },
     ]
     view = FcDuplexView(O45FcDuplexModelAdapter(model))  # type: ignore[arg-type]
-    view.prepare(FcDuplexPrepareRequest())
+    view.prepare(FcDuplexPrepareRequest(system=FcSystemContentInput()))
 
     first = view.streaming_non_spoken_generate(FcNonSpokenGenerateRequest())
     terminated = view.terminate_non_spoken_text_stream("budget_reached")
@@ -362,7 +390,7 @@ def test_pending_bpe_crosses_budget_without_warning_or_replacement() -> None:
         },
     ]
     view = FcDuplexView(O45FcDuplexModelAdapter(model))  # type: ignore[arg-type]
-    view.prepare(FcDuplexPrepareRequest())
+    view.prepare(FcDuplexPrepareRequest(system=FcSystemContentInput()))
     first = view.streaming_non_spoken_generate(FcNonSpokenGenerateRequest())
 
     terminated = view.terminate_non_spoken_text_stream("budget_reached")
@@ -389,7 +417,7 @@ def test_unclassified_non_spoken_token_is_warned_and_dropped_for_o5() -> None:
     adapter = O45FcDuplexModelAdapter(model)
     adapter.drops_unclassified_non_spoken_tokens = True
     view = FcDuplexView(adapter)
-    view.prepare(FcDuplexPrepareRequest())
+    view.prepare(FcDuplexPrepareRequest(system=FcSystemContentInput()))
 
     result = view.streaming_non_spoken_generate(
         FcNonSpokenGenerateRequest()
@@ -421,7 +449,7 @@ def test_pending_bpe_at_explicit_end_emits_warning_instead_of_runtime_error() ->
         },
     ]
     view = FcDuplexView(O45FcDuplexModelAdapter(model))  # type: ignore[arg-type]
-    view.prepare(FcDuplexPrepareRequest())
+    view.prepare(FcDuplexPrepareRequest(system=FcSystemContentInput()))
     view.streaming_non_spoken_generate(FcNonSpokenGenerateRequest())
 
     closed = view.streaming_non_spoken_generate(FcNonSpokenGenerateRequest())

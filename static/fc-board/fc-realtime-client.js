@@ -51,8 +51,8 @@ export class FcRealtimeClient {
       model: payload.model,
       tokenizer_target: payload.tokenizer_target,
       tokenizer_fingerprint: payload.tokenizer_fingerprint,
-      ref_audio_sha256: payload.ref_audio_sha256,
-      prompt_wav_sha256: payload.prompt_wav_sha256,
+      system_audio_sha256: payload.system_audio_sha256,
+      tts_prompt_audio_sha256: payload.tts_prompt_audio_sha256,
     };
     this._inputSeq = priorHistory.filter(
       (frame) => frame?.type === 'input.append',

@@ -12,6 +12,7 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from core.fc_duplex.system_input import FcAudioPathInput
 from core.processors import FcDuplexView, UnifiedProcessor
 from core.schemas.duplex import DuplexConfig
 from core.schemas.fc_duplex import FcDuplexConfig, FcDuplexTrainDataRequest
@@ -232,8 +233,7 @@ def run_one(
     extra_response_units: int,
     decode_mode: str,
     generate_audio: bool,
-    ref_audio_path: Optional[str],
-    prompt_wav_path: Optional[str],
+    tts_prompt_audio_path: Optional[str],
     use_train_tool_call_ids: bool,
     inject_train_tool_responses: bool,
     tool_response_schedule: str,
@@ -263,8 +263,11 @@ def run_one(
             config=FcDuplexConfig(**config_kwargs),
             non_spoken_budget_per_unit=budget,
             generate_audio=generate_audio,
-            ref_audio_path=ref_audio_path,
-            prompt_wav_path=prompt_wav_path,
+            tts_prompt_audio=(
+                FcAudioPathInput(file_path=tts_prompt_audio_path)
+                if tts_prompt_audio_path
+                else None
+            ),
             output_artifact_dir=str(sample_dir),
             use_train_tool_call_ids=use_train_tool_call_ids,
             inject_train_tool_responses=inject_train_tool_responses,
@@ -418,8 +421,7 @@ def evaluate_group(
                 extra_response_units=args.extra_response_units,
                 decode_mode=args.decode_mode,
                 generate_audio=generate_audio,
-                ref_audio_path=args.ref_audio_path,
-                prompt_wav_path=args.tts_prompt_path,
+                tts_prompt_audio_path=args.tts_prompt_path,
                 use_train_tool_call_ids=use_train_tool_call_ids,
                 inject_train_tool_responses=inject_train_tool_responses,
                 tool_response_schedule=tool_response_schedule,
@@ -494,14 +496,8 @@ def parse_args() -> argparse.Namespace:
             "('gt') or by runtime auto-delay after predicted tool calls ('auto')."
         ),
     )
-    parser.add_argument("--ref-audio-path", default=None)
     parser.add_argument("--tts-prompt-path", default=None)
     args = parser.parse_args()
-    if bool(args.ref_audio_path) != bool(args.tts_prompt_path):
-        parser.error(
-            "--ref-audio-path and --tts-prompt-path must be provided together "
-            "to enable TTS audio generation"
-        )
     if not args.pt_path:
         parser.error("--pt-path is required, or set O5_FC_EVAL_PT_PATH/PT_PATH")
     if args.gpu_num < 1:
@@ -534,7 +530,7 @@ def main() -> None:
             flush=True,
         )
 
-    generate_audio = bool(args.ref_audio_path and args.tts_prompt_path)
+    generate_audio = bool(args.tts_prompt_path)
     use_train_tool_call_ids = not args.free_tool_call_ids
     inject_train_tool_responses = not args.no_train_tool_responses
     print(f"[load] model={args.model_path}")

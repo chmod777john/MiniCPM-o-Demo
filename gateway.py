@@ -35,6 +35,18 @@ import uvicorn
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Request, UploadFile, File, Body
 from fastapi.responses import HTMLResponse, FileResponse, StreamingResponse, Response, RedirectResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, Field
+
+from core.fc_duplex.system_input import (
+    FcAudioPathInput,
+    FcSystemAudioInput,
+    FcSystemContentInput,
+    FcSystemTextInput,
+)
+from minicpm_o5_sdk import (
+    OpenAIFunctionDefinition,
+    OpenAIToolDefinition,
+)
 
 from gateway_modules.models import (
     GatewayWorkerStatus,
@@ -93,49 +105,102 @@ def _fc_board_tool_service():
     return _FC_BOARD_TOOL_SERVICE
 
 
-def _display_object_tool_default() -> Dict[str, Any]:
-    return {
-        "type": "function",
-        "function": {
-            "name": "display_object_on_board",
-            "description": (
+class FcBoardDefaults(BaseModel):
+    """Board 可编辑的 v3 system 与独立 TTS prompt 默认值。"""
+
+    default_system: FcSystemContentInput = Field(
+        default_factory=FcSystemContentInput
+    )
+    default_tts_prompt_audio: FcAudioPathInput | None = None
+
+
+def _display_object_tool_default() -> OpenAIToolDefinition:
+    """返回 Board 默认工具的 SDK 强类型定义。"""
+
+    return OpenAIToolDefinition(
+        function=OpenAIFunctionDefinition(
+            name="display_object_on_board",
+            description=(
                 "Display a named concrete object on the visual board so the user can see it. "
                 "Use only for concrete, visualizable objects mentioned in user speech."
             ),
-            "parameters": {
+            parameters={
                 "type": "object",
                 "properties": {"name": {"type": "string"}},
                 "required": ["name"],
             },
-        },
-    }
+        )
+    )
 
 
-def _extract_fc_board_defaults_from_case(case_path: str) -> Dict[str, Any]:
+def _extract_fc_board_defaults_from_case(case_path: str) -> FcBoardDefaults:
+    """从训练 case 提取 FC Board 使用的 Semantic Realtime API v3 默认值。
+
+    参数:
+        case_path: 训练 case JSON 文件路径。
+
+    返回:
+        包含有序 ``default_system`` 与独立
+        ``default_tts_prompt_audio`` 的前端默认值。
+    """
+
     with open(case_path, "r", encoding="utf-8") as fp:
         structure = json.load(fp)
 
     data_root = os.path.dirname(case_path)
-    system_prompt_parts: List[str] = []
-    ref_audio_path: Optional[str] = None
+    system_segments: list[FcSystemTextInput | FcSystemAudioInput] = []
+    first_system_audio: FcAudioPathInput | None = None
     for segment in (structure.get("system", {}) or {}).get("segments", []) or []:
         kind = segment.get("kind")
         if kind == "text":
-            text = segment.get("text") or ""
-            if text:
-                system_prompt_parts.append(text)
+            text = segment.get("text")
+            if isinstance(text, str):
+                system_segments.append(FcSystemTextInput(text=text))
         elif kind == "audio":
             file_path = (segment.get("audio") or {}).get("file_path")
-            if file_path:
-                candidate = os.path.realpath(os.path.join(data_root, file_path))
-                if os.path.exists(candidate):
-                    ref_audio_path = candidate
+            if isinstance(file_path, str) and file_path:
+                audio_input = FcAudioPathInput(
+                    file_path=os.path.realpath(
+                        os.path.join(data_root, file_path)
+                    )
+                )
+                system_segments.append(FcSystemAudioInput(audio=audio_input))
+                if first_system_audio is None:
+                    first_system_audio = audio_input
 
-    return {
-        "system_prompt": "\n".join(system_prompt_parts) or None,
-        "ref_audio_path": ref_audio_path,
-        "tools": structure.get("tools") or [_display_object_tool_default()],
-    }
+    source_system = structure.get("system", {}) or {}
+    tools = source_system.get("tools")
+    if not isinstance(tools, list) or not tools:
+        tools = structure.get("tools")
+    if not isinstance(tools, list) or not tools:
+        typed_tools = [_display_object_tool_default()]
+    else:
+        typed_tools = [
+            OpenAIToolDefinition.model_validate(tool)
+            for tool in tools
+        ]
+
+    source_tts_prompt_audio = structure.get("tts_prompt_audio")
+    tts_file_path = (
+        source_tts_prompt_audio.get("file_path")
+        if isinstance(source_tts_prompt_audio, dict)
+        else None
+    )
+    default_tts_prompt_audio: FcAudioPathInput | None = None
+    if isinstance(tts_file_path, str) and tts_file_path:
+        default_tts_prompt_audio = FcAudioPathInput(
+            file_path=os.path.realpath(os.path.join(data_root, tts_file_path))
+        )
+    elif first_system_audio is not None:
+        default_tts_prompt_audio = first_system_audio
+
+    return FcBoardDefaults(
+        default_system=FcSystemContentInput(
+            segments=system_segments,
+            tools=typed_tools,
+        ),
+        default_tts_prompt_audio=default_tts_prompt_audio,
+    )
 
 
 def _fc_board_case_folder() -> Optional[str]:
@@ -1497,11 +1562,11 @@ async def fc_board_defaults():
     """Training-aligned defaults for the FC board API demo."""
     case_folder = _fc_board_case_folder()
     default_case_path = None
-    defaults: Dict[str, Any] = {
-        "system_prompt": None,
-        "ref_audio_path": None,
-        "tools": [_display_object_tool_default()],
-    }
+    defaults = FcBoardDefaults(
+        default_system=FcSystemContentInput(
+            tools=[_display_object_tool_default()]
+        )
+    )
     if case_folder:
         cases = sorted(
             os.path.join(case_folder, name)
@@ -1511,7 +1576,7 @@ async def fc_board_defaults():
         if cases:
             default_case_path = cases[0]
             try:
-                defaults.update(_extract_fc_board_defaults_from_case(default_case_path))
+                defaults = _extract_fc_board_defaults_from_case(default_case_path)
             except Exception as exc:  # noqa: BLE001
                 logger.warning(
                     "[fc_board_defaults] failed to extract defaults from %s: %s: %s",
@@ -1522,9 +1587,12 @@ async def fc_board_defaults():
     return {
         "case_folder": case_folder,
         "default_case_path": default_case_path,
-        "default_system_prompt": defaults.get("system_prompt"),
-        "default_ref_audio_path": defaults.get("ref_audio_path"),
-        "default_tools": defaults.get("tools") or [_display_object_tool_default()],
+        "default_system": defaults.default_system.model_dump(mode="json"),
+        "default_tts_prompt_audio": (
+            defaults.default_tts_prompt_audio.model_dump(mode="json")
+            if defaults.default_tts_prompt_audio is not None
+            else None
+        ),
         "checkpoint_profile_id": os.environ.get("CHECKPOINT_PROFILE_ID"),
         "non_spoken_scheduling": os.environ.get(
             "FC_DUPLEX_NON_SPOKEN_SCHEDULING"

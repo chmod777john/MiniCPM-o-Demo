@@ -197,34 +197,36 @@ def test_training_data_loader_requires_explicit_o5_target(monkeypatch: Any) -> N
 
 
 def test_processor_warms_full_o5_fc_prepare_path_before_returning_ready(
-    monkeypatch: Any,
+    tmp_path: Path,
 ) -> None:
     """配置 reference audio 时，Processor ready 前必须完成 APM/LLM/TTS 全路径预热。"""
 
-    calls: list[tuple[np.ndarray, str]] = []
+    import soundfile as sf
+
+    ref_path = tmp_path / "ref.wav"
+    sf.write(ref_path, np.zeros(16_000, dtype=np.float32), 16_000)
+    calls: list[tuple[object, str | None, bool | None]] = []
     processor = UnifiedProcessor.__new__(UnifiedProcessor)
     processor._is_initialized = False
     processor.fc_model_family = "o5"
     processor.preload_both_tts = True
-    processor.ref_audio_path = "/voices/ref.wav"
+    processor.ref_audio_path = str(ref_path)
     processor.model = SimpleNamespace(
         fc_duplex=SimpleNamespace(
-            warm_prepare=lambda *, ref_audio, prompt_wav_path: calls.append(
-                (ref_audio, prompt_wav_path)
+            warm_prepare=lambda *, system_content, tts_prompt_audio_path, generate_audio: calls.append(
+                (system_content, tts_prompt_audio_path, generate_audio)
             )
         )
-    )
-    monkeypatch.setattr(
-        "librosa.load",
-        lambda _path, sr, mono: (np.zeros(sr, dtype=np.float32), sr),
     )
 
     processor._warm_fc_token2wav_if_configured()
 
     assert len(calls) == 1
-    assert calls[0][0].shape == (16000,)
-    assert calls[0][0].dtype == np.float32
-    assert calls[0][1] == "/voices/ref.wav"
+    system_content, tts_prompt_audio_path, generate_audio = calls[0]
+    assert len(system_content.segments) == 1
+    assert system_content.segments[0].audio.get_tensor().shape == (16_000,)
+    assert tts_prompt_audio_path == str(ref_path)
+    assert generate_audio is True
 
 
 def test_processor_startup_warm_can_be_disabled_for_cold_equivalence_probe(

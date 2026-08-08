@@ -100,6 +100,9 @@ async def test_runtime_emits_minimal_semantic_v2_events_only() -> None:
     )
     await runtime.prepare(
         {
+            "protocol_version": "3",
+            "system": {"segments": [], "tools": []},
+            "generate_audio": False,
             "checkpoint_profile_id": "profile_test",
             "config": {
                 "non_spoken_scheduling": "quality",
@@ -182,7 +185,7 @@ def test_semantic_v2_resume_rejects_missing_non_spoken_end() -> None:
 
     with pytest.raises(Exception, match="non_spoken.end"):
         build_fc_duplex_resume_plan(
-            protocol_version="fc-duplex-semantic-v2",
+            protocol_version="3",
             model="minicpm-o-4.5",
             tokenizer_target="o45_fc",
             tokenizer_fingerprint={
@@ -229,7 +232,7 @@ def test_semantic_v2_resume_rejects_duplicate_non_spoken_end() -> None:
 
     with pytest.raises(Exception, match="重复 non_spoken.end"):
         build_fc_duplex_resume_plan(
-            protocol_version="fc-duplex-semantic-v2",
+            protocol_version="3",
             model="minicpm-o-4.5",
             tokenizer_target="o45_fc",
             tokenizer_fingerprint={
@@ -310,7 +313,7 @@ def test_semantic_v2_history_replays_think_stream_without_ids() -> None:
     ]
 
     plan = build_fc_duplex_resume_plan(
-        protocol_version="fc-duplex-semantic-v2",
+        protocol_version="3",
         model="minicpm-o-4.5",
         tokenizer_target="o45_fc",
         tokenizer_fingerprint=fingerprint,
@@ -318,7 +321,7 @@ def test_semantic_v2_history_replays_think_stream_without_ids() -> None:
         history=history,
     )
 
-    assert plan.protocol_version == "fc-duplex-semantic-v2"
+    assert plan.protocol_version == "3"
     assert text_ids[0] in plan.units[0].non_spoken_token_ids
 
 
@@ -399,7 +402,7 @@ def test_semantic_v2_pending_text_crosses_budget_boundary() -> None:
     ]
 
     plan = build_fc_duplex_resume_plan(
-        protocol_version="fc-duplex-semantic-v2",
+        protocol_version="3",
         model="minicpm-o-4.5",
         tokenizer_target="o45_fc",
         tokenizer_fingerprint={
@@ -497,7 +500,7 @@ def test_semantic_v2_think_can_close_immediately_after_budget() -> None:
     ]
 
     plan = build_fc_duplex_resume_plan(
-        protocol_version="fc-duplex-semantic-v2",
+        protocol_version="3",
         model="minicpm-o-4.5",
         tokenizer_target="o45_fc",
         tokenizer_fingerprint={
@@ -628,7 +631,7 @@ def test_semantic_v2_replays_completed_tool_result_by_unit_marker() -> None:
     ]
 
     plan = build_fc_duplex_resume_plan(
-        protocol_version="fc-duplex-semantic-v2",
+        protocol_version="3",
         model="minicpm-o-4.5",
         tokenizer_target="o45_fc",
         tokenizer_fingerprint=fingerprint,
@@ -789,7 +792,7 @@ def test_semantic_v2_spoken_pending_crosses_unit_slot_end() -> None:
     ]
 
     plan = build_fc_duplex_resume_plan(
-        protocol_version="fc-duplex-semantic-v2",
+        protocol_version="3",
         model="minicpm-o-4.5",
         tokenizer_target="o45_fc",
         tokenizer_fingerprint=fingerprint,
@@ -833,7 +836,7 @@ def test_semantic_v2_rejects_output_for_non_active_unit() -> None:
 
     with pytest.raises(Exception, match="active Unit"):
         build_fc_duplex_resume_plan(
-            protocol_version="fc-duplex-semantic-v2",
+            protocol_version="3",
             model="minicpm-o-4.5",
             tokenizer_target="o45_fc",
             tokenizer_fingerprint=fingerprint,

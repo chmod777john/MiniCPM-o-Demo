@@ -23,7 +23,7 @@ from typing import Any, Awaitable, Dict, List, Literal, Optional, Protocol, Sequ
 
 import numpy as np
 import soundfile as sf  # type: ignore[import-untyped]
-from minicpm_o5_sdk import O5NoBudgetLimit, O5UnitPolicy
+from minicpm_o5_sdk import O5NoBudgetLimit, O5UnitPolicy, OpenAIToolDefinition
 
 from core.fc_duplex_resume import (
     FcDuplexResumeError,
@@ -31,10 +31,15 @@ from core.fc_duplex_resume import (
     build_fc_duplex_resume_plan,
 )
 from core.schemas.fc_duplex import (
+    FcDuplexPrepareRequest,
     FcDuplexEvaluationConfig,
     FcDuplexInfrastructureConfig,
     FcToolResponse,
     NonSpokenStepGenerationFlag,
+)
+from core.fc_duplex.system_input import (
+    FcAudioPathInput,
+    FcSystemContentInput,
 )
 from py_backend.media import decode_audio_base64, decode_frame_base64_list
 
@@ -58,24 +63,6 @@ def _deferred_budget_reached_step(
         warnings=list(warnings or []),
         metadata={"deferred_model_feed": True},
     )
-
-
-DEFAULT_DISPLAY_OBJECT_TOOL: Dict[str, Any] = {
-    "type": "function",
-    "function": {
-        "name": "display_object_on_board",
-        "description": (
-            "Display a named concrete object on the visual board so the user can "
-            "see it. Use only for concrete, visualizable objects mentioned in "
-            "user speech."
-        ),
-        "parameters": {
-            "type": "object",
-            "properties": {"name": {"type": "string"}},
-            "required": ["name"],
-        },
-    },
-}
 
 
 class _SendCallable(Protocol):
@@ -117,7 +104,7 @@ class FcDuplexSessionRuntime:
         self._send = send
         self._on_fatal = on_fatal
         self._response_id: Optional[str] = None
-        self._tools: List[Dict[str, Any]] = []
+        self._tools: list[OpenAIToolDefinition] = []
         self._pending_tool_responses: List[FcToolResponse] = []
         self._streaming_tool_results: Dict[str, List[Any]] = {}
         self._api_to_internal: Dict[str, str] = {}
@@ -188,6 +175,49 @@ class FcDuplexSessionRuntime:
             ValueError: SDK UnitPolicy 或评测配置不满足 Pydantic schema。
         """
 
+        protocol_version = params.get("protocol_version")
+        if protocol_version != "3":
+            raise RuntimeError(
+                "FC Semantic Realtime API requires protocol_version='3'; "
+                f"received {protocol_version!r}"
+            )
+        legacy_keys = {
+            "system_prompt",
+            "instructions",
+            "tools",
+            "ref_audio_path",
+            "ref_audio_base64",
+            "prompt_wav_path",
+            "tts_ref",
+            "tts_ref_audio",
+            "tts_ref_audio_path",
+        }
+        rejected_paths = sorted(key for key in legacy_keys if key in params)
+        for container_name in ("voice", "defaults"):
+            container = params.get(container_name)
+            if isinstance(container, dict):
+                rejected_paths.extend(
+                    f"{container_name}.{key}"
+                    for key in sorted(legacy_keys)
+                    if key in container
+                )
+        if rejected_paths:
+            raise RuntimeError(
+                "FC Semantic Realtime API v3 rejects legacy prepare fields: "
+                + ", ".join(rejected_paths)
+                + "; use system, system.tools, tts_prompt_audio, and generate_audio"
+            )
+
+        prepare_request = FcDuplexPrepareRequest(
+            system=FcSystemContentInput.model_validate(params.get("system")),
+            tts_prompt_audio=(
+                FcAudioPathInput.model_validate(params["tts_prompt_audio"])
+                if params.get("tts_prompt_audio") is not None
+                else None
+            ),
+            generate_audio=params.get("generate_audio"),
+        )
+
         config = _first_dict(params.get("config"), params.get("duplex"), params.get("fc_duplex"))
         self._max_spoken_tokens = int(config.get("max_spoken_tokens", params.get("max_spoken_tokens", 24)) or 24)
         requested_profile_id = _optional_non_empty_string(
@@ -242,18 +272,12 @@ class FcDuplexSessionRuntime:
         self._fixed_tool_call_ids = evaluation.fixed_tool_call_ids
         self._decode_mode = str(config.get("decode_mode", params.get("decode_mode", "greedy")) or "greedy")
         self._sample_rate = int(config.get("sample_rate", params.get("sample_rate", 16000)) or 16000)
-        self._tools = list(params.get("tools") or [DEFAULT_DISPLAY_OBJECT_TOOL])
-
-        voice = _first_dict(params.get("voice"), params.get("defaults"))
-        ref_audio_path = _coalesce(params.get("ref_audio_path"), voice.get("ref_audio_path"))
-        prompt_wav_path = _coalesce(params.get("prompt_wav_path"), params.get("tts_ref_audio_path"), voice.get("tts_ref_audio_path"), ref_audio_path)
+        self._tools = list(prepare_request.system.tools)
         await asyncio.to_thread(
             self.backend.fc_duplex_prepare,
-            system_prompt=str(_coalesce(params.get("system_prompt"), params.get("instructions"), default="")),
-            tools=self._tools,
-            ref_audio_path=ref_audio_path,
-            prompt_wav_path=prompt_wav_path,
-            generate_audio=bool(params.get("generate_audio", True)),
+            system=prepare_request.system,
+            tts_prompt_audio=prepare_request.tts_prompt_audio,
+            generate_audio=prepare_request.generate_audio,
             fixed_tool_call_ids=self._fixed_tool_call_ids,
         )
         resume_identity_fn = getattr(self.backend, "fc_duplex_resume_identity", None)
@@ -321,8 +345,8 @@ class FcDuplexSessionRuntime:
                 "tokenizer_target",
                 "tokenizer_fingerprint",
                 "model",
-                "ref_audio_sha256",
-                "prompt_wav_sha256",
+                "system_audio_sha256",
+                "tts_prompt_audio_sha256",
             )
         )
         if has_model_identity:
@@ -343,10 +367,10 @@ class FcDuplexSessionRuntime:
                     requested_fingerprint
                     and requested_fingerprint != current_fingerprint
                 )
-                or params.get("ref_audio_sha256")
-                != self._resume_identity.get("ref_audio_sha256")
-                or params.get("prompt_wav_sha256")
-                != self._resume_identity.get("prompt_wav_sha256")
+                or params.get("system_audio_sha256")
+                != self._resume_identity.get("system_audio_sha256")
+                or params.get("tts_prompt_audio_sha256")
+                != self._resume_identity.get("tts_prompt_audio_sha256")
             )
             if identity_mismatch:
                 raise FcDuplexResumeError(

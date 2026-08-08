@@ -11,6 +11,7 @@ import numpy as np
 import pytest
 from minicpm_o5_sdk import O5UnitPolicy
 
+from core.fc_duplex.system_input import FcSystemContentInput
 from examples.fc_duplex.infer_from_training_data import (
     ApiDecodeSpan,
     ApiHistoryEntry,
@@ -46,20 +47,35 @@ def test_session_init_contains_request_semantics_without_evaluation_fields() -> 
     """API 样例必须只携带请求语义，不能注入 GT 对拍字段。"""
 
     payload = build_session_init_payload(
-        system_prompt="你是助手",
-        tools=[{"type": "function", "function": {"name": "lookup"}}],
+        system=FcSystemContentInput.model_validate(
+            {
+                "segments": [{"kind": "text", "text": "你是助手"}],
+                "tools": [
+                    {
+                        "type": "function",
+                        "function": {"name": "lookup"},
+                    }
+                ],
+            }
+        ),
         unit_policy=O5UnitPolicy(
             unit_sec=1.0,
             non_spoken_budgets_while_listening=[30],
             non_spoken_budgets_while_speaking=[15],
         ),
-        reference_audio_path=None,
+        tts_prompt_audio_path=None,
     )
 
     assert payload["type"] == "session.init"
     assert payload["payload"]["fc_duplex"] is True
     assert payload["payload"]["generate_audio"] is True
-    assert payload["payload"]["system_prompt"] == "你是助手"
+    assert payload["payload"]["protocol_version"] == "3"
+    assert payload["payload"]["system"]["segments"] == [
+        {"kind": "text", "text": "你是助手"}
+    ]
+    assert payload["payload"]["system"]["tools"][0]["function"]["name"] == "lookup"
+    assert "system_prompt" not in payload["payload"]
+    assert "tools" not in payload["payload"]
     assert "evaluation" not in payload["payload"]
     assert "checkpoint_profile_id" not in payload["payload"]
     assert "model" not in payload["payload"]

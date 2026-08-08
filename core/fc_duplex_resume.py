@@ -209,7 +209,7 @@ def build_fc_duplex_resume_plan(
             text delta 无法精确映射回 generation steps。
     """
 
-    if protocol_version == "fc-duplex-semantic-v2":
+    if protocol_version == "3":
         return _build_fc_duplex_semantic_v2_resume_plan(
             model=model,
             tokenizer_target=tokenizer_target,
@@ -1557,7 +1557,7 @@ def _build_fc_duplex_semantic_v2_resume_plan(
         for unit_index in range(expected_units)
     ]
     return FcDuplexResumePlan(
-        protocol_version="fc-duplex-semantic-v2",
+        protocol_version="3",
         model=model,
         tokenizer_target=tokenizer_target,
         through_unit_index=through_unit_index,

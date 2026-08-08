@@ -50,21 +50,27 @@
         </ul>
       </section>
 
-      <!-- System prompt + reference audio.
-           Changes take effect on the NEXT Start mic click. -->
+      <!-- Ordered v3 system segments and the independent TTS prompt audio.
+           Changes take effect on the next Start mic click. -->
       <section class="panel settings-edit-panel">
         <details class="cfg-group" open>
-          <summary>System prompt</summary>
-          <textarea id="systemPrompt" rows="6" spellcheck="false"
-                    placeholder="Loading default..."></textarea>
-          <button id="resetSystemPrompt" class="ctrl-btn tiny">Reset to training default</button>
+          <summary>System segments</summary>
+          <div id="systemSegments" class="segment-editor"></div>
+          <div class="segment-actions">
+            <button id="addTextSegment" class="ctrl-btn tiny" type="button">+ Text</button>
+            <button id="addAudioSegment" class="ctrl-btn tiny" type="button">+ Audio</button>
+            <button id="resetSystemSegments" class="ctrl-btn tiny" type="button">Reset to training default</button>
+          </div>
         </details>
         <details class="cfg-group">
-          <summary>Reference audio</summary>
-          <input id="refAudioPath" type="text" spellcheck="false"
+          <summary>TTS prompt audio</summary>
+          <input id="ttsPromptAudioPath" type="text" spellcheck="false"
                  placeholder="absolute path to .wav" />
-          <p class="hint">Optional. Empty means the backend uses its default reference audio.</p>
-          <button id="resetRefAudio" class="ctrl-btn tiny">Clear</button>
+          <p class="hint">Required because this Board starts sessions with generate_audio=true.</p>
+          <div class="segment-actions">
+            <button id="resetTtsPromptAudio" class="ctrl-btn tiny" type="button">Reset to training default</button>
+            <button id="useFirstSystemAudio" class="ctrl-btn tiny" type="button">Use first system audio</button>
+          </div>
         </details>
         <details class="cfg-group">
           <summary>Runtime</summary>

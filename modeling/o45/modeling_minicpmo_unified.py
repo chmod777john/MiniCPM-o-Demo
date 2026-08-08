@@ -14,6 +14,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from __future__ import annotations
+
 import json
 import logging
 import math
@@ -26,6 +28,7 @@ from copy import deepcopy
 from typing import Dict
 from typing import List
 from typing import Optional
+from typing import TYPE_CHECKING
 from typing import Tuple
 from typing import Union
 
@@ -35,6 +38,8 @@ import torch
 import torch.nn.functional as F
 from PIL import Image
 from tqdm import tqdm
+
+from core.fc_duplex.system_prefill import FcModelPrepareResult
 
 from enum import Enum
 
@@ -56,6 +61,9 @@ from .utils import streaming_token_decoder
 from .utils import torch_clone_recursive
 from .utils import TTSSamplingParams
 from .utils import TTSStreamingGenerator
+
+if TYPE_CHECKING:
+    from minicpm_o5_sdk import O5SystemContent
 
 logger = logging.getLogger(__name__)
 
@@ -2354,17 +2362,13 @@ class MiniCPMO(BaseMiniCPMO):
 
     def fc_duplex_prepare(
         self,
-        system_prompt: str,
-        tools=None,
-        ref_audio: Optional[np.ndarray] = None,
-        prompt_wav_path: Optional[str] = None,
-        generate_audio: Optional[bool] = None,
-    ) -> dict:
+        system_content: "O5SystemContent",
+        tts_prompt_audio_path: str | None,
+        generate_audio: bool | None,
+    ) -> FcModelPrepareResult:
         return self._require_fc_duplex().prepare(
-            system_prompt=system_prompt,
-            tools=tools,
-            ref_audio=ref_audio,
-            prompt_wav_path=prompt_wav_path,
+            system_content=system_content,
+            tts_prompt_audio_path=tts_prompt_audio_path,
             generate_audio=generate_audio,
         )
 

@@ -124,6 +124,14 @@ from core.fc_duplex.model_adapter import (
     FcDuplexModelAdapter,
     create_fc_duplex_model_adapter,
 )
+from core.fc_duplex.system_prefill import FcModelPrepareResult
+from core.fc_duplex.system_input import (
+    FcAudioPathInput,
+    FcSystemAudioInput,
+    FcSystemContentInput,
+    materialize_o5_system_content,
+    project_o5_system_content_input,
+)
 from core.processors.base import BaseProcessor, MiniCPMOProcessorMixin
 from core.schemas import (
     # Chat
@@ -1401,8 +1409,8 @@ class FcDuplexView:
         self._last_closed_spoken_text: Optional[str] = None
         self._resume_text_roundtrip_valid = True
         self._resume_text_roundtrip_error: Optional[Dict[str, Any]] = None
-        self._resume_ref_audio_sha256: Optional[str] = None
-        self._resume_prompt_wav_sha256: Optional[str] = None
+        self._resume_system_audio_sha256: Optional[str] = None
+        self._resume_tts_prompt_audio_sha256: Optional[str] = None
 
     @staticmethod
     def _audio_from_base64(audio_data: Optional[str]) -> Optional[np.ndarray]:
@@ -1742,18 +1750,18 @@ class FcDuplexView:
         )
 
     @staticmethod
-    def _prepare_result(data: dict) -> FcDuplexPrepareResult:
-        resize_info = data.get("resize_info") or {}
+    def _prepare_result(data: FcModelPrepareResult) -> FcDuplexPrepareResult:
+        resize_info = data["resize_info"]
         return FcDuplexPrepareResult(
-            prefill_ids=data.get("prefill_ids", []),
-            output_render=data.get("output_render", ""),
-            resized=bool(resize_info.get("resized", False)),
-            old_vocab_size=resize_info.get("old_vocab"),
-            new_vocab_size=resize_info.get("new_vocab"),
-            required_vocab_size=resize_info.get("need"),
-            generate_audio=bool(data.get("generate_audio", False)),
-            has_ref_audio=bool(data.get("has_ref_audio", False)),
-            prompt_wav_path=data.get("prompt_wav_path"),
+            prefill_ids=data["prefill_ids"],
+            output_render=data["output_render"],
+            resized=resize_info["resized"],
+            old_vocab_size=resize_info["old_vocab"],
+            new_vocab_size=resize_info["new_vocab"],
+            required_vocab_size=resize_info["need"],
+            generate_audio=data["generate_audio"],
+            has_system_audio=data["has_system_audio"],
+            tts_prompt_audio_path=data["tts_prompt_audio_path"],
         )
 
     @staticmethod
@@ -1934,41 +1942,55 @@ class FcDuplexView:
             n_audio_units=len(unit_audio_paths),
         )
 
-    def prepare(self, request: FcDuplexPrepareRequest, tool_call_id_generator: Optional[Any] = None) -> FcDuplexPrepareResult:
-        import librosa
+    def prepare(
+        self,
+        request: FcDuplexPrepareRequest,
+        tool_call_id_generator: ToolCallIdGenerator | FixedToolCallIdGenerator | None = None,
+    ) -> FcDuplexPrepareResult:
+        """按 v3 canonical system 与独立 TTS 音频初始化 FC Duplex View。
+
+        参数:
+            request: 只包含 v3 canonical 字段的 prepare 请求。
+            tool_call_id_generator: 普通或评测专用工具调用 ID 生成器。
+
+        返回:
+            模型 prepare 结果的强类型投影。
+        """
 
         self.tool_call_manager = ToolCallStateManager(tool_call_id_generator)
-        ref_audio = None
-        if request.ref_audio_path:
-            if request.ref_audio_path not in self._ref_audio_cache:
-                self._ref_audio_cache[request.ref_audio_path], _ = librosa.load(
-                    request.ref_audio_path,
-                    sr=16000,
-                    mono=True,
-                )
-            ref_audio = self._ref_audio_cache[request.ref_audio_path]
-        self._resume_ref_audio_sha256 = (
-            hashlib.sha256(
-                np.asarray(ref_audio, dtype=np.float32).tobytes()
-            ).hexdigest()
-            if ref_audio is not None
+        system_content = materialize_o5_system_content(request.system)
+        system_audio_hasher = hashlib.sha256()
+        system_audio_count = 0
+        for segment in system_content.segments:
+            if getattr(segment, "kind", None) != "audio":
+                continue
+            audio_tensor = segment.audio.get_tensor()
+            audio_array = np.asarray(
+                audio_tensor.detach().cpu().numpy(),
+                dtype=np.float32,
+            ).reshape(-1)
+            system_audio_hasher.update(system_audio_count.to_bytes(8, "big"))
+            system_audio_hasher.update(audio_array.size.to_bytes(8, "big"))
+            system_audio_hasher.update(audio_array.tobytes(order="C"))
+            system_audio_count += 1
+        self._resume_system_audio_sha256 = (
+            system_audio_hasher.hexdigest() if system_audio_count else None
+        )
+        tts_prompt_audio_path = (
+            request.tts_prompt_audio.file_path
+            if request.tts_prompt_audio is not None
             else None
         )
-        effective_prompt_wav_path = (
-            request.prompt_wav_path or request.ref_audio_path
-        )
-        self._resume_prompt_wav_sha256 = None
-        if effective_prompt_wav_path:
-            prompt_path = Path(effective_prompt_wav_path)
+        self._resume_tts_prompt_audio_sha256 = None
+        if tts_prompt_audio_path:
+            prompt_path = Path(tts_prompt_audio_path)
             if prompt_path.is_file():
-                self._resume_prompt_wav_sha256 = hashlib.sha256(
+                self._resume_tts_prompt_audio_sha256 = hashlib.sha256(
                     prompt_path.read_bytes()
                 ).hexdigest()
         result = self._adapter.prepare(
-            system_prompt=request.system_prompt,
-            tools=request.tools,
-            ref_audio=ref_audio,
-            prompt_wav_path=request.prompt_wav_path or request.ref_audio_path,
+            system_content=system_content,
+            tts_prompt_audio_path=tts_prompt_audio_path,
             generate_audio=request.generate_audio,
         )
         self._protocol_tokenizer = None
@@ -2137,15 +2159,15 @@ class FcDuplexView:
         tokenizer = self._ensure_protocol_tokenizer()
         fingerprint = tokenizer.fingerprint
         return {
-            "protocol_version": "fc-duplex-semantic-v2",
+            "protocol_version": "3",
             "model": self._adapter.model_name,
             "tokenizer_target": tokenizer.target,
             "tokenizer_fingerprint": {
                 "vocab_hash": fingerprint.vocab_hash,
                 "merges_hash": fingerprint.merges_hash,
             },
-            "ref_audio_sha256": self._resume_ref_audio_sha256,
-            "prompt_wav_sha256": self._resume_prompt_wav_sha256,
+            "system_audio_sha256": self._resume_system_audio_sha256,
+            "tts_prompt_audio_sha256": self._resume_tts_prompt_audio_sha256,
         }
 
     def replay_completed_unit(
@@ -2223,8 +2245,8 @@ class FcDuplexView:
         self._last_closed_spoken_text = None
         self._resume_text_roundtrip_valid = True
         self._resume_text_roundtrip_error = None
-        self._resume_ref_audio_sha256 = None
-        self._resume_prompt_wav_sha256 = None
+        self._resume_system_audio_sha256 = None
+        self._resume_tts_prompt_audio_sha256 = None
 
     def offline_inference(
         self,
@@ -2241,10 +2263,8 @@ class FcDuplexView:
             id_generator = FixedToolCallIdGenerator(task_input.tool_call_ids) if task_input.tool_call_ids else None
             self.prepare(
                 FcDuplexPrepareRequest(
-                    system_prompt=task_input.system_prompt,
-                    tools=task_input.tools,
-                    ref_audio_path=task_input.ref_audio_path,
-                    prompt_wav_path=task_input.prompt_wav_path,
+                    system=task_input.system,
+                    tts_prompt_audio=task_input.tts_prompt_audio,
                     generate_audio=task_input.generate_audio,
                 ),
                 tool_call_id_generator=id_generator,
@@ -2401,14 +2421,6 @@ class FcDuplexView:
         return [OpenAIToolDefinition.model_validate(tool).model_dump() for tool in raw_tools] or None
 
     @staticmethod
-    def _extract_train_system_prompt(structure: Dict[str, Any]) -> str:
-        return "\n".join(
-            segment["text"]
-            for segment in structure.get("system", {}).get("segments", [])
-            if segment.get("kind") == "text"
-        )
-
-    @staticmethod
     def _extract_train_tool_call_ids(structure: Dict[str, Any]) -> List[str]:
         tool_call_ids = []
         segments = ((structure.get("tracks") or {}).get("ai_non_spoken") or {}).get("segments") or []
@@ -2476,17 +2488,6 @@ class FcDuplexView:
         if path.is_absolute():
             return path
         return data_root / path
-
-    @classmethod
-    def _extract_system_ref_audio_path(cls, structure: Dict[str, Any], data_root: Path) -> Optional[str]:
-        for segment in structure.get("system", {}).get("segments", []) or []:
-            if segment.get("kind") != "audio":
-                continue
-            audio = segment.get("audio") or {}
-            path = cls._resolve_train_media_path(data_root, audio.get("file_path"))
-            if path is not None and path.exists():
-                return str(path)
-        return None
 
     @staticmethod
     def _build_unit_audio_chunks_from_arrangement(training_data: Any, arrangement: Any, config: FcDuplexConfig) -> List[np.ndarray]:
@@ -2599,7 +2600,6 @@ class FcDuplexView:
                 )
 
             tools = self._extract_train_tools(structure)
-            system_prompt = self._extract_train_system_prompt(structure)
             tool_call_ids = self._extract_train_tool_call_ids(structure) if request.use_train_tool_call_ids else []
             tool_responses_by_call_id = (
                 self._extract_train_tool_responses(structure)
@@ -2610,17 +2610,25 @@ class FcDuplexView:
             gt_output_ids = list(tokenized_data.input_ids)
             gt_decoded = self.decode_output(FcDecodeOutputRequest(output_ids=gt_output_ids, tools=tools))
 
-            system_ref_audio_path = self._extract_system_ref_audio_path(structure, data_root)
-            ref_audio_path = request.ref_audio_path or system_ref_audio_path or (str(user_audio_path) if user_audio_path else None)
-            prompt_wav_path = request.prompt_wav_path or ref_audio_path
+            system_input = (
+                project_o5_system_content_input(
+                    training_data.system,
+                    data_root=data_root,
+                )
+                if training_data.system is not None
+                else FcSystemContentInput()
+            )
+            if request.generate_audio and request.tts_prompt_audio is None:
+                raise ValueError(
+                    "generate_audio=True 时必须显式提供 tts_prompt_audio；"
+                    "不再从 system/user audio 隐式推断"
+                )
             pred = self.offline_inference(
                 FcDuplexOfflineInput(
-                    system_prompt=system_prompt,
-                    tools=tools,
+                    system=system_input,
+                    tts_prompt_audio=request.tts_prompt_audio,
                     user_audio_path=str(user_audio_path) if user_audio_path else None,
                     unit_audio_chunks=unit_audio_chunks,
-                    ref_audio_path=ref_audio_path,
-                    prompt_wav_path=prompt_wav_path if request.generate_audio else None,
                     generate_audio=request.generate_audio,
                     tool_call_ids=tool_call_ids or None,
                     tool_responses_by_call_id=tool_responses_by_call_id,
@@ -3100,17 +3108,17 @@ class UnifiedProcessor(BaseProcessor):
             raise RuntimeError(
                 "O5 FC capability lacks warm_prepare; cannot declare Backend ready"
             )
-        import librosa
-
-        ref_audio, _ = librosa.load(
-            self.ref_audio_path,
-            sr=16000,
-            mono=True,
+        audio_input = FcAudioPathInput(file_path=self.ref_audio_path)
+        system_content = materialize_o5_system_content(
+            FcSystemContentInput(
+                segments=[FcSystemAudioInput(audio=audio_input)],
+            )
         )
         start = time.time()
         warm_prepare(
-            ref_audio=np.asarray(ref_audio, dtype=np.float32),
-            prompt_wav_path=self.ref_audio_path,
+            system_content=system_content,
+            tts_prompt_audio_path=audio_input.file_path,
+            generate_audio=True,
         )
         logger.info(
             "O5 FC full prepare path warmed before ready in %.1fs: %s",

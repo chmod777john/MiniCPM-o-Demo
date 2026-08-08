@@ -250,8 +250,8 @@ token 事实来源是 generation step batch 中逐项保留的 safe text delta�
       "vocab_hash": "...",
       "merges_hash": "..."
     },
-    "ref_audio_sha256": "...",
-    "prompt_wav_sha256": "..."
+    "system_audio_sha256": "...",
+    "tts_prompt_audio_sha256": "..."
   }
 }
 ```
@@ -382,8 +382,8 @@ Resume 使用新 WebSocket 连接，第一帧发送 `session.resume`：
       "vocab_hash": "...",
       "merges_hash": "..."
     },
-    "ref_audio_sha256": "...",
-    "prompt_wav_sha256": "...",
+    "system_audio_sha256": "...",
+    "tts_prompt_audio_sha256": "...",
     "through_unit_index": 8,
     "history": [
       {"type": "session.init", "...": "..."},

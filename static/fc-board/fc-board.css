@@ -893,7 +893,7 @@ body {
 }
 .debug-drawer audio { width: 100%; margin-top: 6px; }
 
-/* Settings edit panel (system prompt + ref audio + tts toggle) */
+/* Settings edit panel (ordered v3 system segments + TTS prompt audio) */
 .settings-edit-panel {
   flex-shrink: 0;
   overflow: auto;
@@ -966,4 +966,60 @@ body {
   font-size: 10px;
   padding: 3px 8px;
   margin-top: 4px;
+}
+
+.segment-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 6px 0;
+}
+.segment-item {
+  border: 1px solid #e5e5e0;
+  border-radius: 6px;
+  background: #fafaf5;
+  padding: 7px;
+}
+.segment-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: #666;
+  font-size: 10px;
+}
+.segment-controls {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.segment-controls button {
+  border: 1px solid #deded7;
+  border-radius: 4px;
+  background: #fff;
+  color: #555;
+  font: inherit;
+  padding: 2px 6px;
+  cursor: pointer;
+}
+.segment-controls button:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+.segment-item textarea,
+.segment-item input[type="text"] {
+  margin-bottom: 0;
+}
+.segment-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+.segment-empty {
+  border: 1px dashed #d8d8d0;
+  border-radius: 6px;
+  color: #999;
+  font-size: 10px;
+  padding: 10px;
+  text-align: center;
 }

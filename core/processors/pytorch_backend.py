@@ -21,11 +21,16 @@ from core.schemas.common import Message
 from core.schemas.duplex import DuplexConfig, DuplexGenerateResult
 from core.schemas.fc_duplex import (
     FcDuplexPrepareRequest,
+    FcDuplexPrepareResult,
     FcDuplexPrefillRequest,
     FcFinalizeUnitRequest,
     FcNonSpokenGenerateRequest,
     FcSpokenGenerateRequest,
     FcToolResponse,
+)
+from core.fc_duplex.system_input import (
+    FcAudioPathInput,
+    FcSystemContentInput,
 )
 from core.schemas.streaming import StreamingChunk, StreamingRequest, StreamingResponse
 
@@ -385,20 +390,16 @@ class PyTorchBackend:
     def fc_duplex_prepare(
         self,
         *,
-        system_prompt: str = "",
-        tools: Optional[List[Dict[str, Any]]] = None,
-        ref_audio_path: Optional[str] = None,
-        prompt_wav_path: Optional[str] = None,
-        generate_audio: bool = False,
-        fixed_tool_call_ids: Optional[List[str]] = None,
-    ) -> Any:
-        """初始化 FC Duplex View，并按需注入评测固定工具调用 ID。
+        system: FcSystemContentInput,
+        tts_prompt_audio: FcAudioPathInput | None,
+        generate_audio: bool,
+        fixed_tool_call_ids: list[str] | None,
+    ) -> FcDuplexPrepareResult:
+        """按 v3 canonical contract 初始化 FC Duplex View。
 
         参数:
-            system_prompt: 模型 Session 的系统提示词。
-            tools: 可供模型调用的工具定义。
-            ref_audio_path: FC TTS 条件参考音频路径。
-            prompt_wav_path: Token2Wav 使用的提示音频路径。
+            system: 有序多模态 system 与嵌套工具定义。
+            tts_prompt_audio: 独立的 TTS 提示音频路径输入。
             generate_audio: 是否生成 spoken waveform。
             fixed_tool_call_ids: 评测专用的确定性内部工具调用 ID；None 使用默认生成器。
 
@@ -416,10 +417,8 @@ class PyTorchBackend:
         )
         return fc_view.prepare(
             FcDuplexPrepareRequest(
-                system_prompt=system_prompt,
-                tools=tools,
-                ref_audio_path=ref_audio_path or (self.ref_audio_path if generate_audio else None),
-                prompt_wav_path=prompt_wav_path or ref_audio_path or (self.ref_audio_path if generate_audio else None),
+                system=system,
+                tts_prompt_audio=tts_prompt_audio,
                 generate_audio=generate_audio,
             ),
             tool_call_id_generator=tool_call_id_generator,
