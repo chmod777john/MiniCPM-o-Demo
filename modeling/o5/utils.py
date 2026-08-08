@@ -2315,7 +2315,10 @@ class StreamDecoder:
             self._static_pos = _pos + L
             self.cache = _r.cache
             if return_logits:
-                return self.m.lm_head(_h[:, -1:])[:, -1], _h
+                # llm_graph decode writes into a static buffer (_hidden); clone so
+                # callers that stash hidden across steps (TTS condition) are not aliased.
+                logits = self.m.lm_head(_h[:, -1:])[:, -1]
+                return logits, _h.clone()
             return
         if bool(_OPT.get("llm_static")):
             from transformers.cache_utils import StaticCache
