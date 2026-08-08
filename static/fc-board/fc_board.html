@@ -53,13 +53,21 @@
       <!-- Ordered v3 system segments and the independent TTS prompt audio.
            Changes take effect on the next Start mic click. -->
       <section class="panel settings-edit-panel">
+        <div class="quick-settings-row">
+          <label for="quickSetting">Quick settings</label>
+          <select id="quickSetting">
+            <option value="0730">0730 · Current</option>
+            <option value="0807_sysalign">0807 · SYS-ALIGN</option>
+            <option value="custom">Custom</option>
+          </select>
+        </div>
         <details class="cfg-group" open>
           <summary>System segments</summary>
           <div id="systemSegments" class="segment-editor"></div>
           <div class="segment-actions">
             <button id="addTextSegment" class="ctrl-btn tiny" type="button">+ Text</button>
             <button id="addAudioSegment" class="ctrl-btn tiny" type="button">+ Audio</button>
-            <button id="resetSystemSegments" class="ctrl-btn tiny" type="button">Reset to training default</button>
+            <button id="resetSystemSegments" class="ctrl-btn tiny" type="button">Reset selected preset</button>
           </div>
         </details>
         <details class="cfg-group">
@@ -68,7 +76,7 @@
                  placeholder="absolute path to .wav" />
           <p class="hint">Required because this Board starts sessions with generate_audio=true.</p>
           <div class="segment-actions">
-            <button id="resetTtsPromptAudio" class="ctrl-btn tiny" type="button">Reset to training default</button>
+            <button id="resetTtsPromptAudio" class="ctrl-btn tiny" type="button">Reset selected preset</button>
             <button id="useFirstSystemAudio" class="ctrl-btn tiny" type="button">Use first system audio</button>
           </div>
         </details>

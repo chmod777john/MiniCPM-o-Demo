@@ -4,6 +4,12 @@ import { FcRealtimeClient } from './fc-realtime-client.js';
 import { LiveMicProvider } from './live-mic-provider.js';
 import { AudioPlayer } from './audio-player.js';
 import { NsSegmentView } from './ns-segment-view.js';
+import {
+  QUICK_SETTING_0730,
+  QUICK_SETTING_CUSTOM,
+  buildBoardQuickSettings,
+  cloneQuickSetting,
+} from './fc-board-quick-settings.js';
 
 const DEFAULT_SYSTEM_TEXT = `你是一个可以一边听用户说话、一边思考并调用工具的语音助手。用户让你把故事或描述中出现的动物、植物或具体物体放到画板上时，使用 display_object_on_board 工具。不要等用户完全讲完才思考；在你确认具体对象后，可以调用工具把对象放到画板。`;
 
@@ -58,6 +64,7 @@ function rmsToDb(rms) {
 let micPeakDbSinceStart = MIC_METER_MIN_DB;
 let fcBoardDefaults = null;
 let systemSegments = [];
+let quickSettings = new Map();
 let micLiveState = 'idle';
 let streamEventSeq = 0;
 const speechQueue = [];
@@ -97,6 +104,7 @@ const el = {
   kvMode: document.getElementById('kvMode'),
   kvCkpt: document.getElementById('kvCkpt'),
   kvTools: document.getElementById('kvTools'),
+  quickSetting: document.getElementById('quickSetting'),
   systemSegments: document.getElementById('systemSegments'),
   ttsPromptAudioPath: document.getElementById('ttsPromptAudioPath'),
   nonSpokenScheduling: document.getElementById('nonSpokenScheduling'),
@@ -136,21 +144,29 @@ function initPage() {
 
 el.addTextSegment?.addEventListener('click', () => {
   systemSegments.push({ kind: 'text', text: '' });
+  markQuickSettingCustom();
   renderSystemSegments();
 });
 
 el.addAudioSegment?.addEventListener('click', () => {
   systemSegments.push({ kind: 'audio', audio: { source: 'path', file_path: '' } });
+  markQuickSettingCustom();
   renderSystemSegments();
+});
+
+el.quickSetting?.addEventListener('change', () => {
+  if (el.quickSetting.value === QUICK_SETTING_CUSTOM) return;
+  applyQuickSetting(el.quickSetting.value);
 });
 
 el.resetSystemSegments?.addEventListener('click', () => {
-  systemSegments = cloneSystemSegments(defaultSystem().segments);
-  renderSystemSegments();
+  applyQuickSetting(selectedQuickSetting());
 });
 
 el.resetTtsPromptAudio?.addEventListener('click', () => {
-  el.ttsPromptAudioPath.value = defaultTtsPromptAudioPath();
+  const setting = quickSettings.get(selectedQuickSetting());
+  if (!setting || !el.ttsPromptAudioPath) return;
+  el.ttsPromptAudioPath.value = setting.ttsPromptAudioPath || '';
 });
 
 el.useFirstSystemAudio?.addEventListener('click', () => {
@@ -160,6 +176,7 @@ el.useFirstSystemAudio?.addEventListener('click', () => {
     return;
   }
   el.ttsPromptAudioPath.value = firstAudio.audio.file_path;
+  markQuickSettingCustom();
 });
 
 el.systemSegments?.addEventListener('input', (event) => {
@@ -170,6 +187,11 @@ el.systemSegments?.addEventListener('input', (event) => {
   if (!segment) return;
   if (segment.kind === 'text') segment.text = input.value;
   else segment.audio.file_path = input.value;
+  markQuickSettingCustom();
+});
+
+el.ttsPromptAudioPath?.addEventListener('input', () => {
+  markQuickSettingCustom();
 });
 
 el.systemSegments?.addEventListener('click', (event) => {
@@ -185,6 +207,7 @@ el.systemSegments?.addEventListener('click', (event) => {
   if (action === 'down' && index < systemSegments.length - 1) {
     [systemSegments[index + 1], systemSegments[index]] = [systemSegments[index], systemSegments[index + 1]];
   }
+  markQuickSettingCustom();
   renderSystemSegments();
 });
 
@@ -447,11 +470,10 @@ async function loadFcBoardDefaults() {
 }
 
 function applyDefaults(defaults) {
-  systemSegments = cloneSystemSegments(defaultSystemFromDefaults(defaults).segments);
-  renderSystemSegments();
-  if (el.ttsPromptAudioPath) {
-    el.ttsPromptAudioPath.value = ttsPromptAudioPathFromDefaults(defaults);
-  }
+  const defaultSystem = defaultSystemFromDefaults(defaults);
+  const defaultTtsPath = ttsPromptAudioPathFromDefaults(defaults);
+  quickSettings = buildBoardQuickSettings(defaultSystem, defaultTtsPath);
+  applyQuickSetting(QUICK_SETTING_0730);
   if (el.nonSpokenScheduling && ['quality', 'latency'].includes(defaults.non_spoken_scheduling)) {
     el.nonSpokenScheduling.value = defaults.non_spoken_scheduling;
   }
@@ -493,6 +515,27 @@ function ttsPromptAudioPathFromDefaults(defaults) {
 
 function defaultTtsPromptAudioPath() {
   return ttsPromptAudioPathFromDefaults(fcBoardDefaults);
+}
+
+function selectedQuickSetting() {
+  const selected = el.quickSetting?.value;
+  return quickSettings.has(selected) ? selected : QUICK_SETTING_0730;
+}
+
+function applyQuickSetting(settingId) {
+  const setting = quickSettings.get(settingId);
+  if (!setting) throw new Error(`Unknown quick setting: ${settingId}`);
+  const cloned = cloneQuickSetting(setting);
+  systemSegments = cloneSystemSegments(cloned.segments);
+  if (el.ttsPromptAudioPath) {
+    el.ttsPromptAudioPath.value = cloned.ttsPromptAudioPath;
+  }
+  if (el.quickSetting) el.quickSetting.value = settingId;
+  renderSystemSegments();
+}
+
+function markQuickSettingCustom() {
+  if (el.quickSetting) el.quickSetting.value = QUICK_SETTING_CUSTOM;
 }
 
 function validatedTools() {
