@@ -18,6 +18,7 @@ JOBS_FILE="${JOBS_FILE:-/user/houyueran/GIT/omni_TTS_Benchmark/OmniInteract_tts_
 OUT_ROOT="${OUT_ROOT:-/user/weihongliang/tts_eval_runs/omniinteract_demo_speeduptp2_alltry_iter3000}"
 CKPT_NAME="${CKPT_NAME:-demo_speeduptp2_alltry_iter3000}"
 LOG_DIR="${LOG_DIR:-${OUT_ROOT}/_worker_logs}"
+HF_MODULES_CACHE_ROOT="${HF_MODULES_CACHE_ROOT:-/tmp/o5_hf_modules_omniinteract_${CKPT_NAME}_$$}"
 MASTER_PORT_BASE="${MASTER_PORT_BASE:-29627}"
 RUN_SCORE="${RUN_SCORE:-1}"
 JOB_PART="${JOB_PART:-0}"
@@ -92,8 +93,10 @@ for worker in "${!GPU_PAIRS[@]}"; do
   job_index=$((JOB_INDEX_OFFSET + worker))
   port=$((MASTER_PORT_BASE + worker))
   log="$LOG_DIR/worker_${worker}_gpu_${pair//,/}.log"
+  hf_modules_cache="$HF_MODULES_CACHE_ROOT/$worker"
+  mkdir -p "$hf_modules_cache"
   echo "[omniinteract-8gpu] launch worker=$worker visible=$pair stride=$JOB_STRIDE log=$log"
-  CUDA_VISIBLE_DEVICES="$pair" "$TORCHRUN" \
+  HF_MODULES_CACHE="$hf_modules_cache" CUDA_VISIBLE_DEVICES="$pair" "$TORCHRUN" \
     --nproc_per_node=2 --nnodes=1 --master_addr=127.0.0.1 --master_port="$port" \
     tools/o5eval/omniinteract_tp2_offline_runner.py \
       --model-path "$MODEL_PATH" --ckpt-path "$PT_PATH" --backbone-dir "$BACKBONE_DIR" \
