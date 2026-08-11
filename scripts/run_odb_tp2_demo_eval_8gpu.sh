@@ -15,13 +15,18 @@ DATA_ROOT="${DATA_ROOT:-/user/hechaoqun/final_data-v0}"
 OUT_ROOT="${OUT_ROOT:-/user/weihongliang/odb_eval_runs/odb_demo_tp2_iter4000_full_20260807}"
 MASTER_PORT_BASE="${MASTER_PORT_BASE:-29691}"
 TOTAL_SAMPLES="${TOTAL_SAMPLES:-662}"
+GENERATE_AUDIO="${GENERATE_AUDIO:-0}"
+JUDGE_WORKERS="${JUDGE_WORKERS:-4}"
+JUDGE_API_URL="${JUDGE_API_URL:-https://llm-center.modelbest.co/llm/v1/chat/completions}"
+JUDGE_MAX_TOKENS="${JUDGE_MAX_TOKENS:-4096}"
 
 PYTHON="${VENV_DIR}/bin/python"
 TORCHRUN="${VENV_DIR}/bin/torchrun"
 JUDGE_KEY_FILE="${JUDGE_KEY_FILE:-/user/weihongliang/lis.key}"
 
 for path in "$PYTHON" "$TORCHRUN" "$HUMANEVALKIT_ROOT/src" "$MODEL_PATH" \
-  "$CHECKPOINT_PATH" "$BACKBONE_DIR" "$REF_AUDIO" "$DATA_ROOT" "$JUDGE_KEY_FILE"; do
+  "$CHECKPOINT_PATH" "$BACKBONE_DIR" "$REF_AUDIO" "$DATA_ROOT" "$JUDGE_KEY_FILE" \
+  "$HUMANEVALKIT_ROOT/scripts/rejudge_from_results.py"; do
   if [ ! -e "$path" ]; then
     echo "[odb-demo-8gpu] missing: $path" >&2
     exit 2
@@ -55,7 +60,23 @@ echo "[odb-demo-8gpu] checkpoint=$CHECKPOINT_PATH"
 echo "[odb-demo-8gpu] backbone=$BACKBONE_DIR"
 echo "[odb-demo-8gpu] deployment=4x independent TP2 workers on GPU pairs 0-1,2-3,4-5,6-7"
 echo "[odb-demo-8gpu] acceleration=tp2 sdpa batched_mm llm_graph tts_graph tts_fast lmhead fuse_vision_audio; vocoder_graph=0"
-echo "[odb-demo-8gpu] judge=GEMINI_8daxh7"
+echo "[odb-demo-8gpu] generate_audio=$GENERATE_AUDIO"
+echo "[odb-demo-8gpu] judge=GEMINI_8daxh7 workers=$JUDGE_WORKERS (post-inference)"
+
+if [[ "$GENERATE_AUDIO" != "0" && "$GENERATE_AUDIO" != "1" ]]; then
+  echo "[odb-demo-8gpu] GENERATE_AUDIO must be 0 or 1, got: $GENERATE_AUDIO" >&2
+  exit 2
+fi
+if ! [[ "$JUDGE_WORKERS" =~ ^[1-9][0-9]*$ ]]; then
+  echo "[odb-demo-8gpu] JUDGE_WORKERS must be a positive integer, got: $JUDGE_WORKERS" >&2
+  exit 2
+fi
+
+if [ "$GENERATE_AUDIO" = "1" ]; then
+  AUDIO_ARGS=(--generate-audio)
+else
+  AUDIO_ARGS=(--no-generate-audio)
+fi
 
 starts=(0 166 332 497)
 limits=(166 166 165 165)
@@ -82,7 +103,7 @@ for shard in 0 1 2 3; do
     --output-dir "$shard_dir" \
     --start-index "${starts[$shard]}" \
     --limit "${limits[$shard]}" \
-    --generate-audio \
+    "${AUDIO_ARGS[@]}" \
     --deployment-mode tp2 \
     --attn-implementation "${ATTN_IMPLEMENTATION:-sdpa}" \
     --experts-implementation "${O5_EXPERTS_IMPLEMENTATION:-batched_mm}" \
@@ -94,9 +115,7 @@ for shard in 0 1 2 3; do
     --fuse-vision-audio \
     --no-batch-vision-feed \
     --no-vocoder-graph \
-    --judge-api-key "$JUDGE_API_KEY" \
-    --judge-api-url "https://llm-center.modelbest.co/llm/v1/chat/completions" \
-    --judge-model GEMINI_8daxh7 \
+    --disable-judge \
     --judge-seed 0 \
     --seed 0 \
     >"$log_file" 2>&1 &
@@ -117,11 +136,26 @@ if [ "$rc" -ne 0 ]; then
   exit "$rc"
 fi
 
-# Humanevalkit owns the canonical shard merge format; no samples are copied
-# or rewritten here, only the four completed run_report.json files are merged.
+# Keep model inference independent from remote Judge latency.  The rejudge
+# helper rewrites each sample result, each shard report, and the merged report
+# using a bounded thread pool, matching the Original job's Judge concurrency.
 export HUMANEVALKIT_SRC="${HUMANEVALKIT_ROOT}/src"
-"$PYTHON" "$HUMANEVALKIT_ROOT/scripts/merge_shard_reports.py" \
-  --output-dir "$OUT_ROOT" \
-  --merged-name merged_report.json
+"$PYTHON" "$HUMANEVALKIT_ROOT/scripts/rejudge_from_results.py" \
+  --results-root "$OUT_ROOT" \
+  --benchmark chaoqun_omn_bench \
+  --judge-api-key "$JUDGE_API_KEY" \
+  --judge-api-url "$JUDGE_API_URL" \
+  --judge-model GEMINI_8daxh7 \
+  --judge-max-tokens "$JUDGE_MAX_TOKENS" \
+  --judge-temperature 0 \
+  --judge-top-p 1 \
+  --judge-max-retry 2 \
+  --judge-sleep-between-retry 5 \
+  --judge-seed 0 \
+  --workers "$JUDGE_WORKERS" \
+  --merge-shard-reports \
+  --merge-base-dir "$OUT_ROOT" \
+  --merged-name merged_report.json \
+  --score-summary-file "$OUT_ROOT/score_summary.json"
 
 echo "[odb-demo-8gpu] done: $OUT_ROOT/merged_report.json"
