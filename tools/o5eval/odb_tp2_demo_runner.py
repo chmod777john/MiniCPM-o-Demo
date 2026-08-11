@@ -13,6 +13,7 @@ import argparse
 import json
 import os
 import sys
+from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from pathlib import Path
 from typing import Any
 
@@ -185,7 +186,12 @@ def _write_result(
     return records, skipped, preview
 
 
-def run_one(args: argparse.Namespace, backend: Any, raw_row: dict[str, Any], index: int) -> tuple[Any, list[Any], list[dict[str, Any]], dict[str, Any]]:
+def _infer_one(
+    args: argparse.Namespace,
+    backend: Any,
+    raw_row: dict[str, Any],
+    index: int,
+) -> tuple[Any, DuplexOutput | None, list[str], dict[str, Any] | None]:
     output_root = Path(args.output_dir).resolve()
     run_item = prepare_run_item(
         benchmark_name="chaoqun_omn_bench",
@@ -203,7 +209,7 @@ def run_one(args: argparse.Namespace, backend: Any, raw_row: dict[str, Any], ind
     result_path = run_item.sample_dir / "result.json"
     if args.resume and result_path.exists():
         print(json.dumps({"event": "resume_skip", "sample_id": run_item.sample.sample_id}, ensure_ascii=False), flush=True)
-        return run_item.sample, [], [], {"sample_id": run_item.sample.sample_id, "resumed": True}
+        return run_item, None, [], {"sample_id": run_item.sample.sample_id, "resumed": True}
 
     sample_seed = args.seed + index
     configure_seed(sample_seed)
@@ -293,6 +299,19 @@ def run_one(args: argparse.Namespace, backend: Any, raw_row: dict[str, Any], ind
     metric_names = get_registered_subbenchmark(
         "chaoqun_omn_bench", run_item.sample.subbenchmark_name
     ).metrics
+    return run_item, output, metric_names, None
+
+
+def run_one(
+    args: argparse.Namespace,
+    backend: Any,
+    raw_row: dict[str, Any],
+    index: int,
+) -> tuple[Any, list[Any], list[dict[str, Any]], dict[str, Any]]:
+    output_root = Path(args.output_dir).resolve()
+    run_item, output, metric_names, resumed_preview = _infer_one(args, backend, raw_row, index)
+    if output is None:
+        return run_item.sample, [], [], resumed_preview or {"sample_id": run_item.sample.sample_id}
     records, skipped, preview = _write_result(
         run_item=run_item,
         output=output,
@@ -359,8 +378,24 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--judge-temperature", type=float, default=0.0)
     parser.add_argument("--judge-top-p", type=float, default=1.0)
     parser.add_argument("--judge-seed", type=int, default=0)
+    parser.add_argument(
+        "--judge-concurrency",
+        type=int,
+        default=0,
+        help="rank0 background Judge workers per TP2 shard; 0 keeps synchronous judging",
+    )
+    parser.add_argument(
+        "--judge-inflight-limit",
+        type=int,
+        default=0,
+        help="maximum pending Judge samples per shard; 0 defaults to max(2 * concurrency, 4)",
+    )
     parser.add_argument("--disable-judge", action="store_true")
     args = parser.parse_args()
+    if args.judge_concurrency < 0:
+        parser.error("--judge-concurrency must be non-negative")
+    if args.judge_inflight_limit < 0:
+        parser.error("--judge-inflight-limit must be non-negative")
     for path_arg in (args.model_path, args.checkpoint_path, args.backbone_dir, args.ref_audio):
         if not Path(path_arg).exists():
             parser.error(f"path does not exist: {path_arg}")
@@ -435,6 +470,12 @@ def main() -> int:
         "demo_commit": os.environ["DEMO_GIT_COMMIT"],
         "judge_enabled": args.metric_context["enable_remote_judge"],
         "judge_key_present": bool(args.judge_api_key),
+        "judge_concurrency": args.judge_concurrency,
+        "judge_inflight_limit": (
+            args.judge_inflight_limit
+            if args.judge_inflight_limit > 0
+            else max(2 * args.judge_concurrency, 4)
+        ),
     }, ensure_ascii=False), flush=True)
     if not raw_rows:
         raise RuntimeError("ODB selection returned zero samples")
@@ -447,16 +488,79 @@ def main() -> int:
     sample_records: list[Any] = []
     skipped_metrics: list[dict[str, Any]] = []
     sample_summaries: list[dict[str, Any]] = []
-    try:
-        for index, raw_row in enumerate(raw_rows, start=args.start_index):
+    judge_executor: ThreadPoolExecutor | None = None
+    pending_judges: dict[Future, str] = {}
+    judge_inflight_limit = (
+        args.judge_inflight_limit
+        if args.judge_inflight_limit > 0
+        else max(2 * args.judge_concurrency, 4)
+    )
+
+    def collect_judges(done: set[Future]) -> None:
+        for future in done:
+            sample_id = pending_judges.pop(future)
             try:
-                sample, records, skipped, preview = run_one(args, backend, raw_row, index)
+                records, skipped, preview = future.result()
             except Exception as exc:
-                raise RuntimeError(f"ODB sample index {index} failed: {raw_row.get('sample_name')}") from exc
-            processed_samples.append(sample)
+                raise RuntimeError(f"ODB Judge failed for sample {sample_id}") from exc
             sample_records.extend(records)
             skipped_metrics.extend(skipped)
             sample_summaries.append(preview)
+            print(json.dumps({"event": "sample_done", **preview}, ensure_ascii=False), flush=True)
+
+    def drain_judges(*, wait_for_all: bool) -> None:
+        while pending_judges:
+            if wait_for_all:
+                done, _ = wait(pending_judges, return_when=FIRST_COMPLETED)
+            else:
+                if len(pending_judges) < judge_inflight_limit:
+                    return
+                done, _ = wait(pending_judges, return_when=FIRST_COMPLETED)
+            collect_judges(done)
+
+    def submit_judge(run_item: Any, output: DuplexOutput, metric_names: list[str]) -> None:
+        if judge_executor is None:
+            records, skipped, preview = _write_result(
+                run_item=run_item,
+                output=output,
+                metric_names=metric_names,
+                metric_context=args.metric_context,
+                output_root=output_root,
+            )
+            sample_records.extend(records)
+            skipped_metrics.extend(skipped)
+            sample_summaries.append(preview)
+            print(json.dumps({"event": "sample_done", **preview}, ensure_ascii=False), flush=True)
+            return
+        drain_judges(wait_for_all=False)
+        future = judge_executor.submit(
+            _write_result,
+            run_item=run_item,
+            output=output,
+            metric_names=metric_names,
+            metric_context=args.metric_context,
+            output_root=output_root,
+        )
+        pending_judges[future] = run_item.sample.sample_id
+
+    try:
+        if args.judge_concurrency > 0 and args.metric_context["enable_remote_judge"]:
+            judge_executor = ThreadPoolExecutor(
+                max_workers=args.judge_concurrency,
+                thread_name_prefix="judge",
+            )
+        for index, raw_row in enumerate(raw_rows, start=args.start_index):
+            try:
+                run_item, output, metric_names, resumed_preview = _infer_one(args, backend, raw_row, index)
+            except Exception as exc:
+                raise RuntimeError(f"ODB sample index {index} failed: {raw_row.get('sample_name')}") from exc
+            processed_samples.append(run_item.sample)
+            if output is None:
+                sample_summaries.append(resumed_preview or {"sample_id": run_item.sample.sample_id})
+                continue
+            submit_judge(run_item, output, metric_names)
+
+        drain_judges(wait_for_all=True)
 
         aggregate_records, metrics_summary = aggregate_metric_records(sample_records)
         run_report = {
@@ -493,6 +597,9 @@ def main() -> int:
                 "judge_enabled": args.metric_context["enable_remote_judge"],
                 "judge_model": args.judge_model,
                 "judge_api_url": args.judge_api_url,
+                "judge_concurrency": args.judge_concurrency,
+                "judge_inflight_limit": judge_inflight_limit if judge_executor else None,
+                "judge_pipeline": "rank0_background" if judge_executor else "synchronous",
             },
         }
         (output_root / "run_report.json").write_text(
@@ -501,6 +608,8 @@ def main() -> int:
         print(json.dumps({"event": "run_done", "samples": len(processed_samples), "metrics": metrics_summary}, ensure_ascii=False), flush=True)
         return 0
     finally:
+        if judge_executor is not None:
+            judge_executor.shutdown(wait=True)
         _shutdown_backend(backend)
 
 

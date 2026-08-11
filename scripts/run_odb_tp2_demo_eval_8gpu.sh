@@ -18,6 +18,7 @@ EVAL_SCOPE="${EVAL_SCOPE:-full}"
 TOTAL_SAMPLES="${TOTAL_SAMPLES:-}"
 GENERATE_AUDIO="${GENERATE_AUDIO:-0}"
 JUDGE_WORKERS="${JUDGE_WORKERS:-4}"
+JUDGE_INFLIGHT_LIMIT="${JUDGE_INFLIGHT_LIMIT:-8}"
 JUDGE_API_URL="${JUDGE_API_URL:-https://llm-center.modelbest.co/llm/v1/chat/completions}"
 JUDGE_MAX_TOKENS="${JUDGE_MAX_TOKENS:-4096}"
 
@@ -42,7 +43,7 @@ JUDGE_KEY_FILE="${JUDGE_KEY_FILE:-/user/weihongliang/lis.key}"
 
 for path in "$PYTHON" "$TORCHRUN" "$HUMANEVALKIT_ROOT/src" "$MODEL_PATH" \
   "$CHECKPOINT_PATH" "$BACKBONE_DIR" "$REF_AUDIO" "$DATA_ROOT" "$JUDGE_KEY_FILE" \
-  "$HUMANEVALKIT_ROOT/scripts/rejudge_from_results.py"; do
+  "$HUMANEVALKIT_ROOT/scripts/merge_shard_reports.py"; do
   if [ ! -e "$path" ]; then
     echo "[odb-demo-8gpu] missing: $path" >&2
     exit 2
@@ -77,7 +78,7 @@ echo "[odb-demo-8gpu] backbone=$BACKBONE_DIR"
 echo "[odb-demo-8gpu] deployment=4x independent TP2 workers on GPU pairs 0-1,2-3,4-5,6-7"
 echo "[odb-demo-8gpu] acceleration=tp2 sdpa batched_mm llm_graph tts_graph tts_fast lmhead fuse_vision_audio; vocoder_graph=0"
 echo "[odb-demo-8gpu] generate_audio=$GENERATE_AUDIO"
-echo "[odb-demo-8gpu] judge=GEMINI_8daxh7 workers=$JUDGE_WORKERS (post-inference)"
+echo "[odb-demo-8gpu] judge=GEMINI_8daxh7 workers=$JUDGE_WORKERS inflight=$JUDGE_INFLIGHT_LIMIT (per-shard background pipeline)"
 
 if [[ "$GENERATE_AUDIO" != "0" && "$GENERATE_AUDIO" != "1" ]]; then
   echo "[odb-demo-8gpu] GENERATE_AUDIO must be 0 or 1, got: $GENERATE_AUDIO" >&2
@@ -85,6 +86,10 @@ if [[ "$GENERATE_AUDIO" != "0" && "$GENERATE_AUDIO" != "1" ]]; then
 fi
 if ! [[ "$JUDGE_WORKERS" =~ ^[1-9][0-9]*$ ]]; then
   echo "[odb-demo-8gpu] JUDGE_WORKERS must be a positive integer, got: $JUDGE_WORKERS" >&2
+  exit 2
+fi
+if ! [[ "$JUDGE_INFLIGHT_LIMIT" =~ ^[1-9][0-9]*$ ]]; then
+  echo "[odb-demo-8gpu] JUDGE_INFLIGHT_LIMIT must be a positive integer, got: $JUDGE_INFLIGHT_LIMIT" >&2
   exit 2
 fi
 
@@ -145,8 +150,17 @@ for shard in 0 1 2 3; do
     --fuse-vision-audio \
     --no-batch-vision-feed \
     --no-vocoder-graph \
-    --disable-judge \
+    --judge-api-key "$JUDGE_API_KEY" \
+    --judge-api-url "$JUDGE_API_URL" \
+    --judge-model GEMINI_8daxh7 \
+    --judge-max-tokens "$JUDGE_MAX_TOKENS" \
+    --judge-temperature 0 \
+    --judge-top-p 1 \
+    --judge-max-retry 2 \
+    --judge-sleep-between-retry 5 \
     --judge-seed 0 \
+    --judge-concurrency "$JUDGE_WORKERS" \
+    --judge-inflight-limit "$JUDGE_INFLIGHT_LIMIT" \
     --seed 0 \
     >"$log_file" 2>&1 &
   pids+=("$!")
@@ -166,26 +180,28 @@ if [ "$rc" -ne 0 ]; then
   exit "$rc"
 fi
 
-# Keep model inference independent from remote Judge latency.  The rejudge
-# helper rewrites each sample result, each shard report, and the merged report
-# using a bounded thread pool, matching the Original job's Judge concurrency.
-export HUMANEVALKIT_SRC="${HUMANEVALKIT_ROOT}/src"
-"$PYTHON" "$HUMANEVALKIT_ROOT/scripts/rejudge_from_results.py" \
-  --results-root "$OUT_ROOT" \
-  --benchmark chaoqun_omn_bench \
-  --judge-api-key "$JUDGE_API_KEY" \
-  --judge-api-url "$JUDGE_API_URL" \
-  --judge-model GEMINI_8daxh7 \
-  --judge-max-tokens "$JUDGE_MAX_TOKENS" \
-  --judge-temperature 0 \
-  --judge-top-p 1 \
-  --judge-max-retry 2 \
-  --judge-sleep-between-retry 5 \
-  --judge-seed 0 \
-  --workers "$JUDGE_WORKERS" \
-  --merge-shard-reports \
-  --merge-base-dir "$OUT_ROOT" \
-  --merged-name merged_report.json \
-  --score-summary-file "$OUT_ROOT/score_summary.json"
+# Each shard has already judged and written its own samples.  Only merge the
+# completed shard reports here; no second remote-Judge pass is needed.
+"$PYTHON" "$HUMANEVALKIT_ROOT/scripts/merge_shard_reports.py" \
+  --output-dir "$OUT_ROOT" \
+  --merged-name merged_report.json
+
+# Preserve the score_summary.json artifact without issuing another Judge call.
+"$PYTHON" - "$OUT_ROOT" "$HUMANEVALKIT_ROOT" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+output_root = Path(sys.argv[1]).resolve()
+sys.path.insert(0, sys.argv[2])
+from scripts.rejudge_from_results import summarize_results_scores  # noqa: E402
+
+summary = summarize_results_scores(output_root)
+(output_root / "score_summary.json").write_text(
+    json.dumps(summary, ensure_ascii=False, indent=2),
+    encoding="utf-8",
+)
+print(f"[odb-demo-8gpu] score summary: {output_root / 'score_summary.json'}")
+PY
 
 echo "[odb-demo-8gpu] done: $OUT_ROOT/merged_report.json"
