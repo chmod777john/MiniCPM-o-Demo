@@ -14,11 +14,27 @@ REF_AUDIO="${REF_AUDIO:-/backup/user/xubokai/humanevalkit_dev/migration_v2/human
 DATA_ROOT="${DATA_ROOT:-/user/hechaoqun/final_data-v0}"
 OUT_ROOT="${OUT_ROOT:-/user/weihongliang/odb_eval_runs/odb_demo_tp2_iter4000_full_20260807}"
 MASTER_PORT_BASE="${MASTER_PORT_BASE:-29691}"
-TOTAL_SAMPLES="${TOTAL_SAMPLES:-662}"
+EVAL_SCOPE="${EVAL_SCOPE:-full}"
+TOTAL_SAMPLES="${TOTAL_SAMPLES:-}"
 GENERATE_AUDIO="${GENERATE_AUDIO:-0}"
 JUDGE_WORKERS="${JUDGE_WORKERS:-4}"
 JUDGE_API_URL="${JUDGE_API_URL:-https://llm-center.modelbest.co/llm/v1/chat/completions}"
 JUDGE_MAX_TOKENS="${JUDGE_MAX_TOKENS:-4096}"
+
+case "$EVAL_SCOPE" in
+  full)
+    TOTAL_SAMPLES="${TOTAL_SAMPLES:-662}"
+    SCOPE_ARGS=()
+    ;;
+  event-only)
+    TOTAL_SAMPLES="${TOTAL_SAMPLES:-362}"
+    SCOPE_ARGS=(--event-only)
+    ;;
+  *)
+    echo "[odb-demo-8gpu] EVAL_SCOPE must be full or event-only, got: $EVAL_SCOPE" >&2
+    exit 2
+    ;;
+esac
 
 PYTHON="${VENV_DIR}/bin/python"
 TORCHRUN="${VENV_DIR}/bin/torchrun"
@@ -53,7 +69,7 @@ export https_proxy="${https_proxy:-http://whitelist-proxy.cybertron.svc.cluster.
 mkdir -p "$OUT_ROOT" "$OUT_ROOT/logs"
 
 echo "[odb-demo-8gpu] project=$PROJECT_DIR"
-echo "[odb-demo-8gpu] benchmark=chaoqun_omn_bench samples=$TOTAL_SAMPLES"
+echo "[odb-demo-8gpu] benchmark=chaoqun_omn_bench scope=$EVAL_SCOPE samples=$TOTAL_SAMPLES"
 echo "[odb-demo-8gpu] output=$OUT_ROOT"
 echo "[odb-demo-8gpu] model=$MODEL_PATH"
 echo "[odb-demo-8gpu] checkpoint=$CHECKPOINT_PATH"
@@ -78,8 +94,21 @@ else
   AUDIO_ARGS=(--no-generate-audio)
 fi
 
-starts=(0 166 332 497)
-limits=(166 166 165 165)
+shard_count=4
+base_limit=$((TOTAL_SAMPLES / shard_count))
+remainder=$((TOTAL_SAMPLES % shard_count))
+starts=()
+limits=()
+cursor=0
+for ((shard = 0; shard < shard_count; shard++)); do
+  shard_limit="$base_limit"
+  if (( shard < remainder )); then
+    shard_limit=$((shard_limit + 1))
+  fi
+  starts+=("$cursor")
+  limits+=("$shard_limit")
+  cursor=$((cursor + shard_limit))
+done
 gpu_pairs=("0,1" "2,3" "4,5" "6,7")
 declare -a pids=()
 declare -a labels=()
@@ -103,6 +132,7 @@ for shard in 0 1 2 3; do
     --output-dir "$shard_dir" \
     --start-index "${starts[$shard]}" \
     --limit "${limits[$shard]}" \
+    "${SCOPE_ARGS[@]}" \
     "${AUDIO_ARGS[@]}" \
     --deployment-mode tp2 \
     --attn-implementation "${ATTN_IMPLEMENTATION:-sdpa}" \

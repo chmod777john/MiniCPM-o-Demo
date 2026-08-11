@@ -315,6 +315,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--limit", type=int, default=16)
     parser.add_argument("--start-index", type=int, default=0)
     parser.add_argument("--task-name")
+    parser.add_argument(
+        "--event-only",
+        action="store_true",
+        help="keep only the three event-oriented ODB subsets (纠错/事件提醒/事件发生后提醒)",
+    )
     parser.add_argument("--sww-only", action="store_true")
     parser.add_argument("--per-category", type=int, default=None)
     parser.add_argument("--resume", action="store_true")
@@ -415,6 +420,13 @@ def main() -> int:
         sww_only=args.sww_only,
         per_category=args.per_category,
     )
+    if args.event_only:
+        event_subbenchmarks = {
+            "event_correction",
+            "event_reminder",
+            "event_post_occurrence_reminder",
+        }
+        raw_rows = [row for row in raw_rows if row.get("subbenchmark_name") in event_subbenchmarks]
     raw_rows = raw_rows[args.start_index : args.start_index + args.limit]
     print(json.dumps({
         "event": "run_start",
@@ -474,6 +486,7 @@ def main() -> int:
                 "batch_vision_feed": args.batch_vision_feed,
                 "vocoder_graph": args.vocoder_graph,
                 "generate_audio": args.generate_audio,
+                "event_only": args.event_only,
                 "chunk_ms": args.chunk_ms,
                 "seed": args.seed,
                 "sampling": sampling_config,
