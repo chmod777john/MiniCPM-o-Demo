@@ -160,7 +160,7 @@ for shard in 0 1 2 3; do
     --judge-sleep-between-retry 5 \
     --judge-seed 0 \
     --judge-concurrency "$JUDGE_WORKERS" \
-    --judge-inflight-limit "$JUDGE_INFLIGHT_LIMIT" \
+    --judge-inflight-limit "${JUDGE_INFLIGHT_LIMIT:-8}" \
     --seed 0 \
     >"$log_file" 2>&1 &
   pids+=("$!")
