@@ -359,7 +359,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--force-listen-count", type=int, default=0)
     parser.add_argument("--max-new-speak-tokens-per-chunk", type=int, default=20)
     parser.add_argument("--attn-implementation", default="sdpa")
-    parser.add_argument("--deployment-mode", choices=("tp2",), default="tp2")
+    parser.add_argument(
+        "--deployment-mode",
+        choices=("single_opt", "tp2"),
+        default="tp2",
+        help="single_opt uses one GPU with the optimization engine; tp2 uses 2-GPU tensor parallelism",
+    )
     parser.add_argument("--experts-implementation", choices=("eager", "batched_mm"), default="batched_mm")
     parser.add_argument("--o5-llm-cache", type=int, default=65536)
     parser.add_argument("--llm-graph", action=argparse.BooleanOptionalAction, default=True)
