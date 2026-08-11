@@ -344,8 +344,25 @@ el.runFileReplay.addEventListener('click', async () => {
 });
 
 async function createRealtimeSession(payload = buildSessionInitPayload()) {
-  const client = await createConnectedClient();
+  let resolveCreated;
+  let rejectCreated;
+  const created = new Promise((resolve, reject) => {
+    resolveCreated = resolve;
+    rejectCreated = reject;
+  });
+  const client = await createConnectedClient((event) => {
+    if (event.type === 'session.created') resolveCreated(event);
+    if (event.type === 'session.closed' || event.type === 'error') {
+      rejectCreated(new Error(
+        `${event.reason || event.error || 'session initialization failed'}`,
+      ));
+    }
+  });
   client.initSession(payload);
+  const timeout = new Promise((_, reject) => {
+    setTimeout(() => reject(new Error('session.init timed out')), 120000);
+  });
+  await Promise.race([created, timeout]);
   return client;
 }
 
@@ -472,18 +489,13 @@ async function loadFcBoardDefaults() {
 function applyDefaults(defaults) {
   const defaultSystem = defaultSystemFromDefaults(defaults);
   const defaultTtsPath = ttsPromptAudioPathFromDefaults(defaults);
-  quickSettings = buildBoardQuickSettings(defaultSystem, defaultTtsPath);
-  applyQuickSetting(QUICK_SETTING_0730);
-  if (el.nonSpokenScheduling && ['quality', 'latency'].includes(defaults.non_spoken_scheduling)) {
-    el.nonSpokenScheduling.value = defaults.non_spoken_scheduling;
-  }
+  quickSettings = buildBoardQuickSettings(defaultSystem, defaultTtsPath, {
+    nonSpokenScheduling: defaults.non_spoken_scheduling,
+    nonSpokenBudgetWhileListening: defaults.non_spoken_budget_while_listening,
+    nonSpokenBudgetWhileSpeaking: defaults.non_spoken_budget_while_speaking,
+  });
   if (el.checkpointProfileId) el.checkpointProfileId.value = defaults.checkpoint_profile_id || '';
-  if (el.nonSpokenBudgetWhileListening) {
-    el.nonSpokenBudgetWhileListening.value = defaults.non_spoken_budget_while_listening ?? '';
-  }
-  if (el.nonSpokenBudgetWhileSpeaking) {
-    el.nonSpokenBudgetWhileSpeaking.value = defaults.non_spoken_budget_while_speaking ?? '';
-  }
+  applyQuickSetting(QUICK_SETTING_0730);
   if (el.kvCkpt) el.kvCkpt.textContent = defaults.checkpoint_profile_id || 'No checkpoint profile';
   if (el.kvTools) el.kvTools.textContent = validatedTools().map(tool => tool?.function?.name || tool?.name || 'tool').join(', ');
 }
@@ -529,6 +541,22 @@ function applyQuickSetting(settingId) {
   systemSegments = cloneSystemSegments(cloned.segments);
   if (el.ttsPromptAudioPath) {
     el.ttsPromptAudioPath.value = cloned.ttsPromptAudioPath;
+  }
+  if (
+    el.nonSpokenScheduling
+    && ['quality', 'latency'].includes(cloned.runtime.nonSpokenScheduling)
+  ) {
+    el.nonSpokenScheduling.value = cloned.runtime.nonSpokenScheduling;
+  }
+  if (el.nonSpokenBudgetWhileListening) {
+    el.nonSpokenBudgetWhileListening.value = (
+      cloned.runtime.nonSpokenBudgetWhileListening ?? ''
+    );
+  }
+  if (el.nonSpokenBudgetWhileSpeaking) {
+    el.nonSpokenBudgetWhileSpeaking.value = (
+      cloned.runtime.nonSpokenBudgetWhileSpeaking ?? ''
+    );
   }
   if (el.quickSetting) el.quickSetting.value = settingId;
   renderSystemSegments();

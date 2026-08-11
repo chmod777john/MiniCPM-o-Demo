@@ -144,8 +144,7 @@ def _extract_fc_board_defaults_from_case(case_path: str) -> FcBoardDefaults:
         ``default_tts_prompt_audio`` 的前端默认值。
     """
 
-    with open(case_path, "r", encoding="utf-8") as fp:
-        structure = json.load(fp)
+    structure = _load_fc_board_case_structure(case_path)
 
     data_root = os.path.dirname(case_path)
     system_segments: list[FcSystemTextInput | FcSystemAudioInput] = []
@@ -201,6 +200,60 @@ def _extract_fc_board_defaults_from_case(case_path: str) -> FcBoardDefaults:
         ),
         default_tts_prompt_audio=default_tts_prompt_audio,
     )
+
+
+def _load_fc_board_case_structure(case_path: str) -> Dict[str, Any]:
+    """读取单文件 JSON case 或 canonical Bundle 的首条 JSONL。
+
+    参数:
+        case_path: ``*.json`` case 或 ``traindata.jsonl`` 路径。
+
+    返回:
+        一条 TrainingData 的结构化字典。
+    """
+
+    path = Path(case_path)
+    if path.suffix != ".jsonl":
+        with path.open("r", encoding="utf-8") as file:
+            structure = json.load(file)
+    else:
+        structure = None
+        with path.open("r", encoding="utf-8") as file:
+            for raw_line in file:
+                line = raw_line.strip()
+                if line:
+                    structure = json.loads(line)
+                    break
+        if structure is None:
+            raise ValueError(f"TrainingData JSONL 为空: {case_path}")
+    if not isinstance(structure, dict):
+        raise ValueError(f"TrainingData 必须是 JSON object: {case_path}")
+    return structure
+
+
+def _default_fc_board_case_path(case_folder: str) -> str | None:
+    """选择 Board 默认 case，canonical ``traindata.jsonl`` 优先。
+
+    参数:
+        case_folder: TrainingData case 目录或 canonical Bundle 根目录。
+
+    返回:
+        默认 case 路径；目录没有可用 case 时返回 ``None``。
+    """
+
+    training_data_path = Path(case_folder) / "traindata.jsonl"
+    if training_data_path.is_file():
+        return str(training_data_path)
+    cases = sorted(
+        str(path)
+        for path in Path(case_folder).iterdir()
+        if (
+            path.is_file()
+            and path.suffix == ".json"
+            and path.name != "selection_manifest.json"
+        )
+    )
+    return cases[0] if cases else None
 
 
 def _fc_board_case_folder() -> Optional[str]:
@@ -1568,13 +1621,8 @@ async def fc_board_defaults():
         )
     )
     if case_folder:
-        cases = sorted(
-            os.path.join(case_folder, name)
-            for name in os.listdir(case_folder)
-            if name.endswith(".json")
-        )
-        if cases:
-            default_case_path = cases[0]
+        default_case_path = _default_fc_board_case_path(case_folder)
+        if default_case_path is not None:
             try:
                 defaults = _extract_fc_board_defaults_from_case(default_case_path)
             except Exception as exc:  # noqa: BLE001

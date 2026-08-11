@@ -111,6 +111,64 @@ def test_board_defaults_use_first_system_audio_as_explicit_tts_default(
     assert defaults.default_tts_prompt_audio.file_path == str(audio_path)
 
 
+def test_board_defaults_load_canonical_training_data_jsonl(
+    tmp_path: Path,
+) -> None:
+    """Canonical Bundle 应读取首条 JSONL，并保持 audio-first system 顺序。"""
+
+    import gateway
+
+    media_dir = tmp_path / "media" / "system_reference"
+    media_dir.mkdir(parents=True)
+    audio_path = media_dir / "HTRef06.wav"
+    audio_path.write_bytes(b"audio")
+    training_data_path = tmp_path / "traindata.jsonl"
+    training_data_path.write_text(
+        "\n".join(
+            [
+                json.dumps(
+                    {
+                        "system": {
+                            "segments": [
+                                {
+                                    "kind": "audio",
+                                    "audio": {
+                                        "file_path": "media/system_reference/HTRef06.wav"
+                                    },
+                                },
+                                {"kind": "text", "text": "board-task"},
+                            ],
+                            "tools": [
+                                {
+                                    "type": "function",
+                                    "function": {"name": "display_object_on_board"},
+                                }
+                            ],
+                        }
+                    }
+                ),
+                json.dumps({"system": {"segments": [{"kind": "text", "text": "unused"}]}}),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "selection_manifest.json").write_text("{}", encoding="utf-8")
+
+    case_path = gateway._default_fc_board_case_path(str(tmp_path))
+    defaults = gateway._extract_fc_board_defaults_from_case(case_path)
+
+    assert case_path == str(training_data_path)
+    assert [segment.kind for segment in defaults.default_system.segments] == [
+        "audio",
+        "text",
+    ]
+    assert defaults.default_system.segments[0].audio.file_path == str(audio_path)
+    assert defaults.default_system.segments[1].text == "board-task"
+    assert defaults.default_tts_prompt_audio is not None
+    assert defaults.default_tts_prompt_audio.file_path == str(audio_path)
+
+
 @pytest.mark.asyncio
 async def test_fc_board_defaults_expose_profile_runtime_parameters(
     monkeypatch: pytest.MonkeyPatch,

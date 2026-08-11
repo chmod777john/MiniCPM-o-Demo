@@ -93,6 +93,9 @@ export class FcRealtimeClient {
   }
 
   appendAudio({ audioBase64, sampleRate = 16000, inputId = null }) {
+    if (!this.ready) {
+      throw new Error('Session is not ready for audio input');
+    }
     const resolvedInputId = inputId || `input_${String(this._inputSeq).padStart(6, '0')}`;
     this._inputSeq += 1;
     this._send({

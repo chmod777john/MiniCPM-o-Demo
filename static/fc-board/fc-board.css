@@ -60,22 +60,28 @@ body {
 .header .ws-state.connected { background: #ddf4e4; color: #1a7f37; }
 .header .ws-state.closed { background: #fff0f0; color: #cf222e; }
 
-/* ========== Main grid: 1fr 2fr two columns + bottom controls ========== */
+/* ========== Main grid: top controls + two content columns ========== */
 .main {
   display: grid;
   grid-template-columns: 0.72fr 2.6fr;
-  grid-template-rows: 1fr auto;
+  grid-template-rows: auto minmax(0, 1fr);
   margin: 16px auto;
   max-width: 1500px;
   width: calc(100% - 32px);
-  height: calc(100vh - 100px); /* header + bottom controls + margins */
+  height: calc(100vh - 76px);
   gap: 12px;
 }
 .col-left, .col-right {
+  grid-row: 2;
   display: flex;
   flex-direction: column;
   gap: 12px;
   min-height: 0; /* allow children to shrink + scroll inside */
+  overflow: hidden;
+}
+.col-left {
+  overflow-y: auto;
+  scrollbar-gutter: stable;
 }
 
 /* Card panel base */
@@ -716,16 +722,19 @@ body {
   font-size: 12px; color: #6a5200;
 }
 
-/* ========== Bottom controls bar (spans full width) ========== */
+/* ========== Primary controls bar (spans full width above content) ========== */
 .controls-bar {
   grid-column: 1 / -1;
+  grid-row: 1;
   background: #fff;
   border: 1px solid #e5e5e0;
   border-radius: 8px;
   padding: 10px 16px;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 10px;
+  min-width: 0;
 }
 .ctrl-btn {
   font-family: inherit;
@@ -737,6 +746,7 @@ body {
   color: #2d2d2d;
   cursor: pointer;
   transition: all 0.15s;
+  white-space: nowrap;
 }
 .ctrl-btn:hover { background: #f0f0eb; }
 .ctrl-btn.primary {
@@ -752,6 +762,7 @@ body {
 .ctrl-btn.danger:hover { background: #fff5f5; }
 .ctrl-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 .resume-summary {
+  flex: 1 1 160px;
   max-width: 260px;
   color: #777;
   font-size: 11px;
@@ -771,6 +782,7 @@ body {
   color: #999;
   display: flex;
   gap: 12px;
+  min-width: 0;
 }
 .ctrl-stats b { color: #2d2d2d; }
 
@@ -1045,4 +1057,115 @@ body {
   font-size: 10px;
   padding: 10px;
   text-align: center;
+}
+
+/* ========== Responsive layout ========== */
+@media (max-width: 900px) {
+  html,
+  body {
+    height: auto;
+    min-height: 100%;
+    overflow: visible;
+  }
+
+  .header {
+    position: sticky;
+    top: 0;
+    z-index: 60;
+    padding: 9px 12px;
+  }
+
+  .main {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto auto auto;
+    width: calc(100% - 16px);
+    height: auto;
+    min-height: calc(100vh - 64px);
+    margin: 8px auto;
+    gap: 8px;
+  }
+
+  .controls-bar {
+    grid-column: 1;
+    grid-row: 1;
+    position: sticky;
+    top: 52px;
+    z-index: 40;
+    padding: 8px;
+    box-shadow: 0 4px 16px rgba(40, 40, 30, 0.08);
+  }
+
+  .col-left,
+  .col-right {
+    grid-column: 1;
+    overflow: visible;
+  }
+
+  .col-left { grid-row: 2; }
+  .col-right { grid-row: 3; }
+
+  .settings-edit-panel {
+    max-height: none;
+    overflow: visible;
+  }
+
+  .stream-panel {
+    min-height: 260px;
+    max-height: 420px;
+  }
+
+  .board-panel { min-height: 420px; }
+  .conv-row { min-height: 480px; }
+}
+
+@media (max-width: 600px) {
+  .header-left {
+    min-width: 0;
+    gap: 8px;
+  }
+
+  .header h1 {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .header .mode-tag { display: none; }
+
+  .controls-bar .ctrl-btn {
+    flex: 1 1 calc(50% - 5px);
+    padding-inline: 10px;
+  }
+
+  .controls-bar #resumeCheckpoint {
+    flex-basis: 100%;
+  }
+
+  .resume-summary {
+    flex-basis: 100%;
+    max-width: none;
+  }
+
+  .ctrl-divider { display: none; }
+
+  .ctrl-stats {
+    width: 100%;
+    margin-left: 0;
+    justify-content: space-between;
+  }
+
+  .quick-settings-row {
+    grid-template-columns: 1fr;
+    gap: 4px;
+  }
+
+  .segment-head {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .segment-controls {
+    width: 100%;
+    justify-content: flex-end;
+  }
 }
