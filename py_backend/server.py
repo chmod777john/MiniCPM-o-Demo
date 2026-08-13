@@ -575,7 +575,7 @@ class BackendProtocolSession:
                 ),
                 ref_audio_path=refs.llm_ref_audio_path,
                 prompt_wav_path=refs.tts_ref_audio_path,
-                length_penalty=float(resolved_config.get("length_penalty", 1.1)),
+                length_penalty=float(resolved_config.get("length_penalty", 1.0)),
                 sampling=resolved_config,
             )
         finally:

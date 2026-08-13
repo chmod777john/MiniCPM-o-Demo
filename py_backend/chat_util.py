@@ -78,7 +78,7 @@ def parse_worker_chat_request_message(msg: Dict[str, Any]) -> WorkerChatRequest:
         messages=payload.get("messages", []),
         streaming=bool(payload.get("streaming", True)),
         max_new_tokens=int(generation.get("max_new_tokens", 256)),
-        length_penalty=float(generation.get("length_penalty", 1.1)),
+        length_penalty=float(generation.get("length_penalty", 1.0)),
         max_slice_nums=max_slice_nums,
         generate_audio=generate_audio,
         tts_ref_audio=tts_ref_audio,

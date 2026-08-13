@@ -736,7 +736,7 @@ class GenerationConfig(BaseModel):
         description="Top-K 采样（0 禁用）"
     )
     length_penalty: float = Field(
-        1.1,
+        1.0,
         ge=0.1,
         le=5.0,
         description="长度惩罚系数。>1.0 抑制 EOS token 使输出更长更详细，=1.0 不惩罚，<1.0 鼓励更早结束"

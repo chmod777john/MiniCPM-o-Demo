@@ -250,7 +250,7 @@ class DuplexConfig(BaseModel):
         description="重复检测窗口大小"
     )
     length_penalty: float = Field(
-        1.1,
+        1.0,
         ge=0.1,
         le=5.0,
         description="长度惩罚系数。>1.0 抑制 turn_eos token 使模型当前 turn 输出更长，=1.0 不惩罚，<1.0 鼓励更早结束"

@@ -247,7 +247,7 @@ class ChatView(MiniCPMOProcessorMixin):
         tts_ref_audio=None,
         tts_sampling_params=None,
         output_audio_path=None,
-        length_penalty: float = 1.1,
+        length_penalty: float = 1.0,
     ):
         """基于已有 KV cache 做非流式 generate + 可选 TTS"""
         result = self._model.non_streaming_generate(
@@ -270,7 +270,7 @@ class ChatView(MiniCPMOProcessorMixin):
         generate_audio: bool = True,
         max_new_tokens: int = 256,
         do_sample: bool = True,
-        length_penalty: float = 1.1,
+        length_penalty: float = 1.0,
     ):
         """基于已有 KV cache 做流式 generate（yield StreamingChunk）"""
         import base64
@@ -436,7 +436,7 @@ class ChatView(MiniCPMOProcessorMixin):
         prompt = None
 
         with torch.no_grad():
-            length_penalty = request.generation.length_penalty if hasattr(request, 'generation') and request.generation else 1.1
+            length_penalty = request.generation.length_penalty if hasattr(request, 'generation') and request.generation else 1.0
             result = self._model.chat(
                 msgs=msgs,
                 sampling=do_sample,
@@ -648,7 +648,7 @@ class HalfDuplexView(MiniCPMOProcessorMixin):
         max_new_tokens: int = 256,
         do_sample: bool = True,
         enable_speculative_snapshot: bool = False,
-        length_penalty: float = 1.1,
+        length_penalty: float = 1.0,
     ) -> Generator[StreamingChunk, None, None]:
         """流式生成
         
@@ -771,7 +771,7 @@ class HalfDuplexView(MiniCPMOProcessorMixin):
         generate_audio: bool = True,
         max_new_tokens: int = 256,
         output_audio_path: Optional[str] = None,
-        length_penalty: float = 1.1,
+        length_penalty: float = 1.0,
     ) -> StreamingResponse:
         """完成一轮对话（便捷方法）
         

@@ -385,7 +385,7 @@ class PyTorchBackend:
         session_id: str,
         generate_audio: bool = True,
         max_new_tokens: int = 256,
-        length_penalty: float = 1.1,
+        length_penalty: float = 1.0,
     ) -> Iterator[StreamingChunk]:
         chat_view = self.processor.set_chat_mode()
         yield from chat_view.streaming_generate(
@@ -403,7 +403,7 @@ class PyTorchBackend:
         use_tts_template: bool = True,
         enable_thinking: bool = False,
         tts_ref_audio: Optional[np.ndarray] = None,
-        length_penalty: float = 1.1,
+        length_penalty: float = 1.0,
     ) -> Any:
         chat_view = self.processor.set_chat_mode()
         return chat_view.generate(
@@ -428,7 +428,7 @@ class PyTorchBackend:
         max_slice_nums: Optional[int] = None,
         enable_thinking: bool = False,
         tts_ref_audio: Optional[np.ndarray] = None,
-        length_penalty: float = 1.1,
+        length_penalty: float = 1.0,
     ) -> Any:
         chat_view = self.processor.set_chat_mode()
         tts_config = TTSConfig(enabled=generate_audio, mode=TTSMode.AUDIO_ASSISTANT)
@@ -494,7 +494,7 @@ class PyTorchBackend:
         system_prompt_text: Optional[str] = None,
         ref_audio_path: Optional[str] = None,
         prompt_wav_path: Optional[str] = None,
-        length_penalty: float = 1.1,
+        length_penalty: float = 1.0,
         sampling: Optional[Dict[str, Any]] = None,
     ) -> str:
         if sampling:
@@ -740,7 +740,7 @@ class PyTorchBackend:
         session_id: str,
         generate_audio: bool = True,
         max_new_tokens: int = 256,
-        length_penalty: float = 1.1,
+        length_penalty: float = 1.0,
     ) -> Iterator[StreamingChunk]:
         """Half-Duplex 生成（yield StreamingChunk）"""
         half_duplex_view = self.processor.set_half_duplex_mode()
@@ -758,7 +758,7 @@ class PyTorchBackend:
         generate_audio: bool = True,
         max_new_tokens: int = 256,
         output_audio_path: Optional[str] = None,
-        length_penalty: float = 1.1,
+        length_penalty: float = 1.0,
     ) -> StreamingResponse:
         """Half-Duplex 完成一轮（便捷方法）"""
         half_duplex_view = self.processor.set_half_duplex_mode()
