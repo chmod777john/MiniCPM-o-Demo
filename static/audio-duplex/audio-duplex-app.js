@@ -836,7 +836,7 @@ async function startSession() {
     }
 
     session = new RealtimeSession('adx', {
-        getMaxKvTokens: () => parseInt(document.getElementById('maxKvTokens').value, 10) || 8192,
+        getMaxKvTokens: () => parseInt(document.getElementById('maxKvTokens').value, 10) || 32768,
         getPlaybackDelayMs: () => parseInt(document.getElementById('playbackDelay').value, 10) || 200,
         outputSampleRate: SAMPLE_RATE_OUT,
         getWsUrl: () => {
