@@ -320,7 +320,7 @@ class MiniCPMO(BaseMiniCPMO):
         listen_top_k: Optional[int] = None,
         text_repetition_penalty: Optional[float] = None,
         text_repetition_window_size: Optional[int] = None,
-        length_penalty: float = 1.1,
+        length_penalty: float = 1.0,
         force_listen_override: bool = False,
     ):
         if self.duplex is None:

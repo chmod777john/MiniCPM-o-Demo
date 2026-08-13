@@ -2381,7 +2381,7 @@ class StreamDecoder:
         listen_prob_scale=1.0,
         text_repetition_penalty=1.05,
         text_repetition_window_size=512,
-        length_penalty=1.1,
+        length_penalty=1.0,
     ):
         """
         Args:
