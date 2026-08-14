@@ -254,6 +254,37 @@ export class SessionVideoRecorder {
     }
 
     /**
+     * Add one server text delta as a separate subtitle chunk. The normal
+     * page subtitle uses cumulative text, but burned captions need the delta
+     * so earlier chunks do not reappear inside every later caption.
+     * @param {string} text
+     */
+    pushSubtitleChunk(text) {
+        if (!this._subtitleEnabled || !text) return;
+        const msgs = this._subtitleMessages;
+        const last = msgs.length > 0 ? msgs[msgs.length - 1] : null;
+        if (last && last.active) last.active = false;
+
+        const now = performance.now();
+        if (!last) {
+            msgs.push({ text, active: true });
+            return;
+        }
+
+        // No backlog: replace the visible chunk once its minimum window ends.
+        if (msgs.length === 1
+            && last.displayStartedAt != null
+            && now - last.displayStartedAt >= this._subtitleMinDisplayMs) {
+            msgs[0] = { text, active: true, displayStartedAt: now };
+            return;
+        }
+
+        // Backlog: keep this delta in order; the renderer still draws one
+        // chunk at a time and advances the queue every 200ms.
+        msgs.push({ text, active: true });
+    }
+
+    /**
      * Finalize current subtitle turn. With no following turn, it remains
      * visible; queued turns are promoted by the renderer after 200ms.
      * Call from session.onSpeakEnd.

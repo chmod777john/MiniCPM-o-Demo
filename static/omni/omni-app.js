@@ -1467,15 +1467,15 @@ async function startSession() {
     });
     session.onMetrics = (data) => metricsPanel.update(data);
     session.onSystemLog = addSystemEntry;
-    session.onSpeakStart = (text) => {
+    session.onSpeakStart = (text, chunk) => {
         const handle = addSpeakEntry(text);
-        if (sessionRecorder) sessionRecorder.setSubtitleText(text);
+        if (sessionRecorder) sessionRecorder.setSubtitleText(chunk || text);
         return handle;
     };
-    session.onSpeakUpdate = (el, text) => {
+    session.onSpeakUpdate = (el, text, chunk) => {
         el.textContent = text;
         updateFsSpeakText(text);
-        if (sessionRecorder) sessionRecorder.setSubtitleText(text);
+        if (sessionRecorder) sessionRecorder.pushSubtitleChunk(chunk || text);
     };
     session.onSpeakEnd = () => {
         finishFsSpeak();

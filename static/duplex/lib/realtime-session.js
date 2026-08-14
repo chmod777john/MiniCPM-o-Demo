@@ -74,8 +74,8 @@ export class RealtimeSession {
     onSystemLog(text) {}
     onQueueUpdate(data) {}
     onQueueDone() {}
-    onSpeakStart(text) { return null; }
-    onSpeakUpdate(handle, text) {}
+    onSpeakStart(text, chunk) { return null; }
+    onSpeakUpdate(handle, text, chunk) {}
     onSpeakEnd() {}
     onListenResult(result) {}
     onExtraResult(result, recvTime) {}
@@ -540,9 +540,9 @@ export class RealtimeSession {
         if (result.text) {
             this.currentSpeakText += result.text;
             if (!this._speakHandle) {
-                this._speakHandle = this.onSpeakStart(this.currentSpeakText);
+                this._speakHandle = this.onSpeakStart(this.currentSpeakText, result.text);
             } else {
-                this.onSpeakUpdate(this._speakHandle, this.currentSpeakText);
+                this.onSpeakUpdate(this._speakHandle, this.currentSpeakText, result.text);
             }
         }
 
