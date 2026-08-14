@@ -16,6 +16,17 @@ DATASET="${DATASET:-new_tigan_static}"
 CKPT_NAME="${CKPT_NAME:-$(basename "${PT_PATH%.pt}")}"
 MASTER_PORT_BASE="${MASTER_PORT_BASE:-29741}"
 HF_MODULES_CACHE_ROOT="${HF_MODULES_CACHE_ROOT:-/tmp/o5_hf_modules_static_case_${CKPT_NAME}_$$}"
+JOB_PART="${JOB_PART:-0}"
+JOB_PARTS="${JOB_PARTS:-1}"
+
+if (( JOB_PARTS < 1 || JOB_PART < 0 || JOB_PART >= JOB_PARTS )); then
+  echo "invalid JOB_PART/JOB_PARTS: $JOB_PART/$JOB_PARTS" >&2
+  exit 2
+fi
+
+LOCAL_WORKERS=4
+GLOBAL_WORKER_COUNT=$((JOB_PARTS * LOCAL_WORKERS))
+GLOBAL_WORKER_OFFSET=$((JOB_PART * LOCAL_WORKERS))
 
 case "$DATASET" in
   new_tigan_static)
@@ -34,7 +45,7 @@ esac
 
 VIDEO_LIST="${VIDEO_LIST:-$VIDEO_LIST_DEFAULT}"
 PREFIX_DIR="${PREFIX_DIR:-${PHYSICAL_SET}/${CKPT_NAME}}"
-LOG_DIR="${LOG_DIR:-${SAVE_PATH}/${CKPT_NAME}/_logs/${PHYSICAL_SET}}"
+LOG_DIR="${LOG_DIR:-${SAVE_PATH}/${CKPT_NAME}/_logs/${PHYSICAL_SET}/part_${JOB_PART}_of_${JOB_PARTS}}"
 PYTHON="${VENV_DIR}/bin/python"
 TORCHRUN="${VENV_DIR}/bin/torchrun"
 
@@ -73,7 +84,8 @@ echo "[static-case] output=$SAVE_PATH/$CKPT_NAME/$PREFIX_DIR"
 echo "[static-case] model=$MODEL_PATH"
 echo "[static-case] checkpoint=$PT_PATH"
 echo "[static-case] backbone=$BACKBONE_DIR"
-echo "[static-case] topology=4 independent TP2 workers on 8 GPUs"
+echo "[static-case] job_part=$JOB_PART/$JOB_PARTS global_workers=$GLOBAL_WORKER_COUNT"
+echo "[static-case] topology=$LOCAL_WORKERS independent TP2 workers on this 8-GPU node"
 
 cd "$PROJECT_DIR"
 declare -a PIDS=()
@@ -82,18 +94,19 @@ declare -a GPU_PAIRS=("0,1" "2,3" "4,5" "6,7")
 
 for worker in "${!GPU_PAIRS[@]}"; do
   pair="${GPU_PAIRS[$worker]}"
+  global_worker=$((GLOBAL_WORKER_OFFSET + worker))
   port=$((MASTER_PORT_BASE + worker))
-  log="$LOG_DIR/worker_${worker}_gpu_${pair//,/}.log"
+  log="$LOG_DIR/worker_${global_worker}_gpu_${pair//,/}.log"
   hf_modules_cache="$HF_MODULES_CACHE_ROOT/$worker"
   mkdir -p "$hf_modules_cache"
-  echo "[static-case] launch worker=$worker visible=$pair log=$log"
+  echo "[static-case] launch local_worker=$worker global_worker=$global_worker visible=$pair log=$log"
   HF_MODULES_CACHE="$hf_modules_cache" CUDA_VISIBLE_DEVICES="$pair" "$TORCHRUN" \
     --nproc_per_node=2 --nnodes=1 --master_addr=127.0.0.1 --master_port="$port" \
     tools/o5eval/static_case_tp2_offline_runner.py \
       --model-path "$MODEL_PATH" --ckpt-path "$PT_PATH" --backbone-dir "$BACKBONE_DIR" \
       --ref-audio "$REF_AUDIO" --video-list "$VIDEO_LIST" \
       --save-path "$SAVE_PATH" --ckpt-name "$CKPT_NAME" --prefix-dir "$PREFIX_DIR" \
-      --worker-index "$worker" --worker-count 4 --run-index 1 --resume \
+      --worker-index "$global_worker" --worker-count "$GLOBAL_WORKER_COUNT" --run-index 1 --resume \
       --seed "$SEED" --slice-nums "$SLICE_NUMS" --chunk-ms 1000 \
       --deployment-mode tp2 --attn-implementation "${ATTN_IMPLEMENTATION:-sdpa}" \
       --decode-mode sampling --temperature "$TEMPERATURE" --top-k "$TOP_K" --top-p "$TOP_P" \
@@ -107,7 +120,7 @@ for worker in "${!GPU_PAIRS[@]}"; do
       --tts-fast --lmhead --fuse-vision-audio --batch-vision-feed \
       >"$log" 2>&1 &
   PIDS+=("$!")
-  LABELS+=("worker=$worker gpu=$pair")
+  LABELS+=("worker=$global_worker gpu=$pair")
 done
 
 rc=0
