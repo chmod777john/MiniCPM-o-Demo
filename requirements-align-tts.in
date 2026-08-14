@@ -1,0 +1,61 @@
+# Direct dependencies for the TTS-aligned Demo runtime.
+#
+# Shared inference packages follow Hou's cpmo_35A3 environment. Demo-only
+# service packages follow .venv-accel. Compile or resolve this input for Python
+# 3.11 and CUDA 12.8; the checked-in resolved snapshot is:
+#   requirements-align-tts-py311-cu128.lock
+#
+# minicpmo-utils==1.0.6 is installed separately with --no-deps because its
+# metadata pins librosa==0.9.0 while this runtime intentionally uses 0.11.0.
+
+--extra-index-url https://download.pytorch.org/whl/cu128
+
+# Build/runtime foundation
+setuptools==80.10.2
+torch==2.8.0+cu128
+torchvision==0.23.0+cu128
+torchaudio==2.8.0+cu128
+transformers==5.12.0
+accelerate==1.14.0
+safetensors==0.8.0
+triton==3.4.0
+
+# Qwen/MoE acceleration
+flash-linear-attention==0.4.2
+fla-core==0.4.2
+
+# MiniCPM-o media and model runtime
+pillow==10.4.0
+decord==0.6.0
+moviepy==2.1.2
+onnxruntime==1.21.0
+onnx==1.22.0
+HyperPyYAML==1.2.3
+einops==0.8.1
+
+# Demo service
+fastapi==0.137.0
+uvicorn==0.49.0
+httpx==0.28.1
+websockets==16.0
+python-multipart==0.0.32
+
+# Docs rendering
+Markdown==3.10.2
+Pygments==2.20.0
+
+# Audio and presets
+PyYAML==6.0.3
+librosa==0.11.0
+soxr==1.1.0
+soundfile==0.12.1
+edge-tts==7.2.8
+
+# Data and utilities
+pydantic==2.13.4
+numpy==1.26.4
+tqdm==4.68.2
+
+# Development and probes
+pytest==9.1.1
+pytest-asyncio==1.4.0
