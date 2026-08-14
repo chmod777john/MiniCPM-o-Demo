@@ -76,6 +76,7 @@ export class RealtimeSession {
     onQueueDone() {}
     onSpeakStart(text) { return null; }
     onSpeakUpdate(handle, text) {}
+    onSpeakDelta(text) {}
     onSpeakEnd() {}
     onListenResult(result) {}
     onExtraResult(result, recvTime) {}
@@ -544,6 +545,9 @@ export class RealtimeSession {
             } else {
                 this.onSpeakUpdate(this._speakHandle, this.currentSpeakText);
             }
+            // Keep the raw output delta available to recording-only consumers.
+            // The normal UI still receives the cumulative turn text above.
+            this.onSpeakDelta(result.text);
         }
 
         this.onExtraResult(result, recvTime);

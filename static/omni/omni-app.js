@@ -1469,13 +1469,14 @@ async function startSession() {
     session.onSystemLog = addSystemEntry;
     session.onSpeakStart = (text) => {
         const handle = addSpeakEntry(text);
-        if (sessionRecorder) sessionRecorder.setSubtitleText(text);
         return handle;
     };
     session.onSpeakUpdate = (el, text) => {
         el.textContent = text;
         updateFsSpeakText(text);
-        if (sessionRecorder) sessionRecorder.setSubtitleText(text);
+    };
+    session.onSpeakDelta = (text) => {
+        if (sessionRecorder) sessionRecorder.addSubtitleUnit(text);
     };
     session.onSpeakEnd = () => {
         finishFsSpeak();
