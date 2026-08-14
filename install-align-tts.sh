@@ -6,7 +6,7 @@ VENV_DIR="${VENV_DIR:-/user/weihongliang/MiniCPM-o-Demo-wt-o5-inference-refactor
 PYTHON="${PYTHON:-/user/houyueran/miniconda/envs/cpmo_35A3/bin/python}"
 MAX_JOBS="${MAX_JOBS:-$(nproc 2>/dev/null || echo 8)}"
 TORCH_INDEX="https://download.pytorch.org/whl/cu128"
-LOCK_FILE="${PROJECT_DIR}/requirements-align-tts-py311-cu128.lock"
+REQUIREMENTS_FILE="${PROJECT_DIR}/requirements-align-tts.in"
 
 # Do not inherit machine-level indexes such as an unavailable NVIDIA NGC
 # mirror. Callers can still provide HTTP(S)_PROXY or ALL_PROXY explicitly.
@@ -37,7 +37,7 @@ fi
 
 MAX_JOBS="${MAX_JOBS}" "${PYTHON_BIN}" -m pip install \
     --no-build-isolation \
-    -r "${LOCK_FILE}"
+    -r "${REQUIREMENTS_FILE}"
 
 # minicpmo-utils pins librosa==0.9.0 in its package metadata. Keep the Demo
 # service's librosa==0.11.0 by installing the utility package without deps.

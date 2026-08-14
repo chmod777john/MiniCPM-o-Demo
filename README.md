@@ -40,11 +40,11 @@ bash install-align-tts.sh
 
 直接依赖和关键版本位于 `requirements-align-tts.in`，Python 3.11 +
 CUDA 12.8 的完整环境快照位于
-`requirements-align-tts-py311-cu128.lock`。安装脚本使用完整快照；共享
-依赖采用 `cpmo_35A3` 的版本，Demo 独有的服务依赖采用 `.venv-accel`
-的版本。Librosa 固定为 `0.11.0`，随后以 `--no-deps` 安装
-`minicpmo-utils==1.0.6`，避免被其依赖元数据降级到 Librosa 0.9.0。该
-流程不会修改已有 `.venv-accel`。
+`requirements-align-tts-py311-cu128.lock`。安装脚本从 `.in` 解析依赖；
+lock 只记录已验证环境，不参与安装。共享依赖采用 `cpmo_35A3` 的版本，
+Demo 独有的服务依赖采用 `.venv-accel` 的版本。Librosa 固定为
+`0.11.0`，随后以 `--no-deps` 安装 `minicpmo-utils==1.0.6`，避免被其
+依赖元数据降级到 Librosa 0.9.0。该流程不会修改已有 `.venv-accel`。
 
 安装时可用的环境变量：
 

@@ -1,5 +1,7 @@
 # Fully resolved TTS-aligned runtime snapshot for Python 3.11 and CUDA 12.8.
 # Direct dependencies are maintained in requirements-align-tts.in.
+# This file records the validated environment and is not consumed by the
+# installer; it also includes optional CUDA extensions installed for that run.
 #
 # Shared packages use the versions installed in:
 #   /user/houyueran/miniconda/envs/cpmo_35A3
