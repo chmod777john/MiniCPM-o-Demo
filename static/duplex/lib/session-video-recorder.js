@@ -46,13 +46,8 @@ export class SessionVideoRecorder {
 
         // Subtitle state
         this._subtitleEnabled = false;
-        /**
-         * Subtitle turns in arrival order. Only the first item is rendered;
-         * later items are a temporal queue, never a visual stack.
-         * @type {Array<{text: string, active: boolean, displayStartedAt?: number}>}
-         */
+        /** @type {Array<{text: string, active: boolean}>} */
         this._subtitleMessages = [];
-        this._subtitleMinDisplayMs = 200;
         this._subtitleHeight = 25;          // % of canvas height from bottom
         this._subtitleOpacityBottom = 0.9;
         this._subtitleOpacityTop = 0.15;
@@ -219,9 +214,9 @@ export class SessionVideoRecorder {
     }
 
     /**
-     * Update subtitle text for the current turn. A new turn replaces the
-     * current item immediately when there is no timing backlog; otherwise it
-     * is queued and gets its own minimum display window.
+     * Update subtitle text for the current (active) turn.
+     * Creates a new message entry on first call after finalize/start.
+     * Subsequent calls update the same entry (streaming text).
      * @param {string} text
      */
     setSubtitleText(text) {
@@ -230,32 +225,16 @@ export class SessionVideoRecorder {
         const last = msgs.length > 0 ? msgs[msgs.length - 1] : null;
         if (last && last.active) {
             last.text = text;
-            return;
-        }
-
-        const now = performance.now();
-        if (!last) {
+        } else {
             msgs.push({ text, active: true });
-            return;
+            // Trim old messages to prevent unbounded growth (visual limit is height %)
+            while (msgs.length > 20) msgs.shift();
         }
-
-        // Normal case: the previous turn has had enough time on screen, so
-        // replace it immediately instead of creating a backlog.
-        if (msgs.length === 1
-            && last.displayStartedAt != null
-            && now - last.displayStartedAt >= this._subtitleMinDisplayMs) {
-            msgs[0] = { text, active: true, displayStartedAt: now };
-            return;
-        }
-
-        // Burst case: retain each turn for temporal replay. The renderer
-        // still draws only the first item, so queued turns cannot overlap.
-        msgs.push({ text, active: true });
     }
 
     /**
-     * Finalize current subtitle turn. With no following turn, it remains
-     * visible; queued turns are promoted by the renderer after 200ms.
+     * Finalize current subtitle turn — text stays visible and gradually fades
+     * as new messages push it upward (like fullscreen chat overlay).
      * Call from session.onSpeakEnd.
      */
     finalizeSubtitle() {
@@ -265,24 +244,6 @@ export class SessionVideoRecorder {
         if (last && last.active) {
             last.active = false;
         }
-    }
-
-    /**
-     * Promote a queued turn after the current item has had its minimum
-     * display interval. With no queue, the current item stays visible.
-     * @param {number} now
-     */
-    _advanceSubtitleQueue(now) {
-        const msgs = this._subtitleMessages;
-        if (msgs.length === 0) return;
-
-        const current = msgs[0];
-        if (current.displayStartedAt == null) current.displayStartedAt = now;
-        if (msgs.length < 2 || current.active) return;
-        if (now - current.displayStartedAt < this._subtitleMinDisplayMs) return;
-
-        msgs.shift();
-        msgs[0].displayStartedAt = now;
     }
 
     /**
@@ -479,8 +440,9 @@ export class SessionVideoRecorder {
     // ==================== Subtitle Rendering ====================
 
     /**
-     * Draw one subtitle at a time. Queued turns advance by time, never by
-     * vertical stacking, so they cannot hide one another.
+     * Draw stacked subtitle messages from bottom to top with gradient opacity.
+     * Mimics fullscreen chat overlay: newest message at bottom (opaque),
+     * older messages pushed upward and fading toward transparent.
      *
      * @param {CanvasRenderingContext2D} ctx
      * @param {number} w - Canvas width
@@ -488,13 +450,13 @@ export class SessionVideoRecorder {
      * @param {number} fontSize
      */
     _drawSubtitleStack(ctx, w, h, fontSize) {
-        this._advanceSubtitleQueue(performance.now());
-        const msg = this._subtitleMessages[0];
-        if (!msg || !msg.text) return;
+        const msgs = this._subtitleMessages;
+        if (msgs.length === 0) return;
 
         const padding = Math.round(fontSize * 0.5);
         const lineHeight = Math.round(fontSize * 1.4);
         const maxTextWidth = w - padding * 6;
+        const msgGap = Math.round(fontSize * 0.35);
         const radius = Math.round(fontSize * 0.4);
         const maxBgWidth = Math.min(w - padding * 2, maxTextWidth + padding * 3);
 
@@ -502,16 +464,28 @@ export class SessionVideoRecorder {
         ctx.textAlign = 'center';
         ctx.textBaseline = 'top';
 
-        // Keep the newest lines that fit. A block that is taller than the
-        // subtitle area must still render; the old stack renderer skipped it.
+        // Pre-compute each message's wrapped lines and block height
+        /** @type {Array<{lines: string[], blockH: number, msgIdx: number}>} */
+        const blocks = [];
+        for (let i = 0; i < msgs.length; i++) {
+            if (!msgs[i].text) continue;
+            const lines = this._wrapText(ctx, msgs[i].text, maxTextWidth);
+            blocks.push({
+                lines,
+                blockH: lines.length * lineHeight + padding * 2,
+                msgIdx: i,
+            });
+        }
+        if (blocks.length === 0) return;
+
+        // Draw from bottom to top, limited to subtitle area.
+        // Opacity is based on Y position (like CSS mask-image gradient):
+        //   bottom edge → opacityBottom,  ceiling → opacityTop
         const bottomMargin = Math.round(fontSize * 0.6);
         const subtitleFloor = h - bottomMargin;
         const subtitleCeiling = h - Math.round(h * this._subtitleHeight / 100);
         const areaHeight = subtitleFloor - subtitleCeiling;
-        const maxLines = Math.max(1, Math.floor((areaHeight - padding * 2) / lineHeight));
-        const lines = this._wrapText(ctx, msg.text, maxTextWidth).slice(-maxLines);
-        const blockH = lines.length * lineHeight + padding * 2;
-        const blockTop = subtitleFloor - blockH;
+        let curY = subtitleFloor;
 
         /** Map a Y coordinate to opacity via linear gradient across the subtitle area. */
         const opacityAtY = (y) => {
@@ -522,22 +496,32 @@ export class SessionVideoRecorder {
                 + t * (this._subtitleOpacityTop - this._subtitleOpacityBottom);
         };
 
-        const bgX = (w - maxBgWidth) / 2;
-        const textStartY = blockTop + padding;
+        for (let bi = blocks.length - 1; bi >= 0; bi--) {
+            const block = blocks[bi];
+            const blockTop = curY - block.blockH;
 
-        // Background pill — opacity based on block's vertical midpoint
-        const midY = blockTop + blockH / 2;
-        const bgOpacity = opacityAtY(midY);
-        ctx.fillStyle = `rgba(0, 0, 0, ${(0.55 * bgOpacity).toFixed(2)})`;
-        this._roundRect(ctx, bgX, blockTop, maxBgWidth, blockH, radius);
-        ctx.fill();
+            // Don't draw if block extends above the subtitle area ceiling
+            if (blockTop < subtitleCeiling) break;
 
-        // Text lines — each line gets its own position-based opacity
-        for (let li = 0; li < lines.length; li++) {
-            const lineY = textStartY + li * lineHeight;
-            const lineOpacity = opacityAtY(lineY);
-            ctx.fillStyle = `rgba(255, 255, 255, ${lineOpacity.toFixed(2)})`;
-            ctx.fillText(lines[li], w / 2, lineY);
+            const bgX = (w - maxBgWidth) / 2;
+            const textStartY = blockTop + padding;
+
+            // Background pill — opacity based on block's vertical midpoint
+            const midY = blockTop + block.blockH / 2;
+            const bgOpacity = opacityAtY(midY);
+            ctx.fillStyle = `rgba(0, 0, 0, ${(0.55 * bgOpacity).toFixed(2)})`;
+            this._roundRect(ctx, bgX, blockTop, maxBgWidth, block.blockH, radius);
+            ctx.fill();
+
+            // Text lines — each line gets its own position-based opacity
+            for (let li = 0; li < block.lines.length; li++) {
+                const lineY = textStartY + li * lineHeight;
+                const lineOpacity = opacityAtY(lineY);
+                ctx.fillStyle = `rgba(255, 255, 255, ${lineOpacity.toFixed(2)})`;
+                ctx.fillText(block.lines[li], w / 2, lineY);
+            }
+
+            curY = blockTop - msgGap;
         }
     }
 
