@@ -147,7 +147,11 @@ export class MetricsPanel {
     _updateState(data) {
         if (data.sessionId !== undefined) {
             const el = this._el('sessionIdDisplay');
-            if (el) el.textContent = data.sessionId ? data.sessionId.slice(0, 12) : '\u2014';
+            if (el) {
+                const sessionId = data.sessionId || '';
+                el.textContent = sessionId || '\u2014';
+                el.title = sessionId;
+            }
         }
         if (data.sessionState) {
             const el = this._el('sessionState');
