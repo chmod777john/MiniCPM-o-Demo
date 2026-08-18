@@ -134,6 +134,21 @@ def _get_input_payload(message: Dict[str, Any]) -> Dict[str, Any]:
     return value
 
 
+def _trace_groups(trace: Optional[Dict[str, Any]], *groups: str) -> Optional[Dict[str, Any]]:
+    if not trace:
+        return None
+    selected: Dict[str, Any] = {
+        key: trace[key]
+        for key in ("schema", "input_id")
+        if trace.get(key) is not None
+    }
+    for group in groups:
+        values = trace.get(group)
+        if values:
+            selected[group] = values
+    return selected if any(group in selected for group in groups) else None
+
+
 def _extract_frame_base64_list(payload: Dict[str, Any]) -> Optional[list[str]]:
     direct = payload.get("frame_base64_list") or payload.get("video_frames")
     if direct:
@@ -230,6 +245,7 @@ class BackendProtocolSession:
         self._op_lock = asyncio.Lock()
         self._active_response_id: Optional[str] = None
         self._fc_runtime: Optional[FcDuplexSessionRuntime] = None
+        self._replay_manifest: Optional[Dict[str, Any]] = None
 
     async def send(self, event_type: str, **fields: Any) -> None:
         data = {"type": event_type, **{k: v for k, v in fields.items() if v is not None}}
@@ -242,9 +258,14 @@ class BackendProtocolSession:
     async def init(self, params: Dict[str, Any]) -> None:
         if self.initialized:
             raise RuntimeError("session is already initialized")
+        if hasattr(self.backend, "set_trace_session_id"):
+            await asyncio.to_thread(self.backend.set_trace_session_id, self.session_id)
         if self.mode == "full_duplex":
             await self._init_duplex(params)
         self.initialized = True
+        init_trace = None
+        if hasattr(self.backend, "drain_trace_events"):
+            init_trace = await asyncio.to_thread(self.backend.drain_trace_events, None)
         await self.send(
             "session.created",
             session_id=self.session_id,
@@ -255,6 +276,8 @@ class BackendProtocolSession:
                 else None
             ),
             metrics=self._safe_metrics(),
+            replay_manifest=self._replay_manifest,
+            trace=init_trace,
         )
 
     async def resume(self, params: Dict[str, Any]) -> None:
@@ -264,6 +287,8 @@ class BackendProtocolSession:
             raise RuntimeError("session is already initialized")
         if self.mode != "full_duplex":
             raise RuntimeError("session.resume only supports full_duplex")
+        if hasattr(self.backend, "set_trace_session_id"):
+            await asyncio.to_thread(self.backend.set_trace_session_id, self.session_id)
         self._fc_runtime = FcDuplexSessionRuntime(
             session_id=self.session_id,
             backend=self.backend,
@@ -302,6 +327,10 @@ class BackendProtocolSession:
                 await self._drain_finalize()
                 await asyncio.to_thread(self.backend.duplex_cleanup)
 
+        if hasattr(self.backend, "set_trace_session_id"):
+            with suppress(Exception):
+                await asyncio.to_thread(self.backend.set_trace_session_id, None)
+
         if emit_event:
             with suppress(Exception):
                 await self.send("session.closed", session_id=self.session_id, reason=reason)
@@ -329,6 +358,9 @@ class BackendProtocolSession:
                     await asyncio.to_thread(self.backend.duplex_stop)
                     await self._drain_finalize()
                     await asyncio.to_thread(self.backend.duplex_cleanup)
+        if hasattr(self.backend, "set_trace_session_id"):
+            with suppress(Exception):
+                await asyncio.to_thread(self.backend.set_trace_session_id, None)
         await self.state.forget(self.session_id)
 
     async def _handle_fc_runtime_fatal(self, error: Exception) -> None:
@@ -555,7 +587,9 @@ class BackendProtocolSession:
 
             t0 = time.perf_counter()
 
-            def _duplex_step() -> tuple[Any, float, Dict[str, Any], Dict[str, Any]]:
+            def _duplex_step() -> tuple[Any, float, Dict[str, Any], Dict[str, Any], Optional[Dict[str, Any]]]:
+                if hasattr(self.backend, "set_trace_unit_id"):
+                    self.backend.set_trace_unit_id(input_id)
                 prefill_t0 = time.perf_counter()
                 prefill_result = self.backend.duplex_prefill(
                     audio_waveform=audio_waveform,
@@ -564,9 +598,12 @@ class BackendProtocolSession:
                 )
                 prefill_ms = (time.perf_counter() - prefill_t0) * 1000
                 result = self.backend.duplex_generate(force_listen=force_listen)
-                return result, prefill_ms, prefill_result, self._safe_metrics()
+                unit_trace = None
+                if hasattr(self.backend, "drain_trace_events"):
+                    unit_trace = self.backend.drain_trace_events(input_id)
+                return result, prefill_ms, prefill_result, self._safe_metrics(), unit_trace
 
-            result, prefill_ms, prefill_result, backend_metrics = await asyncio.to_thread(_duplex_step)
+            result, prefill_ms, prefill_result, backend_metrics, unit_trace = await asyncio.to_thread(_duplex_step)
             wall_clock_ms = (time.perf_counter() - t0) * 1000
             metrics = _result_metrics(result, backend_metrics)
             metrics["prefill_ms"] = round(prefill_ms, 1)
@@ -584,15 +621,17 @@ class BackendProtocolSession:
                     response_id=self._active_response_id,
                     input_id=input_id,
                     metrics=metrics,
+                    trace=unit_trace,
                 )
                 self._active_response_id = None
-                self._schedule_finalize()
+                self._schedule_finalize(input_id)
                 return
 
             if self._active_response_id is None:
                 self._active_response_id = str(payload.get("response_id") or f"resp_{uuid.uuid4().hex[:12]}")
 
             if result.text:
+                text_trace = _trace_groups(unit_trace, "llm", "tts", "runtime")
                 await self.send_output_delta(
                     "text",
                     session_id=self.session_id,
@@ -600,8 +639,11 @@ class BackendProtocolSession:
                     input_id=input_id,
                     text=result.text,
                     metrics=metrics,
+                    trace=text_trace,
                 )
             if result.audio_data:
+                audio_groups = ("token2wav",) if result.text else ("llm", "tts", "token2wav", "runtime")
+                audio_trace = _trace_groups(unit_trace, *audio_groups)
                 await self.send_output_delta(
                     "audio",
                     session_id=self.session_id,
@@ -609,6 +651,7 @@ class BackendProtocolSession:
                     input_id=input_id,
                     audio=result.audio_data,
                     metrics=metrics,
+                    trace=audio_trace,
                 )
             if result.end_of_turn:
                 await self.send_output_delta(
@@ -620,7 +663,7 @@ class BackendProtocolSession:
                 )
                 self._active_response_id = None
 
-            self._schedule_finalize()
+            self._schedule_finalize(input_id)
 
     def _safe_metrics(self) -> Dict[str, Any]:
         try:
@@ -636,7 +679,7 @@ class BackendProtocolSession:
             self._finalize_task.result()
             self._finalize_task = None
 
-    def _schedule_finalize(self) -> None:
+    def _schedule_finalize(self, input_id: Optional[str]) -> None:
         if self._finalize_task is not None and not self._finalize_task.done():
             raise RuntimeError("duplex finalize already in flight")
 
@@ -646,6 +689,12 @@ class BackendProtocolSession:
             try:
                 await asyncio.to_thread(self.backend.duplex_finalize)
             finally:
+                if hasattr(self.backend, "drain_trace_events"):
+                    with suppress(Exception):
+                        await asyncio.to_thread(self.backend.drain_trace_events, input_id)
+                if hasattr(self.backend, "set_trace_unit_id"):
+                    with suppress(Exception):
+                        await asyncio.to_thread(self.backend.set_trace_unit_id, None)
                 self._finalize_done.set()
 
         self._finalize_task = asyncio.create_task(_run())

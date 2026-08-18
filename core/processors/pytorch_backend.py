@@ -7,7 +7,10 @@ import base64
 import gc
 import io
 import logging
+import os
+import random
 import time
+from pathlib import Path
 from typing import Any, Dict, Iterator, List, Literal, Optional
 
 import numpy as np
@@ -69,6 +72,12 @@ class PyTorchBackend:
         self.processor = None
         self.spmd_is_driver = False
         self.spmd_is_worker = False
+        self._trace_controller: Optional[Any] = None
+        self._trace_writer: Optional[Any] = None
+        self._trace_capture_mode = "tokens"
+        self._token_trace_path: Optional[Path] = None
+        self._token_trace_dir: Optional[Path] = None
+        self._trace_unit_index = -1
 
         # Duplex 暂停超时监控 task
         self._duplex_timeout_task: Optional[asyncio.Task] = None
@@ -77,6 +86,12 @@ class PyTorchBackend:
         """加载模型（同步，在启动时调用）"""
         self.status = "loading"
         logger.info(f"[GPU {self.gpu_id}] Loading model from {self.model_path}...")
+        startup_seed = os.environ.get("O5_STARTUP_SEED")
+        if startup_seed is not None:
+            self._seed_process(int(startup_seed))
+            logger.info("[GPU %s] Startup seed set to %s", self.gpu_id, startup_seed)
+        if os.environ.get("O5_CAPTURE_LAYERS", "0").lower() in {"1", "true", "yes", "on"}:
+            os.environ["O5_LAYER_TRACE"] = "1"
 
         from core.processors.unified import UnifiedProcessor
 
@@ -97,9 +112,130 @@ class PyTorchBackend:
         logger.info(f"[GPU {self.gpu_id}] Model loaded successfully")
 
         self._install_spmd_method_wrappers()
+        self._install_token_trace_if_requested()
 
         # 检查模型各组件的 device 分布
         self._log_device_map()
+
+    @staticmethod
+    def _seed_process(seed: int) -> None:
+        random.seed(seed)
+        np.random.seed(seed)
+        torch.manual_seed(seed)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed_all(seed)
+
+    def set_trace_unit_id(self, unit_id: Optional[str]) -> None:
+        if self._trace_controller is None:
+            return
+        if unit_id is not None:
+            self._trace_unit_index += 1
+        self._trace_controller.set_unit(unit_id, self._trace_unit_index if unit_id is not None else None)
+
+    @staticmethod
+    def _safe_trace_session_id(session_id: str) -> str:
+        safe = "".join(ch if ch.isalnum() or ch in "._-" else "_" for ch in str(session_id))
+        return safe[:128] or "session"
+
+    def set_trace_session_id(self, session_id: Optional[str]) -> None:
+        if self._trace_controller is None:
+            return
+        if self._trace_writer is not None:
+            remaining = self._trace_controller.drain()
+            if remaining:
+                self._trace_writer.append(remaining)
+            self._trace_writer.close()
+            self._trace_writer = None
+        self._trace_controller.set_session(session_id)
+        self._trace_unit_index = -1
+        if session_id is None:
+            return
+
+        from core.tracing import SessionBundleWriter
+
+        if self._token_trace_dir is not None:
+            root = self._token_trace_dir / self._safe_trace_session_id(session_id)
+        elif self._token_trace_path is not None:
+            root = self._token_trace_path.parent
+        else:
+            return
+        self._trace_writer = SessionBundleWriter(
+            root,
+            source_implementation="demo-api",
+            manifest_extra={
+                "session_id": session_id,
+                "capture_mode": self._trace_capture_mode,
+                "deployment_mode": os.environ.get("O5_DEPLOY_MODE", "single_eager"),
+                "model_path": self.model_path,
+                "checkpoint": self.pt_path,
+            },
+        )
+        session_events = self._trace_controller.drain()
+        if session_events:
+            self._trace_writer.append(session_events)
+
+    def drain_trace_events(self, unit_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        if self._trace_controller is None:
+            return None
+        from core.tracing import group_trace_events
+
+        events = self._trace_controller.drain(unit_id)
+        if not events:
+            return None
+        serialized = self._trace_writer.append(events) if self._trace_writer is not None else events
+        return group_trace_events(serialized, input_id=unit_id)
+
+    def _install_token_trace_if_requested(self) -> None:
+        trace_path = os.environ.get("O5_TOKEN_TRACE_PATH")
+        trace_dir = os.environ.get("O5_TOKEN_TRACE_DIR")
+        if not (trace_path or trace_dir) or self.processor is None:
+            return
+        if self.spmd_is_worker:
+            logger.info("[GPU %s] Session trace disabled on TP2 worker rank", self.gpu_id)
+            return
+
+        model = getattr(self.processor, "model", None)
+        duplex = getattr(model, "duplex", None)
+        if model is None or duplex is None:
+            logger.warning("O5_TOKEN_TRACE_PATH set but duplex model is unavailable")
+            return
+
+        from core.tracing import (
+            DuplexTraceController,
+            ForcingPolicy,
+            MemoryTraceSink,
+            ReplayReference,
+        )
+
+        self._token_trace_dir = Path(trace_dir) if trace_dir else None
+        self._token_trace_path = Path(trace_path) if trace_path else None
+        self._trace_capture_mode = os.environ.get("O5_SESSION_TRACE_MODE", "tokens").strip().lower()
+        reference_path = os.environ.get("O5_REPLAY_REFERENCE")
+        forcing = ForcingPolicy.parse(os.environ.get("O5_REPLAY_FORCING", "none"))
+        if forcing.names() and not reference_path:
+            raise RuntimeError("O5_REPLAY_FORCING requires O5_REPLAY_REFERENCE")
+        reference = ReplayReference.load(Path(reference_path)) if reference_path else None
+        self._trace_controller = DuplexTraceController(
+            sink=MemoryTraceSink(),
+            capture_mode=self._trace_capture_mode,
+            reference=reference,
+            forcing=forcing,
+            tp_driver=self.spmd_is_driver,
+            capture_layers=os.environ.get("O5_CAPTURE_LAYERS", "0").lower() in {"1", "true", "yes", "on"},
+        ).install(duplex)
+        target = self._token_trace_path if self._token_trace_path is not None else f"{self._token_trace_dir}/<session>"
+        logger.info(
+            "[GPU %s] Session trace enabled: target=%s mode=%s forcing=%s reference=%s",
+            self.gpu_id,
+            target,
+            self._trace_capture_mode,
+            forcing.names(),
+            reference_path,
+        )
+
+    def _get_spmd_mirror(self) -> Any:
+        model = getattr(self.processor, "model", None)
+        return getattr(model, "_spmd_mirror", None)
 
     def _get_spmd_noop(self) -> Any:
         model = getattr(self.processor, "model", None)

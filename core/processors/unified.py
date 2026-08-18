@@ -919,6 +919,47 @@ class DuplexView:
             self._ref_audio_cache = audio
         
         return audio
+    def apply_config_to_model(self) -> None:
+        """Apply the current DuplexConfig to the live vendored duplex object."""
+        config_values = self.config.model_dump() if hasattr(self.config, "model_dump") else self.config.dict()
+        model_config = getattr(self._model, "_duplex_config", None)
+        if isinstance(model_config, dict):
+            model_config.update(config_values)
+
+        duplex = getattr(self._model, "duplex", None)
+        if duplex is None:
+            return
+
+        for attr in (
+            "generate_audio",
+            "ls_mode",
+            "max_new_speak_tokens_per_chunk",
+            "text_repetition_penalty",
+            "temperature",
+            "top_k",
+            "top_p",
+            "text_repetition_window_size",
+            "listen_prob_scale",
+            "force_listen_count",
+        ):
+            if hasattr(duplex, attr):
+                setattr(duplex, attr, getattr(self.config, attr))
+
+        if hasattr(duplex, "tts_temperature"):
+            current_temperature = getattr(duplex, "tts_temperature")
+            temperature = float(self.config.tts_temperature)
+            if torch.is_tensor(current_temperature):
+                dtype = current_temperature.dtype
+                device = current_temperature.device
+            else:
+                dtype = torch.float32
+                try:
+                    device = next(self._model.parameters()).device
+                except StopIteration:
+                    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+            duplex.tts_temperature = torch.tensor([temperature], dtype=dtype, device=device)
+        if hasattr(duplex, "tts_repetition_penalty"):
+            duplex.tts_repetition_penalty = float(self.config.tts_repetition_penalty)
     
     def prepare(
         self,
