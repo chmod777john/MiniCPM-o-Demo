@@ -39,7 +39,7 @@ export GATEWAY_PORT GATEWAY_INTERNAL_PORT BACKEND_PORT WORKER_PORT
 export ENABLE_FRP=0
 export LOG_DIR="${RUN_DIR}/service_logs"
 export O5_TOKEN_TRACE_DIR="${PROJECT_DIR}/data/sessions"
-export O5_SESSION_TRACE_MODE=replay
+export O5_SESSION_TRACE_MODE=tokens
 
 echo "[api-trace-smoke] run_dir=${RUN_DIR}"
 echo "[api-trace-smoke] max_units=${MAX_UNITS}"
@@ -86,12 +86,9 @@ session_dir="${O5_TOKEN_TRACE_DIR}/${session_id}"
 
 deadline=$((SECONDS + 60))
 while [ "${SECONDS}" -lt "${deadline}" ]; do
-    if [ -s "${session_dir}/stream.jsonl" ] \
-        && [ -s "${session_dir}/model_trace.jsonl" ] \
-        && [ -s "${session_dir}/trace_manifest.json" ]; then
-        completed="$("${PYTHON}" -c 'import json, sys; print(str(bool(json.load(open(sys.argv[1], encoding="utf-8")).get("completed"))).lower())' "${session_dir}/trace_manifest.json")"
+    if [ -s "${session_dir}/stream.jsonl" ]; then
         ended="$("${PYTHON}" -c 'import json, sys; print(str(json.load(open(sys.argv[1], encoding="utf-8")).get("ended_at") is not None).lower())' "${session_dir}/meta.json" 2>/dev/null || true)"
-        if [ "${completed}" = "true" ] && [ "${ended}" = "true" ]; then
+        if [ "${ended}" = "true" ]; then
             break
         fi
     fi
@@ -106,35 +103,44 @@ from pathlib import Path
 session_dir = Path(sys.argv[1])
 summary_path = Path(sys.argv[2])
 expected_units = int(sys.argv[3])
-required = ["meta.json", "stream.jsonl", "model_trace.jsonl", "trace_manifest.json"]
+required = ["meta.json", "stream.jsonl"]
 missing = [name for name in required if not (session_dir / name).is_file() or not (session_dir / name).stat().st_size]
 if missing:
     raise SystemExit(f"missing or empty session artifacts: {missing}")
 
 summary = json.loads(summary_path.read_text(encoding="utf-8"))
-manifest = json.loads((session_dir / "trace_manifest.json").read_text(encoding="utf-8"))
 meta = json.loads((session_dir / "meta.json").read_text(encoding="utf-8"))
-tensors = list((session_dir / "trace_tensors").glob("*.pt"))
 units = len(summary.get("units") or [])
 if units != expected_units:
     raise SystemExit(f"unit count mismatch: expected={expected_units} actual={units}")
-if manifest.get("completed") is not True:
-    raise SystemExit("trace manifest is not completed")
 if meta.get("ended_at") is None:
     raise SystemExit("gateway session recording is not closed")
-if not tensors:
-    raise SystemExit("trace_tensors contains no tensor payloads")
+for unexpected in ("model_trace.jsonl", "trace_manifest.json", "trace_tensors"):
+    if (session_dir / unexpected).exists():
+        raise SystemExit(f"tokens mode unexpectedly created replay sidecar: {unexpected}")
 
-events = sum(1 for line in (session_dir / "model_trace.jsonl").read_text(encoding="utf-8").splitlines() if line.strip())
-stream_frames = sum(1 for line in (session_dir / "stream.jsonl").read_text(encoding="utf-8").splitlines() if line.strip())
+rows = [json.loads(line) for line in (session_dir / "stream.jsonl").read_text(encoding="utf-8").splitlines() if line.strip()]
+frames = [row.get("frame") or {} for row in rows]
+debug = [frame for frame in frames if frame.get("type") == "debug"]
+business = [frame for frame in frames if frame.get("type") != "debug"]
+kinds = {frame.get("kind") for frame in debug}
+missing_kinds = {"llm.chunk", "tts.chunk", "t2w.chunk"} - kinds
+if missing_kinds:
+    raise SystemExit(f"missing debug kinds: {sorted(missing_kinds)}")
+if any("trace" in frame for frame in business):
+    raise SystemExit("business frame unexpectedly contains inline trace")
+for frame in debug:
+    forbidden = {"shape", "dtype", "numel", "sha256", "_tensor", "probabilities"}
+    if forbidden.intersection(frame):
+        raise SystemExit(f"debug frame contains tensor metadata: {frame.get('kind')}")
 print(json.dumps({
     "session_id": meta.get("session_id"),
     "session_dir": str(session_dir),
     "units": units,
-    "model_trace_events": events,
-    "stream_frames": stream_frames,
-    "trace_tensors": len(tensors),
-    "completed": manifest.get("completed"),
+    "stream_frames": len(rows),
+    "debug_frames": len(debug),
+    "debug_kinds": sorted(kinds),
+    "replay_sidecar": False,
 }, ensure_ascii=False, indent=2))
 PY
 

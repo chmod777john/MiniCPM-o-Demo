@@ -240,6 +240,13 @@ def load_session_trace_events(root: Path, *, load_tensors: bool = False) -> list
     if not events:
         for row in _read_jsonl(root / "stream.jsonl"):
             frame = row.get("frame") if isinstance(row.get("frame"), dict) else {}
+            if frame.get("type") == "debug" and isinstance(frame.get("kind"), str):
+                events.append({
+                    key: value
+                    for key, value in frame.items()
+                    if key not in {"type", "server_send_ts"}
+                })
+                continue
             trace = frame.get("trace") if isinstance(frame, dict) else None
             if not isinstance(trace, dict):
                 continue
@@ -339,6 +346,8 @@ class DuplexTraceController:
     ) -> None:
         if capture_mode not in {"tokens", "replay"}:
             raise ValueError("capture_mode must be 'tokens' or 'replay'")
+        if capture_layers and capture_mode != "replay":
+            raise ValueError("capture_layers requires capture_mode='replay'")
         self.sink = sink or MemoryTraceSink()
         self.capture_mode = capture_mode
         self.reference = reference
@@ -355,6 +364,8 @@ class DuplexTraceController:
         self._force_tts_samples = False
         self._active_tts_step = 0
         self._inside_tts_chunk = False
+        self._pending_tts_source_ids: list[int] = []
+        self._pending_tts_end_of_turn: list[bool] = []
         self._vocoder_rand_noise: Optional[torch.Tensor] = None
         self._vocoder_forced = False
         self._t2w_token_pos = 0
@@ -469,8 +480,9 @@ class DuplexTraceController:
 
     def _install_llm(self, duplex: Any) -> None:
         decoder = duplex.decoder
-        original_feed = self._save_original(decoder, "feed") if self.capture_mode == "replay" else None
-        original_decode = self._save_original(decoder, "decode")
+        detailed = self.capture_mode == "replay"
+        original_feed = self._save_original(decoder, "feed") if detailed else None
+        original_decode = self._save_original(decoder, "decode") if detailed or self.forcing.llm_tokens else None
         original_generate = self._save_original(duplex, "streaming_generate")
         trace = self
         self._install_layer_hooks(duplex)
@@ -502,7 +514,6 @@ class DuplexTraceController:
             return (logits, hidden) if return_logits else None
 
         def traced_decode(decoder_self, logits, *args, **kwargs):
-            local_argmax = int(logits.detach().reshape(-1).argmax().item())
             forced = trace.forcing.llm_tokens
             if forced:
                 if trace.reference is None:
@@ -515,35 +526,38 @@ class DuplexTraceController:
                 if trace.tp_driver and torch.distributed.is_available() and torch.distributed.is_initialized():
                     torch.distributed.broadcast(selected, src=0)
             else:
+                assert original_decode is not None
                 selected = original_decode(logits, *args, **kwargs)
-            selected_id = int(selected.detach().reshape(-1)[0].item())
-            trace._emit(
-                "llm.decode",
-                selected_token_id=selected_id,
-                local_argmax_token_id=local_argmax,
-                teacher_forced=forced,
-                logits=_tensor_meta(logits, keep_value=trace.capture_mode == "replay"),
-            )
+            if detailed:
+                trace._emit(
+                    "llm.decode",
+                    selected_token_id=int(selected.detach().reshape(-1)[0].item()),
+                    local_argmax_token_id=int(logits.detach().reshape(-1).argmax().item()),
+                    teacher_forced=forced,
+                    logits=_tensor_meta(logits, keep_value=True),
+                )
             return selected
 
         def traced_generate(duplex_self, *args, **kwargs):
             before = len(getattr(duplex_self, "total_ids", []))
             result = original_generate(*args, **kwargs)
             accepted = list(getattr(duplex_self, "total_ids", []))[before:]
-            trace._emit(
-                "llm.accepted",
-                token_ids=[int(item) for item in accepted],
-                text=str(_result_value(result, "text", "") or ""),
-                is_listen=bool(_result_value(result, "is_listen", False)),
-                end_of_turn=bool(_result_value(result, "end_of_turn", False)),
-            )
+            fields = {
+                "token_ids": [int(item) for item in accepted],
+                "is_listen": bool(_result_value(result, "is_listen", False)),
+                "end_of_turn": bool(_result_value(result, "end_of_turn", False)),
+            }
+            if detailed:
+                fields["text"] = str(_result_value(result, "text", "") or "")
+            trace._emit("llm.accepted" if detailed else "llm.chunk", **fields)
             if bool(_result_value(result, "end_of_turn", False)):
                 trace.turn_id += 1
             return result
 
         if original_feed is not None:
             decoder.feed = types.MethodType(traced_feed, decoder)
-        decoder.decode = types.MethodType(traced_decode, decoder)
+        if original_decode is not None:
+            decoder.decode = types.MethodType(traced_decode, decoder)
         duplex.streaming_generate = types.MethodType(traced_generate, duplex)
 
     def _install_condition(self, duplex: Any) -> None:
@@ -553,6 +567,10 @@ class DuplexTraceController:
         def traced_convert(duplex_self, results):
             actual = original_convert(results)
             used = actual
+            source_ids = [int(item[0]) for item in results]
+            source_end_of_turn = [bool(item[2]) for item in results]
+            trace._pending_tts_source_ids = source_ids
+            trace._pending_tts_end_of_turn = source_end_of_turn
             forced = trace.forcing.tts_condition
             if forced:
                 if trace.reference is None:
@@ -562,14 +580,15 @@ class DuplexTraceController:
                     raise RuntimeError(
                         f"TTS condition shape mismatch: reference={tuple(used.shape)} actual={tuple(actual.shape)}"
                     )
-            trace._emit(
-                "tts.condition",
-                llm_token_ids=[int(item[0]) for item in results],
-                end_of_turn=[bool(item[2]) for item in results],
-                actual_condition=_tensor_meta(actual, keep_value=trace.capture_mode == "replay"),
-                used_condition=_tensor_meta(used, keep_value=trace.capture_mode == "replay"),
-                teacher_forced=forced,
-            )
+            if trace.capture_mode == "replay":
+                trace._emit(
+                    "tts.condition",
+                    llm_token_ids=source_ids,
+                    end_of_turn=source_end_of_turn,
+                    actual_condition=_tensor_meta(actual, keep_value=True),
+                    used_condition=_tensor_meta(used, keep_value=True),
+                    teacher_forced=forced,
+                )
             return used
 
         duplex._convert_results_to_tts_input = types.MethodType(traced_convert, duplex)
@@ -579,7 +598,9 @@ class DuplexTraceController:
         if tts is None or not hasattr(tts, "generate_chunk"):
             return
         original_generate = self._save_original(tts, "generate_chunk")
-        self._original_multinomial = torch.multinomial
+        detailed = self.capture_mode == "replay"
+        if detailed or self.forcing.tts_tokens:
+            self._original_multinomial = torch.multinomial
         trace = self
 
         def traced_multinomial(input_tensor, num_samples, replacement=False, *, generator=None, out=None):
@@ -616,16 +637,18 @@ class DuplexTraceController:
             if out is not None and trace._force_tts_samples:
                 out.copy_(selected)
                 selected = out
-            trace._emit(
-                "tts.sample",
-                step=step,
-                selected_token_ids=_flat_ints(selected),
-                teacher_forced=trace._force_tts_samples,
-                probabilities=_tensor_meta(input_tensor, keep_value=trace.capture_mode == "replay"),
-            )
+            if detailed:
+                trace._emit(
+                    "tts.sample",
+                    step=step,
+                    selected_token_ids=_flat_ints(selected),
+                    teacher_forced=trace._force_tts_samples,
+                    probabilities=_tensor_meta(input_tensor, keep_value=True),
+                )
             return selected
 
-        torch.multinomial = traced_multinomial
+        if self._original_multinomial is not None:
+            torch.multinomial = traced_multinomial
 
         def traced_generate(tts_self, *args, **kwargs):
             forced = trace.forcing.tts_tokens
@@ -640,17 +663,26 @@ class DuplexTraceController:
             finally:
                 trace._inside_tts_chunk = False
                 trace._force_tts_samples = False
-            trace._emit(
-                "tts.chunk",
-                new_tokens={
-                    **_token_meta(new_tokens),
-                    **({"_tensor": new_tokens.detach().contiguous().cpu().clone()} if trace.capture_mode == "replay" else {}),
-                },
-                teacher_forced=forced,
-                text_start_pos=int(kwargs.get("text_start_pos") or 0),
-                max_new_token=int(kwargs.get("max_new_token") or 0),
-                min_new_tokens=int(kwargs.get("min_new_tokens") or 0),
-            )
+            fields: dict[str, Any] = {
+                "source_llm_token_ids": list(trace._pending_tts_source_ids),
+            }
+            if detailed:
+                fields.update({
+                    "source_end_of_turn": list(trace._pending_tts_end_of_turn),
+                    "teacher_forced": forced,
+                    "new_tokens": {
+                        **_token_meta(new_tokens),
+                        "_tensor": new_tokens.detach().contiguous().cpu().clone(),
+                    },
+                    "text_start_pos": int(kwargs.get("text_start_pos") or 0),
+                    "max_new_token": int(kwargs.get("max_new_token") or 0),
+                    "min_new_tokens": int(kwargs.get("min_new_tokens") or 0),
+                })
+            else:
+                fields["token_ids"] = _flat_ints(new_tokens)
+            trace._emit("tts.chunk", **fields)
+            trace._pending_tts_source_ids = []
+            trace._pending_tts_end_of_turn = []
             return new_tokens, cache
 
         tts.generate_chunk = types.MethodType(traced_generate, tts)
@@ -658,7 +690,8 @@ class DuplexTraceController:
     def _install_token2wav(self, duplex: Any) -> None:
         if not hasattr(duplex, "_generate_waveform_from_tokens"):
             return
-        original_waveform = self._save_original(duplex, "_generate_waveform_from_tokens")
+        detailed = self.capture_mode == "replay"
+        original_waveform = self._save_original(duplex, "_generate_waveform_from_tokens") if detailed else None
         audio_tokenizer = getattr(getattr(getattr(duplex, "model", None), "tts", None), "audio_tokenizer", None)
         trace = self
 
@@ -675,7 +708,8 @@ class DuplexTraceController:
             )
             return output
 
-        duplex._generate_waveform_from_tokens = types.MethodType(traced_waveform, duplex)
+        if original_waveform is not None:
+            duplex._generate_waveform_from_tokens = types.MethodType(traced_waveform, duplex)
         if audio_tokenizer is None or not hasattr(audio_tokenizer, "stream"):
             return
         original_stream = self._save_original(audio_tokenizer, "stream")
@@ -695,7 +729,7 @@ class DuplexTraceController:
                 samples = 0
             sample_start = trace._t2w_sample_pos
             trace._emit(
-                "token2wav.call",
+                "token2wav.call" if detailed else "t2w.chunk",
                 input_token_ids=token_ids,
                 input_range=[token_start, token_start + len(token_ids)],
                 committed_range=[token_start, token_start + committed],
@@ -719,6 +753,8 @@ class DuplexTraceController:
         rand_noise = getattr(decoder, "rand_noise", None)
         if not torch.is_tensor(rand_noise):
             return
+        if self.capture_mode != "replay" and not self.forcing.vocoder_state:
+            return
         forced = self.forcing.vocoder_state
         if forced:
             if self.reference is None:
@@ -740,7 +776,7 @@ class DuplexTraceController:
         assert self._vocoder_rand_noise is not None
         self._emit(
             "vocoder.state",
-            rand_noise=_tensor_meta(self._vocoder_rand_noise, keep_value=self.capture_mode == "replay"),
+            rand_noise=_tensor_meta(self._vocoder_rand_noise, keep_value=True),
             teacher_forced=self._vocoder_forced,
         )
 
@@ -782,3 +818,53 @@ def group_trace_events(events: Iterable[dict[str, Any]], *, input_id: Optional[s
         else:
             grouped["runtime"].append(event)
     return {key: value for key, value in grouped.items() if value not in (None, [], {})}
+
+
+def debug_trace_events(events: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Project internal trace events into small chunk-level API debug frames."""
+
+    projected: list[dict[str, Any]] = []
+    identity_fields = ("schema", "event_id", "session_id", "input_id", "unit_index", "turn_id", "ts")
+    for event in events:
+        kind = str(event.get("kind") or "")
+        identity = {key: event[key] for key in identity_fields if event.get(key) is not None}
+        if kind in {"llm.chunk", "t2w.chunk"} or (kind == "tts.chunk" and "token_ids" in event):
+            projected.append(dict(event))
+            continue
+        if kind == "llm.accepted":
+            projected.append({
+                **identity,
+                "kind": "llm.chunk",
+                "token_ids": list(event.get("token_ids") or []),
+                "is_listen": bool(event.get("is_listen", False)),
+                "end_of_turn": bool(event.get("end_of_turn", False)),
+            })
+            continue
+        if kind == "tts.chunk":
+            new_tokens = event.get("new_tokens") if isinstance(event.get("new_tokens"), Mapping) else {}
+            projected.append({
+                **identity,
+                "kind": "tts.chunk",
+                "source_llm_token_ids": list(event.get("source_llm_token_ids") or []),
+                "token_ids": list(new_tokens.get("tokens") or []),
+            })
+            continue
+        if kind == "token2wav.call":
+            projected.append({
+                **identity,
+                "kind": "t2w.chunk",
+                "input_token_ids": list(event.get("input_token_ids") or []),
+                "input_range": list(event.get("input_range") or []),
+                "committed_range": list(event.get("committed_range") or []),
+                "lookahead_range": list(event.get("lookahead_range") or []),
+                "output_sample_range": list(event.get("output_sample_range") or []),
+                "last_chunk": bool(event.get("last_chunk", False)),
+            })
+    # ``llm.chunk`` is emitted after ``streaming_generate`` returns, although
+    # it conceptually precedes the TTS/T2W work captured inside that call.
+    # Present completed-unit debug frames in pipeline order while preserving
+    # the natural TTS/T2W interleaving.
+    return (
+        [event for event in projected if event.get("kind") == "llm.chunk"]
+        + [event for event in projected if event.get("kind") != "llm.chunk"]
+    )

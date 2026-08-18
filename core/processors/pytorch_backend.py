@@ -154,7 +154,7 @@ class PyTorchBackend:
             self._trace_writer = None
         self._trace_controller.set_session(session_id)
         self._trace_unit_index = -1
-        if session_id is None:
+        if session_id is None or self._trace_capture_mode != "replay":
             return
 
         from core.tracing import SessionBundleWriter
@@ -180,16 +180,17 @@ class PyTorchBackend:
         if session_events:
             self._trace_writer.append(session_events)
 
-    def drain_trace_events(self, unit_id: Optional[str]) -> Optional[Dict[str, Any]]:
+    def drain_trace_events(self, unit_id: Optional[str]) -> Optional[list[Dict[str, Any]]]:
         if self._trace_controller is None:
             return None
-        from core.tracing import group_trace_events
+        from core.tracing import debug_trace_events
 
         events = self._trace_controller.drain(unit_id)
         if not events:
             return None
-        serialized = self._trace_writer.append(events) if self._trace_writer is not None else events
-        return group_trace_events(serialized, input_id=unit_id)
+        if self._trace_writer is not None:
+            self._trace_writer.append(events)
+        return debug_trace_events(events) or None
 
     def _install_token_trace_if_requested(self) -> None:
         trace_path = os.environ.get("O5_TOKEN_TRACE_PATH")

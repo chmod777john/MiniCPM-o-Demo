@@ -33,10 +33,19 @@ TENSOR_FIELDS = {
 TOKEN_FIELDS = {
     "llm.decode": ("selected_token_id", "local_argmax_token_id"),
     "llm.accepted": ("token_ids",),
+    "llm.chunk": ("token_ids", "is_listen", "end_of_turn"),
     "tts.condition": ("llm_token_ids", "end_of_turn"),
     "tts.sample": ("selected_token_ids",),
-    "tts.chunk": ("new_tokens.tokens",),
+    "tts.chunk": ("new_tokens.tokens", "token_ids", "source_llm_token_ids"),
     "token2wav.call": (
+        "input_token_ids",
+        "input_range",
+        "committed_range",
+        "lookahead_range",
+        "output_sample_range",
+        "last_chunk",
+    ),
+    "t2w.chunk": (
         "input_token_ids",
         "input_range",
         "committed_range",
