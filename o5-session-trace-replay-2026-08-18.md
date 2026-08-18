@@ -2,6 +2,8 @@
 
 实现 commit：`630c51947dc75ddc63688bd6eee4e7beea732e78`
 
+API chunk debug 收敛 commit：`d750fdd`
+
 ## 目标
 
 同一份端到端 session 可以由 Demo API 或 Canonical 录制，并从会话起点在以下运行时重放：
@@ -19,7 +21,29 @@ Replay 可独立强制以下状态，同时仍执行被测模块的真实 forwar
 
 Replay 从 session 起点重新执行 `prepare -> (prefill -> generate -> finalize)*`，由真实执行重建 LLM/TTS KV cache，不支持从任意中间 KV 快照起跑。
 
-## Bundle 格式
+## 两种记录模式
+
+### 普通 API debug
+
+`O5_SESSION_TRACE_MODE=tokens` 面向在线 API 排查。它只发送三种独立 WebSocket 帧：
+
+```json
+{"type":"debug","kind":"llm.chunk","token_ids":[...],"is_listen":false,"end_of_turn":false}
+{"type":"debug","kind":"tts.chunk","source_llm_token_ids":[...],"token_ids":[...]}
+{"type":"debug","kind":"t2w.chunk","input_token_ids":[...],"committed_range":[...],"lookahead_range":[...],"output_sample_range":[...]}
+```
+
+事件另带 `session_id`、`input_id`、`unit_index`、`turn_id`，用于还原 unit 和 turn 关系。粒度规则是：
+
+- 每次 `streaming_generate()` 产生一个 `llm.chunk`。
+- 每次 TTS `generate_chunk()` 产生一个 `tts.chunk`。
+- 每次实际调用 `audio_tokenizer.stream()` 产生一个 `t2w.chunk`；受 buffer 和 prelook 影响，一个 TTS chunk 可以对应零个、一个或多个 T2W chunk。
+
+该模式不记录逐 token decode/sample，不读取 tensor 内容，不计算 shape、dtype、numel 或 hash，也不创建 `model_trace.jsonl`、`trace_manifest.json` 和 `trace_tensors/`。Gateway 忠实写入的 `stream.jsonl` 是事实来源。文字、音频、listen 等业务帧不混入 `trace` 字段。
+
+### 完整 replay sidecar
+
+`O5_SESSION_TRACE_MODE=replay` 面向数值对齐和 teacher forcing。Backend 会额外创建以下 sidecar：
 
 ```text
 session_dir/
@@ -37,11 +61,22 @@ session_dir/
 - `stream.jsonl` 与 `blob/` 是不可变输入。API recorder 会保存原始 `.f32` 音频和 JPEG。
 - `model_trace.jsonl` 保存事件索引和轻量字段。
 - `trace_tensors/` 保存 condition、hidden、logits、概率分布和可选逐层 hidden。
-- `capture-mode=tokens` 只记录 lineage；`capture-mode=replay` 才能重放 condition/vocoder 并做数值比较。
+- `capture-mode=replay` 才能重放 condition/vocoder、保存 tensor 并做数值比较。
 
 每个事件都带 `session_id`、`input_id`、`unit_index`、`turn_id` 和单调 `event_id`。T2W 事件额外记录输入 token、已提交区间、lookahead 区间和输出采样区间。
 
-## API 录制
+## API 记录
+
+正常 API debug：
+
+```bash
+export O5_TOKEN_TRACE_DIR=/path/to/data/sessions
+export O5_SESSION_TRACE_MODE=tokens
+```
+
+此时 Gateway 的 session 目录只有常规的 `meta.json`、`stream.jsonl` 和媒体 `blob/`；debug 帧位于 `stream.jsonl`。
+
+需要完整 replay sidecar 时改为：
 
 启动 Demo 前设置：
 
@@ -50,7 +85,7 @@ export O5_TOKEN_TRACE_DIR=/path/to/data/sessions
 export O5_SESSION_TRACE_MODE=replay
 ```
 
-Backend 会把文字包关联到 LLM/TTS trace，把音频包关联到 token2wav trace。Gateway 对未知字段原样录制，因此 `stream.jsonl` 也保留内联 trace；完整 tensor 由 Backend 直接外置到同一 session 目录。
+Backend 会把逐步事件和 tensor 直接写入同一 session 目录，同时把精简后的 chunk debug 作为独立帧发给 Gateway。完整 tensor 不进入 WebSocket。
 
 API teacher-forcing replay 额外设置：
 
@@ -59,7 +94,7 @@ export O5_REPLAY_REFERENCE=/path/to/reference_session
 export O5_REPLAY_FORCING=llm,tts-condition,tts-token,vocoder
 ```
 
-逐层记录是高开销选项：
+逐层记录是高开销选项，并且只允许用于 `replay` 模式：
 
 ```bash
 export O5_CAPTURE_LAYERS=1
@@ -198,3 +233,27 @@ API 完成 8 个 unit，输出文本为“好的，没问题。”。Session bun
 - Gateway `meta.json` 已写入 `ended_at`，`close_reason=session_end`
 
 该作业通过同一节点的 `https://127.0.0.1:8009` 调用，避免平台 HTTP exposure 与内部 HTTPS 协议不匹配。probe 会等待服务端 `session.closed`，确认模型 trace 和 Gateway recorder 都完成关闭后再结束服务。
+
+上面的 `741544` 使用旧的 `replay` API 透传格式，仅证明完整 sidecar 录制链路可用，不作为普通 API debug 的性能或协议基准。普通 API debug 的新格式由 `scripts/run_o5_session_trace_api_smoke.sh` 验证：业务帧无 `trace` 字段，`stream.jsonl` 包含三种 chunk debug，且 session 目录不存在 replay sidecar。
+
+### Chunk debug API 验证
+
+最终验证任务：
+
+```text
+cctl job: 741787
+run:      /user/weihongliang/o5_session_trace_replay_runs/api-debug-chunks-order-8u-20260818
+session:  /user/weihongliang/MiniCPM-o-Demo-wt-o5-no-fc-speedup-tp2-session-trace-replay-2026-08-18/data/sessions/sess_c7493a912818
+```
+
+任务在 `agent-train` 使用单卡 `single_opt`，完成 8-unit 视频 API smoke。验证结果：
+
+- Gateway 共记录 35 帧，其中 12 帧为 `type=debug`。
+- 8 个 `llm.chunk`，每个输入 unit 恰好一个。
+- 2 个说话 unit 各有一个 `tts.chunk` 和一个 `t2w.chunk`。
+- 同 unit 顺序为 `llm.chunk -> tts.chunk -> t2w.chunk`。
+- 业务帧携带 `trace` 的数量为 0。
+- debug 帧不存在 shape、dtype、numel、hash、tensor 或概率分布。
+- session 根目录仅有 `meta.json`、`stream.jsonl` 和 `blob/`，不存在 replay sidecar。
+
+CPU 回归测试使用 accel venv，结果为 `24 passed`。
