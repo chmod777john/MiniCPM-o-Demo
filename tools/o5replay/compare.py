@@ -28,6 +28,7 @@ TENSOR_FIELDS = {
     "tts.condition": ("actual_condition", "used_condition"),
     "tts.sample": ("probabilities",),
     "tts.chunk": ("new_tokens",),
+    "token2wav.call": ("output_pcm", "output_waveform"),
     "vocoder.state": ("rand_noise",),
 }
 TOKEN_FIELDS = {
@@ -44,6 +45,8 @@ TOKEN_FIELDS = {
         "lookahead_range",
         "output_sample_range",
         "last_chunk",
+        "state_before",
+        "state_after",
     ),
     "t2w.chunk": (
         "input_token_ids",
