@@ -4,6 +4,8 @@
 
 API chunk debug 收敛 commit：`d750fdd`
 
+Token2Wav replay 状态诊断 commit：`040deff`
+
 ## 目标
 
 同一份端到端 session 可以由 Demo API 或 Canonical 录制，并从会话起点在以下运行时重放：
@@ -93,6 +95,14 @@ API teacher-forcing replay 额外设置：
 export O5_REPLAY_REFERENCE=/path/to/reference_session
 export O5_REPLAY_FORCING=llm,tts-condition,tts-token,vocoder
 ```
+
+如果目标是重现最终文字和音频，而不是隔离 TTS condition 模块，可以不强制 condition：
+
+```bash
+export O5_REPLAY_FORCING=llm,tts-token,vocoder
+```
+
+此时 condition 仍由本次 LLM hidden 正常计算；TTS acoustic token 由 reference 强制，因此下游 Token2Wav 不依赖保存的 condition tensor。`vocoder` 会恢复 reference 的静态 `rand_noise`，所以该模式仍要求 reference 使用完整 replay sidecar 录制。普通 `tokens` debug 不保存该 tensor，当前不能直接作为 forcing reference。
 
 逐层记录是高开销选项，并且只允许用于 `replay` 模式：
 
@@ -257,3 +267,50 @@ session:  /user/weihongliang/MiniCPM-o-Demo-wt-o5-no-fc-speedup-tp2-session-trac
 - session 根目录仅有 `meta.json`、`stream.jsonl` 和 `blob/`，不存在 replay sidecar。
 
 CPU 回归测试使用 accel venv，结果为 `24 passed`。
+
+### 不强制 TTS condition 的 API replay
+
+Reference 使用上面的 API session `sess_1786f7745b77`。Replay 只强制：
+
+```text
+llm,tts-token,vocoder
+```
+
+首次验证任务 `741822` 完成 8 个 unit，输出文字与 API 都是“好的，没问题。”。130/130 个 trace 事件对齐，LLM token、TTS token、T2W 输入/range 和 vocoder `rand_noise` 全部一致。没有强制的两次 TTS condition 也自然 bitwise 一致，说明重现该 case 不需要预先录制并替换 condition。
+
+最终 WAV 未达到 bitwise 一致。为排除 WAV 写盘量化影响，`040deff` 在详细 replay 模式记录了 `audio_tokenizer.stream()` 的直接 int16 PCM，以及调用前后的 prompt、flow 和 HiFT cache 指纹。普通 API `tokens` 模式不计算这些字段。
+
+诊断任务：
+
+| 任务 | cctl job | 节点 | 状态 |
+| --- | --- | --- | --- |
+| T2W state replay | `741871` | `10.156.16.208` | Succeeded |
+| 同条件重复 replay | `741885` | `10.156.16.208` | Succeeded |
+
+输出目录：
+
+```text
+/user/weihongliang/o5_session_trace_replay_runs/api-reference-no-condition-t2w-state-20260818
+/user/weihongliang/o5_session_trace_replay_runs/api-reference-no-condition-t2w-state-repeat-20260818
+```
+
+API 原始音频与 `741871` 的 T2W 直接 PCM 对比：
+
+| T2W call | 样本数 | max abs PCM | relative RMS | cosine/correlation |
+| --- | ---: | ---: | ---: | ---: |
+| unit 5 非静音输出 | 9600 | 44 | 2.922% | 0.999579 |
+| unit 6 输出 | 24000 | 162 | 0.487% | 0.999988 |
+
+两次同节点 replay 的边界更明确：
+
+- T2W input token、调用前后 prompt/flow/HiFT cache 和 vocoder noise 全部 bitwise 一致。
+- unit 5 的 9600 个 PCM 样本只有 3 个相差 `+/-1`。
+- unit 6 的 24000 个 PCM 样本全部 bitwise 一致。
+- 两次 replay 的第一段 PCM relative RMS 为 `0.0122%`，第二段为 0。
+
+因此结论需要区分两种“一模一样”：
+
+- 离散输出可精确重现：LLM token、TTS token、T2W token 序列和文字可以由 teacher forcing 保证一致，TTS condition 不必作为 forcing 输入。
+- 音频语义和波形可以高度一致，但默认不保证文件 SHA/PCM bitwise 一致。即使 T2W 的可见输入、cache 和 noise 完全相同，同一节点的连续 GPU vocoder 计算仍观察到 3 个 PCM 量化位的 `+/-1` 差异。
+
+若测试目标是端到端正确性，应比较 token 精确相等，再对 PCM 使用 relative RMS、相关系数和语音指标；若硬性要求音频字节完全相同，需要额外约束 Token2Wav/HiFT 的确定性 kernel，或直接复用录制的 API 音频，后者不再验证 vocoder 重算。
