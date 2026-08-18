@@ -75,6 +75,22 @@ class _FakeTTS:
         return tokens, {"length": 2}
 
 
+class _TraceableTTS(_FakeTTS):
+    def __init__(self):
+        super().__init__(favored_token=3)
+        self.head_code = torch.nn.ModuleList([
+            torch.nn.Linear(4, 8, bias=False),
+            torch.nn.Linear(4, 8, bias=False),
+        ])
+
+    def generate_chunk(self, *args, **kwargs):
+        hidden = kwargs["inputs_embeds"]
+        raw_logits = torch.stack([head(hidden)[:, -1] for head in self.head_code], dim=1)
+        probabilities = torch.softmax(raw_logits.reshape(-1, raw_logits.shape[-1]), dim=-1)
+        selected = torch.multinomial(probabilities, 1).reshape(1, 1, len(self.head_code))
+        return selected, {"length": 1}
+
+
 class _FakeModel:
     def __init__(self, favored_tts_token: int):
         self.tts = _FakeTTS(favored_tts_token)
@@ -212,6 +228,25 @@ def test_record_bundle_and_force_replay(tmp_path: Path):
         torch.arange(4, dtype=torch.float32),
     )
     candidate_controller.uninstall()
+
+
+def test_replay_mode_captures_tts_hidden_and_raw_logits():
+    torch.manual_seed(0)
+    duplex = _FakeDuplex(favored_llm_token=5, favored_tts_token=3, condition_bias=1.5)
+    duplex.model.tts = _TraceableTTS()
+    controller = DuplexTraceController(capture_mode="replay").install(duplex)
+
+    _result, events = _run(controller, duplex)
+    controller.uninstall()
+
+    forwards = [event for event in events if event["kind"] == "tts.forward"]
+    assert len(forwards) == 1
+    assert forwards[0]["step"] == 0
+    assert forwards[0]["phase"] == "prefill"
+    assert forwards[0]["hidden"]["shape"] == [1, 1, 4]
+    assert forwards[0]["logits"]["shape"] == [1, 2, 8]
+    assert torch.is_tensor(forwards[0]["hidden"]["_tensor"])
+    assert torch.is_tensor(forwards[0]["logits"]["_tensor"])
 
 
 def test_incomplete_bundle_manifest(tmp_path: Path):
@@ -448,6 +483,35 @@ def test_comparison_reads_chunk_debug_from_gateway_stream(tmp_path: Path):
     assert report["tokens"]["llm.chunk.token_ids"] == {"count": 1, "equal": 1}
     assert report["tokens"]["tts.chunk.token_ids"] == {"count": 1, "equal": 1}
     assert report["tokens"]["t2w.chunk.input_token_ids"] == {"count": 1, "equal": 1}
+
+
+def test_comparison_counts_distribution_argmax_reversals(tmp_path: Path):
+    left = tmp_path / "left-reversal"
+    right = tmp_path / "right-reversal"
+    events = (
+        {
+            "kind": "tts.forward",
+            "input_id": "unit-a",
+            "hidden": {"_tensor": torch.tensor([[[1.0, 2.0]]])},
+            "logits": {"_tensor": torch.tensor([[[0.0, 2.0, 1.0]]])},
+        },
+        {
+            "kind": "tts.forward",
+            "input_id": "unit-a",
+            "hidden": {"_tensor": torch.tensor([[[1.0, 2.0]]])},
+            "logits": {"_tensor": torch.tensor([[[3.0, 0.0, 1.0]]])},
+        },
+    )
+    for root, event in zip((left, right), events):
+        writer = SessionBundleWriter(root, source_implementation="test")
+        writer.append([event])
+        writer.close()
+
+    report = compare(left, right)
+    logits = report["tensors"]["tts.forward.logits"]
+    assert logits["argmax_equal"] == 0
+    assert logits["argmax_total"] == 1
+    assert logits["argmax_reversals"] == 1
 
 
 def test_gateway_recorder_keeps_debug_frame(tmp_path: Path):

@@ -26,6 +26,7 @@ TENSOR_FIELDS = {
     "llm.feed": ("embeds", "hidden", "logits", "layers"),
     "llm.decode": ("logits",),
     "tts.condition": ("actual_condition", "used_condition"),
+    "tts.forward": ("hidden", "logits"),
     "tts.sample": ("probabilities",),
     "tts.chunk": ("new_tokens",),
     "token2wav.call": ("output_pcm", "output_waveform"),
@@ -144,6 +145,8 @@ def _probability_metric(
         "kl_left_right_max": float(kl.max()),
         "tv_mean": float(tv.mean()),
         "tv_max": float(tv.max()),
+        "argmax_equal": int(p.argmax(dim=-1).eq(q.argmax(dim=-1)).sum()),
+        "argmax_total": int(p.shape[0]),
     }
 
 
@@ -164,6 +167,12 @@ def _aggregate(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "tv_max": _max(row.get("tv_max") for row in valid),
         "kl_left_right_mean": _mean(row.get("kl_left_right_mean") for row in valid),
         "kl_left_right_max": _max(row.get("kl_left_right_max") for row in valid),
+        "argmax_equal": sum(int(row.get("argmax_equal", 0)) for row in valid),
+        "argmax_total": sum(int(row.get("argmax_total", 0)) for row in valid),
+        "argmax_reversals": sum(
+            int(row.get("argmax_total", 0)) - int(row.get("argmax_equal", 0))
+            for row in valid
+        ),
     }
 
 
@@ -278,7 +287,7 @@ def compare(left_root: Path, right_root: Path) -> dict[str, Any]:
                     continue
                 name = f"{kind}.{field}" + (f"[{index}]" if isinstance(left_values, list) else "")
                 metric = _tensor_metric(at, bt)
-                if kind in {"llm.decode", "tts.sample"} and field in {"logits", "probabilities"}:
+                if kind in {"llm.decode", "tts.forward", "tts.sample"} and field in {"logits", "probabilities"}:
                     metric.update(_probability_metric(at, bt, logits=field == "logits"))
                 tensor_rows[name].append(metric)
 
