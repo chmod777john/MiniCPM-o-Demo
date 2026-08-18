@@ -2,6 +2,7 @@
 
 from .session_trace import (
     DuplexTraceController,
+    debug_trace_events,
     ForcingPolicy,
     MemoryTraceSink,
     ReplayReference,
@@ -12,6 +13,7 @@ from .session_trace import (
 
 __all__ = [
     "DuplexTraceController",
+    "debug_trace_events",
     "ForcingPolicy",
     "MemoryTraceSink",
     "ReplayReference",

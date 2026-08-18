@@ -134,21 +134,6 @@ def _get_input_payload(message: Dict[str, Any]) -> Dict[str, Any]:
     return value
 
 
-def _trace_groups(trace: Optional[Dict[str, Any]], *groups: str) -> Optional[Dict[str, Any]]:
-    if not trace:
-        return None
-    selected: Dict[str, Any] = {
-        key: trace[key]
-        for key in ("schema", "input_id")
-        if trace.get(key) is not None
-    }
-    for group in groups:
-        values = trace.get(group)
-        if values:
-            selected[group] = values
-    return selected if any(group in selected for group in groups) else None
-
-
 def _extract_frame_base64_list(payload: Dict[str, Any]) -> Optional[list[str]]:
     direct = payload.get("frame_base64_list") or payload.get("video_frames")
     if direct:
@@ -255,6 +240,10 @@ class BackendProtocolSession:
     async def send_output_delta(self, kind: str, **fields: Any) -> None:
         await self.send("response.output.delta", kind=kind, **fields)
 
+    async def _send_debug_events(self, events: Optional[list[Dict[str, Any]]]) -> None:
+        for event in events or []:
+            await self.send("debug", **event)
+
     async def init(self, params: Dict[str, Any]) -> None:
         if self.initialized:
             raise RuntimeError("session is already initialized")
@@ -263,9 +252,9 @@ class BackendProtocolSession:
         if self.mode == "full_duplex":
             await self._init_duplex(params)
         self.initialized = True
-        init_trace = None
+        init_debug = None
         if hasattr(self.backend, "drain_trace_events"):
-            init_trace = await asyncio.to_thread(self.backend.drain_trace_events, None)
+            init_debug = await asyncio.to_thread(self.backend.drain_trace_events, None)
         await self.send(
             "session.created",
             session_id=self.session_id,
@@ -277,8 +266,8 @@ class BackendProtocolSession:
             ),
             metrics=self._safe_metrics(),
             replay_manifest=self._replay_manifest,
-            trace=init_trace,
         )
+        await self._send_debug_events(init_debug)
 
     async def resume(self, params: Dict[str, Any]) -> None:
         """Initialize a new backend Session by statelessly replaying public history."""
@@ -587,7 +576,7 @@ class BackendProtocolSession:
 
             t0 = time.perf_counter()
 
-            def _duplex_step() -> tuple[Any, float, Dict[str, Any], Dict[str, Any], Optional[Dict[str, Any]]]:
+            def _duplex_step() -> tuple[Any, float, Dict[str, Any], Dict[str, Any], Optional[list[Dict[str, Any]]]]:
                 if hasattr(self.backend, "set_trace_unit_id"):
                     self.backend.set_trace_unit_id(input_id)
                 prefill_t0 = time.perf_counter()
@@ -614,6 +603,7 @@ class BackendProtocolSession:
                     metrics["vision_slices"] = n_vision_images
                     metrics["vision_tokens"] = int(n_vision_images) * 64
 
+            await self._send_debug_events(unit_trace)
             if result.is_listen:
                 await self.send_output_delta(
                     "listen",
@@ -621,7 +611,6 @@ class BackendProtocolSession:
                     response_id=self._active_response_id,
                     input_id=input_id,
                     metrics=metrics,
-                    trace=unit_trace,
                 )
                 self._active_response_id = None
                 self._schedule_finalize(input_id)
@@ -631,7 +620,6 @@ class BackendProtocolSession:
                 self._active_response_id = str(payload.get("response_id") or f"resp_{uuid.uuid4().hex[:12]}")
 
             if result.text:
-                text_trace = _trace_groups(unit_trace, "llm", "tts", "runtime")
                 await self.send_output_delta(
                     "text",
                     session_id=self.session_id,
@@ -639,11 +627,8 @@ class BackendProtocolSession:
                     input_id=input_id,
                     text=result.text,
                     metrics=metrics,
-                    trace=text_trace,
                 )
             if result.audio_data:
-                audio_groups = ("token2wav",) if result.text else ("llm", "tts", "token2wav", "runtime")
-                audio_trace = _trace_groups(unit_trace, *audio_groups)
                 await self.send_output_delta(
                     "audio",
                     session_id=self.session_id,
@@ -651,7 +636,6 @@ class BackendProtocolSession:
                     input_id=input_id,
                     audio=result.audio_data,
                     metrics=metrics,
-                    trace=audio_trace,
                 )
             if result.end_of_turn:
                 await self.send_output_delta(
@@ -691,7 +675,8 @@ class BackendProtocolSession:
             finally:
                 if hasattr(self.backend, "drain_trace_events"):
                     with suppress(Exception):
-                        await asyncio.to_thread(self.backend.drain_trace_events, input_id)
+                        events = await asyncio.to_thread(self.backend.drain_trace_events, input_id)
+                        await self._send_debug_events(events)
                 if hasattr(self.backend, "set_trace_unit_id"):
                     with suppress(Exception):
                         await asyncio.to_thread(self.backend.set_trace_unit_id, None)

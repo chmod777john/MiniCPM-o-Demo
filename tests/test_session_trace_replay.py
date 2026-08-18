@@ -11,14 +11,15 @@ import pytest
 import torch
 
 from core.tracing import (
+    debug_trace_events,
     DuplexTraceController,
     ForcingPolicy,
     MemoryTraceSink,
     ReplayReference,
     SessionBundleWriter,
-    group_trace_events,
 )
-from py_backend.server import BackendProtocolSession, BackendServerState, _trace_groups
+from py_backend.server import BackendProtocolSession, BackendServerState
+from core.processors.pytorch_backend import PyTorchBackend
 from core.processors.unified import DuplexView
 from core.schemas.duplex import DuplexConfig
 from tools.o5replay.compare import compare
@@ -167,6 +168,10 @@ def test_record_bundle_and_force_replay(tmp_path: Path):
     assert len([event for event in events if event["kind"] == "tts.sample"]) == 3
     reference_chunk = next(event for event in events if event["kind"] == "tts.chunk")
     assert reference_chunk["new_tokens"]["shape"] == [1, 2, 2]
+    debug_events = debug_trace_events(events)
+    debug_chunk = next(event for event in debug_events if event["kind"] == "tts.chunk")
+    assert debug_chunk["token_ids"] == reference_chunk["new_tokens"]["tokens"]
+    assert "new_tokens" not in debug_chunk
 
     bundle = tmp_path / "recording"
     writer = SessionBundleWriter(bundle, source_implementation="canonical-test")
@@ -213,6 +218,32 @@ def test_incomplete_bundle_manifest(tmp_path: Path):
     assert manifest["completed"] is False
 
 
+def test_backend_tokens_mode_does_not_create_replay_sidecar(tmp_path: Path):
+    class FakeController:
+        def __init__(self):
+            self.session_id = None
+            self.events = [{"kind": "llm.chunk", "input_id": "unit-0", "token_ids": [7]}]
+
+        def set_session(self, session_id):
+            self.session_id = session_id
+
+        def drain(self, input_id=None):
+            events, self.events = self.events, []
+            return events
+
+    backend = PyTorchBackend(model_path="unused", gpu_id=0)
+    backend._trace_controller = FakeController()
+    backend._trace_capture_mode = "tokens"
+    backend._token_trace_dir = tmp_path
+
+    backend.set_trace_session_id("session-1")
+    events = backend.drain_trace_events("unit-0")
+
+    assert backend._trace_writer is None
+    assert not (tmp_path / "session-1").exists()
+    assert events == [{"kind": "llm.chunk", "input_id": "unit-0", "token_ids": [7]}]
+
+
 def test_only_nonzero_tp2_rank_is_output_worker(monkeypatch):
     args = SimpleNamespace(target="demo-tp2")
     monkeypatch.setenv("RANK", "1")
@@ -250,32 +281,29 @@ def test_reference_cursors_reset_for_a_new_session():
     assert reference.next_llm_token("unit-0") == 7
 
 
-def test_grouping_and_t2w_ranges():
+def test_tokens_mode_emits_minimal_chunk_events_and_t2w_ranges():
     duplex = _FakeDuplex(favored_llm_token=2, favored_tts_token=4, condition_bias=0.0)
     controller = DuplexTraceController(capture_mode="tokens").install(duplex)
     _result, events = _run(controller, duplex)
-    grouped = group_trace_events(events, input_id="unit-0")
-    assert grouped["llm"]
-    assert grouped["tts"]
-    assert grouped["token2wav"]
+    assert [event["kind"] for event in events] == ["tts.chunk", "t2w.chunk", "llm.chunk"]
 
-    call = next(event for event in events if event["kind"] == "token2wav.call")
+    llm = next(event for event in events if event["kind"] == "llm.chunk")
+    assert llm["token_ids"] == [2, 777]
+    assert llm["is_listen"] is False
+    assert llm["end_of_turn"] is False
+
+    tts = next(event for event in events if event["kind"] == "tts.chunk")
+    assert tts["source_llm_token_ids"] == [2]
+    assert len(tts["token_ids"]) == 4
+
+    call = next(event for event in events if event["kind"] == "t2w.chunk")
     assert call["input_range"] == [0, 3]
     assert call["committed_range"] == [0, 2]
     assert call["lookahead_range"] == [2, 3]
     assert call["output_sample_range"] == [0, 3]
-
-    assert _trace_groups(grouped, "llm", "tts") == {
-        "schema": grouped["schema"],
-        "input_id": "unit-0",
-        "llm": grouped["llm"],
-        "tts": grouped["tts"],
-    }
-    assert _trace_groups(grouped, "token2wav") == {
-        "schema": grouped["schema"],
-        "input_id": "unit-0",
-        "token2wav": grouped["token2wav"],
-    }
+    assert [event["kind"] for event in debug_trace_events(events)] == ["llm.chunk", "tts.chunk", "t2w.chunk"]
+    forbidden = {"shape", "dtype", "numel", "sha256", "_tensor", "probabilities"}
+    assert not forbidden.intersection(_walk_keys(events))
     controller.uninstall()
 
 
@@ -346,19 +374,56 @@ def test_recorded_session_materialization_and_comparison(tmp_path: Path):
     assert report["audio"]["combined"]["pcm16_bitwise"] is True
 
 
-def test_gateway_recorder_keeps_inline_trace(tmp_path: Path):
+def test_comparison_reads_chunk_debug_from_gateway_stream(tmp_path: Path):
+    frames = [
+        {"type": "debug", "kind": "llm.chunk", "input_id": "unit-a", "token_ids": [3], "is_listen": False, "end_of_turn": False},
+        {"type": "debug", "kind": "tts.chunk", "input_id": "unit-a", "source_llm_token_ids": [3], "token_ids": [10, 11]},
+        {
+            "type": "debug",
+            "kind": "t2w.chunk",
+            "input_id": "unit-a",
+            "input_token_ids": [10, 11],
+            "input_range": [0, 2],
+            "committed_range": [0, 1],
+            "lookahead_range": [1, 2],
+            "output_sample_range": [0, 8],
+            "last_chunk": False,
+        },
+    ]
+    for root in (tmp_path / "left-debug", tmp_path / "right-debug"):
+        root.mkdir()
+        (root / "stream.jsonl").write_text(
+            "".join(json.dumps({"dir": "down", "frame": frame}) + "\n" for frame in frames),
+            encoding="utf-8",
+        )
+
+    report = compare(tmp_path / "left-debug", tmp_path / "right-debug")
+
+    assert report["event_counts"] == {"left": 3, "right": 3, "common": 3, "left_only": 0, "right_only": 0}
+    assert report["tokens"]["llm.chunk.token_ids"] == {"count": 1, "equal": 1}
+    assert report["tokens"]["tts.chunk.token_ids"] == {"count": 1, "equal": 1}
+    assert report["tokens"]["t2w.chunk.input_token_ids"] == {"count": 1, "equal": 1}
+
+
+def test_gateway_recorder_keeps_debug_frame(tmp_path: Path):
     from gateway_modules.session_recording import SessionRecorder
 
     recorder = SessionRecorder("sess-test", "duplex", data_dir=str(tmp_path))
-    trace = {"schema": "o5.session-trace.v1", "llm": [{"kind": "llm.decode", "selected_token_id": 7}]}
-    frame = {"type": "response.output.delta", "kind": "text", "text": "ok", "trace": trace}
+    frame = {
+        "type": "debug",
+        "kind": "llm.chunk",
+        "input_id": "unit-1",
+        "unit_index": 0,
+        "turn_id": 0,
+        "token_ids": [7],
+    }
     externalized, payload_trace = recorder._externalize(frame)
-    assert externalized["trace"] == trace
+    assert externalized == frame
     assert payload_trace is None
     recorder.close("test")
 
 
-def test_api_routes_unit_trace_to_text_and_audio_frames():
+def test_api_sends_standalone_debug_frames():
     class FakeWebSocket:
         def __init__(self):
             self.frames = []
@@ -372,6 +437,7 @@ def test_api_routes_unit_trace_to_text_and_audio_frames():
         def __init__(self):
             self.unit_ids = []
             self.finalized = False
+            self.trace_drained = False
 
         def set_trace_unit_id(self, input_id):
             self.unit_ids.append(input_id)
@@ -390,15 +456,22 @@ def test_api_routes_unit_trace_to_text_and_audio_frames():
             )
 
         def drain_trace_events(self, input_id):
-            if input_id is None:
+            if input_id is None or self.trace_drained:
                 return None
-            return {
-                "schema": "o5.session-trace.v1",
-                "input_id": input_id,
-                "llm": [{"kind": "llm.decode", "selected_token_id": 7}],
-                "tts": [{"kind": "tts.sample", "selected_token_ids": [1, 2]}],
-                "token2wav": [{"kind": "token2wav.call", "input_token_ids": [1, 2]}],
-            }
+            self.trace_drained = True
+            identity = {"session_id": "session-1", "input_id": input_id, "unit_index": 0, "turn_id": 0}
+            return [
+                {**identity, "kind": "llm.chunk", "token_ids": [7], "is_listen": False, "end_of_turn": False},
+                {**identity, "kind": "tts.chunk", "source_llm_token_ids": [7], "token_ids": [1, 2]},
+                {
+                    **identity,
+                    "kind": "t2w.chunk",
+                    "input_token_ids": [1, 2],
+                    "committed_range": [0, 1],
+                    "lookahead_range": [1, 2],
+                    "output_sample_range": [0, 8],
+                },
+            ]
 
         def metrics(self):
             return {}
@@ -423,14 +496,24 @@ def test_api_routes_unit_trace_to_text_and_audio_frames():
         return backend, websocket.frames
 
     backend, frames = asyncio.run(exercise())
-    text_frame = next(frame for frame in frames if frame.get("kind") == "text")
-    audio_frame = next(frame for frame in frames if frame.get("kind") == "audio")
-    assert set(text_frame["trace"]) >= {"llm", "tts"}
-    assert "token2wav" not in text_frame["trace"]
-    assert set(audio_frame["trace"]) >= {"token2wav"}
-    assert "llm" not in audio_frame["trace"]
+    business_frames = [frame for frame in frames if frame["type"] != "debug"]
+    debug_frames = [frame for frame in frames if frame["type"] == "debug"]
+    assert all("trace" not in frame for frame in business_frames)
+    assert [frame["kind"] for frame in debug_frames] == ["llm.chunk", "tts.chunk", "t2w.chunk"]
+    assert all(frame["input_id"] == "unit-1" for frame in debug_frames)
+    assert all("server_send_ts" in frame for frame in debug_frames)
     assert backend.finalized is True
     assert backend.unit_ids == ["unit-1", None]
+
+
+def _walk_keys(value):
+    if isinstance(value, dict):
+        for key, item in value.items():
+            yield key
+            yield from _walk_keys(item)
+    elif isinstance(value, list):
+        for item in value:
+            yield from _walk_keys(item)
 
 
 def _walk_values(value):
