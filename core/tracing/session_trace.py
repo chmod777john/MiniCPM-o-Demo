@@ -424,6 +424,9 @@ class DuplexTraceController:
         self._active_tts_step = 0
         self._active_tts_sample_ids: list[list[int]] = []
         self._inside_tts_chunk = False
+        self._active_tts_forward_step = 0
+        self._tts_head_inputs: dict[int, torch.Tensor] = {}
+        self._tts_head_outputs: dict[int, torch.Tensor] = {}
         self._pending_tts_source_ids: list[int] = []
         self._pending_tts_end_of_turn: list[bool] = []
         self._vocoder_rand_noise: Optional[torch.Tensor] = None
@@ -668,6 +671,39 @@ class DuplexTraceController:
         self._original_multinomial = torch.multinomial
         trace = self
 
+        head_code = list(getattr(tts, "head_code", []) or [])
+        if detailed and head_code:
+            for codebook, head in enumerate(head_code):
+                def capture_head(_module, inputs, output, codebook=codebook):
+                    if not trace._inside_tts_chunk:
+                        return
+                    hidden = trace._first_tensor(inputs)
+                    if hidden is not None:
+                        trace._tts_head_inputs[codebook] = hidden.detach()
+                    if torch.is_tensor(output):
+                        trace._tts_head_outputs[codebook] = output.detach()
+                    if len(trace._tts_head_outputs) != len(head_code):
+                        return
+                    source_hidden = trace._tts_head_inputs.get(0)
+                    if source_hidden is None:
+                        raise RuntimeError("TTS trace could not capture lm-head input")
+                    raw_logits = torch.stack(
+                        [trace._tts_head_outputs[index][:, -1] for index in range(len(head_code))],
+                        dim=1,
+                    )
+                    trace._emit(
+                        "tts.forward",
+                        step=trace._active_tts_forward_step,
+                        phase="prefill" if trace._active_tts_forward_step == 0 else "decode",
+                        hidden=_tensor_meta(source_hidden[:, -1:], keep_value=True),
+                        logits=_tensor_meta(raw_logits, keep_value=True),
+                    )
+                    trace._active_tts_forward_step += 1
+                    trace._tts_head_inputs.clear()
+                    trace._tts_head_outputs.clear()
+
+                self._layer_hooks.append(head.register_forward_hook(capture_head))
+
         def traced_multinomial(input_tensor, num_samples, replacement=False, *, generator=None, out=None):
             if not trace._inside_tts_chunk or num_samples != 1:
                 return trace._original_multinomial(
@@ -719,7 +755,10 @@ class DuplexTraceController:
         def traced_generate(tts_self, *args, **kwargs):
             forced = trace.forcing.tts_tokens
             trace._active_tts_step = 0
+            trace._active_tts_forward_step = 0
             trace._active_tts_sample_ids = []
+            trace._tts_head_inputs.clear()
+            trace._tts_head_outputs.clear()
             if forced:
                 if trace.reference is None:
                     raise RuntimeError("TTS token forcing requested without a replay reference")
