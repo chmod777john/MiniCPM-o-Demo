@@ -20,6 +20,8 @@ Numerically: same kernels as the llm_static StaticCache path (gate-verified argm
 omni context), just replayed. Position/mask are updated in-place before each replay (graph reads
 current tensor values).
 """
+import os
+
 import torch
 from transformers.cache_utils import StaticCache
 
@@ -50,9 +52,58 @@ class LLMGraphRunner:
         self._emb = self._pos = self._cpos = self._mask = self._hidden = None
         self._captured = False
         self._failed = False
+        self.trace_layers = os.environ.get("O5_LAYER_TRACE", "0") == "1"
+        self._layer_outputs = None
+        self._graph_layer_outputs = None
+        self._trace_hook_outputs = {}
+        self._trace_hook_handles = []
+        if self.trace_layers:
+            self._install_layer_trace_hooks()
         H = self.cfg.hidden_size
         self._init(H)
         self._capture(H)
+
+    @staticmethod
+    def _first_tensor(output):
+        if torch.is_tensor(output):
+            return output
+        if isinstance(output, (tuple, list)):
+            return next((item for item in output if torch.is_tensor(item)), None)
+        return None
+
+    def _install_layer_trace_hooks(self):
+        layers = getattr(self.model, "layers", None)
+        if layers is None:
+            layers = getattr(getattr(self.model, "model", None), "layers", None)
+        if layers is None or len(layers) != self.cfg.num_hidden_layers:
+            raise RuntimeError("could not locate all decoder layers for LLM graph tracing")
+
+        for index, layer in enumerate(layers):
+            def capture(_module, _inputs, output, index=index):
+                tensor = self._first_tensor(output)
+                if tensor is not None:
+                    self._trace_hook_outputs[index] = tensor.detach()
+
+            self._trace_hook_handles.append(layer.register_forward_hook(capture))
+
+    def _begin_layer_trace(self):
+        if self.trace_layers:
+            self._trace_hook_outputs.clear()
+
+    def _finish_layer_trace(self):
+        if not self.trace_layers:
+            return
+        missing = [
+            index
+            for index in range(self.cfg.num_hidden_layers)
+            if index not in self._trace_hook_outputs
+        ]
+        if missing:
+            raise RuntimeError(f"LLM layer trace missing decoder outputs: {missing}")
+        self._layer_outputs = tuple(
+            self._trace_hook_outputs[index]
+            for index in range(self.cfg.num_hidden_layers)
+        )
 
     def _init(self, H):
         # Force inference_mode(True) for ALL buffer ops in this runner (init/capture/decode/prefill),
@@ -71,9 +122,18 @@ class LLMGraphRunner:
             self._mask = torch.full((1, 1, 1, self.max_cache_len), self.neg, dtype=self.dtype, device=self.device)
 
     def _fwd(self):
-        return self.model(inputs_embeds=self._emb, position_ids=self._pos, cache_position=self._cpos,
-                          attention_mask=self._mask, past_key_values=self.cache, use_cache=True,
-                          return_dict=True).last_hidden_state
+        self._begin_layer_trace()
+        outputs = self.model(
+            inputs_embeds=self._emb,
+            position_ids=self._pos,
+            cache_position=self._cpos,
+            attention_mask=self._mask,
+            past_key_values=self.cache,
+            use_cache=True,
+            return_dict=True,
+        )
+        self._finish_layer_trace()
+        return outputs.last_hidden_state
 
     def _capture(self, H):
         try:
@@ -92,6 +152,8 @@ class LLMGraphRunner:
                 g = torch.cuda.CUDAGraph()
                 with torch.cuda.graph(g):
                     self._hidden = self._fwd()
+                if self.trace_layers:
+                    self._graph_layer_outputs = self._layer_outputs
                 self.graph = g
                 self.cache.reset()
                 self._mask.fill_(self.neg)
@@ -133,9 +195,12 @@ class LLMGraphRunner:
             cpos = torch.arange(start_pos, start_pos + L, device=self.device)
             mask2d = torch.zeros(1, self.max_cache_len, dtype=torch.long, device=self.device)
             mask2d[:, :start_pos + L] = 1
+            self._begin_layer_trace()
             h = self.model(inputs_embeds=inputs_embeds, position_ids=cpos.unsqueeze(0),
                            cache_position=cpos, attention_mask=mask2d,
-                           past_key_values=self.cache, use_cache=True, return_dict=True).last_hidden_state
+                           past_key_values=self.cache, use_cache=True, return_dict=True)
+            self._finish_layer_trace()
+            h = h.last_hidden_state
             # mark all prefilled positions valid for the graph's additive mask
             self._mask[..., :start_pos + L] = 0.0
         return h
@@ -151,4 +216,11 @@ class LLMGraphRunner:
             if self._failed or not self._captured:
                 return self._fwd()
             self.graph.replay()
+            if self.trace_layers:
+                self._layer_outputs = self._graph_layer_outputs
             return self._hidden
+
+    @property
+    def layer_outputs(self):
+        """Raw decoder-layer outputs from the latest prefill or graph replay."""
+        return self._layer_outputs

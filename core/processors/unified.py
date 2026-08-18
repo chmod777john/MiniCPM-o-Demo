@@ -894,13 +894,15 @@ class DuplexView:
             current_temperature = getattr(duplex, "tts_temperature")
             temperature = float(self.config.tts_temperature)
             if torch.is_tensor(current_temperature):
-                duplex.tts_temperature = torch.tensor(
-                    [temperature],
-                    dtype=current_temperature.dtype,
-                    device=current_temperature.device,
-                )
+                dtype = current_temperature.dtype
+                device = current_temperature.device
             else:
-                duplex.tts_temperature = temperature
+                dtype = torch.float32
+                try:
+                    device = next(self._model.parameters()).device
+                except StopIteration:
+                    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+            duplex.tts_temperature = torch.tensor([temperature], dtype=dtype, device=device)
         if hasattr(duplex, "tts_repetition_penalty"):
             duplex.tts_repetition_penalty = float(self.config.tts_repetition_penalty)
     

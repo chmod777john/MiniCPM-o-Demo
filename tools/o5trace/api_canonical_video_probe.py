@@ -6,7 +6,6 @@ from __future__ import annotations
 import argparse
 import asyncio
 import base64
-import contextlib
 import json
 import ssl
 import time
@@ -167,6 +166,23 @@ async def drain_after_audio(
     return events
 
 
+async def close_session(
+    ws: websockets.ClientConnection,
+    *,
+    timeout_s: float,
+) -> list[dict[str, Any]]:
+    events: list[dict[str, Any]] = []
+    await ws.send(json.dumps({"type": "session.close", "reason": "probe_done"}))
+    while True:
+        msg = await recv_json(ws, timeout_s=timeout_s)
+        events.append(msg)
+        typ = msg.get("type")
+        if typ == "session.closed":
+            return events
+        if typ == "error":
+            raise RuntimeError(json.dumps(msg, ensure_ascii=False))
+
+
 async def collect_unit(
     ws: websockets.ClientConnection,
     *,
@@ -324,8 +340,7 @@ async def run_probe(args: argparse.Namespace) -> dict[str, Any]:
                 if audio_arrays:
                     write_wav(out_dir / f"unit_{idx:03d}.wav", np.concatenate(audio_arrays))
 
-        with contextlib.suppress(Exception):
-            await ws.send(json.dumps({"type": "session.close", "reason": "probe_done"}))
+        events.extend(await close_session(ws, timeout_s=args.event_timeout_s))
     finally:
         await ws.close()
 
@@ -358,7 +373,12 @@ async def run_probe(args: argparse.Namespace) -> dict[str, Any]:
     (out_dir / "summary.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
     if args.include_events:
         (out_dir / "events.json").write_text(json.dumps(events, ensure_ascii=False, indent=2), encoding="utf-8")
-    return {"out_dir": str(out_dir), "units": len(units), "text": "".join(item["text"] for item in units)}
+    return {
+        "out_dir": str(out_dir),
+        "session_id": session_created.get("session_id") if session_created else None,
+        "units": len(units),
+        "text": "".join(item["text"] for item in units),
+    }
 
 
 def parse_args() -> argparse.Namespace:
