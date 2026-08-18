@@ -284,9 +284,11 @@ class ReplayReference:
             input_id = str(event.get("input_id") or "")
             self._by_kind.setdefault(kind, {}).setdefault(input_id, []).append(event)
         self._cursor: dict[tuple[str, str], int] = {}
+        self._decision_cursor: dict[tuple[str, str], int] = {}
 
     def reset(self) -> None:
         self._cursor.clear()
+        self._decision_cursor.clear()
 
     @classmethod
     def load(cls, root: Path) -> "ReplayReference":
@@ -303,7 +305,17 @@ class ReplayReference:
         return rows[index]
 
     def next_llm_token(self, input_id: Optional[str]) -> int:
-        return int(self._next("llm.decode", input_id)["selected_token_id"])
+        key = str(input_id or "")
+        detailed = self._by_kind.get("llm.decode", {}).get(key, [])
+        if detailed:
+            return int(self._next("llm.decode", input_id)["selected_token_id"])
+
+        decisions: list[int] = []
+        for row in self._by_kind.get("llm.chunk", {}).get(key, []):
+            sampled = row.get("sampled_token_ids")
+            if isinstance(sampled, list):
+                decisions.extend(int(token) for token in sampled)
+        return int(self._next_decision("llm.chunk.sampled_token_ids", key, decisions))
 
     def next_condition(self, input_id: Optional[str]) -> torch.Tensor:
         row = self._next("tts.condition", input_id)
@@ -319,21 +331,52 @@ class ReplayReference:
             return tensor
         tokens = (row.get("new_tokens") or {}).get("tokens")
         shape = (row.get("new_tokens") or {}).get("shape")
+        if tokens is None and isinstance(row.get("token_ids"), list):
+            tokens = row["token_ids"]
+            shape = [1, len(tokens), 1]
         if tokens is None or shape is None:
             raise RuntimeError("reference TTS chunk has no token payload")
         return torch.tensor(tokens, dtype=torch.long).reshape(shape)
 
     def next_tts_sample_tokens(self, input_id: Optional[str], *, expected_step: int) -> list[int]:
-        row = self._next("tts.sample", input_id)
-        reference_step = row.get("step")
-        if reference_step is not None and int(reference_step) != expected_step:
+        key = str(input_id or "")
+        detailed = self._by_kind.get("tts.sample", {}).get(key, [])
+        if detailed:
+            row = self._next("tts.sample", input_id)
+            reference_step = row.get("step")
+            if reference_step is not None and int(reference_step) != expected_step:
+                raise RuntimeError(
+                    f"reference TTS sample step mismatch: reference={reference_step} actual={expected_step}"
+                )
+            tokens = row.get("selected_token_ids")
+            if not isinstance(tokens, list) or not tokens:
+                raise RuntimeError("reference TTS sample has no selected token IDs")
+            return [int(token) for token in tokens]
+
+        decisions: list[tuple[int, list[int]]] = []
+        for row in self._by_kind.get("tts.chunk", {}).get(key, []):
+            sampled = row.get("sampled_token_ids")
+            if not isinstance(sampled, list):
+                continue
+            for step, tokens in enumerate(sampled):
+                values = tokens if isinstance(tokens, list) else [tokens]
+                decisions.append((step, [int(token) for token in values]))
+        reference_step, tokens = self._next_decision("tts.chunk.sampled_token_ids", key, decisions)
+        if reference_step != expected_step:
             raise RuntimeError(
                 f"reference TTS sample step mismatch: reference={reference_step} actual={expected_step}"
             )
-        tokens = row.get("selected_token_ids")
-        if not isinstance(tokens, list) or not tokens:
-            raise RuntimeError("reference TTS sample has no selected token IDs")
-        return [int(token) for token in tokens]
+        return tokens
+
+    def _next_decision(self, name: str, input_id: str, decisions: list[Any]) -> Any:
+        cursor_key = (name, input_id)
+        index = self._decision_cursor.get(cursor_key, 0)
+        if index >= len(decisions):
+            raise RuntimeError(
+                f"reference exhausted: kind={name} input_id={input_id} index={index}"
+            )
+        self._decision_cursor[cursor_key] = index + 1
+        return decisions[index]
 
     def vocoder_noise(self) -> Optional[torch.Tensor]:
         rows = self._by_kind.get("vocoder.state", {}).get("", [])
@@ -375,8 +418,11 @@ class DuplexTraceController:
         self._event_id = 0
         self._originals: list[tuple[Any, str, Any]] = []
         self._original_multinomial: Any = None
+        self._inside_llm_chunk = False
+        self._active_llm_sample_ids: list[int] = []
         self._force_tts_samples = False
         self._active_tts_step = 0
+        self._active_tts_sample_ids: list[list[int]] = []
         self._inside_tts_chunk = False
         self._pending_tts_source_ids: list[int] = []
         self._pending_tts_end_of_turn: list[bool] = []
@@ -496,7 +542,7 @@ class DuplexTraceController:
         decoder = duplex.decoder
         detailed = self.capture_mode == "replay"
         original_feed = self._save_original(decoder, "feed") if detailed else None
-        original_decode = self._save_original(decoder, "decode") if detailed or self.forcing.llm_tokens else None
+        original_decode = self._save_original(decoder, "decode")
         original_generate = self._save_original(duplex, "streaming_generate")
         trace = self
         self._install_layer_hooks(duplex)
@@ -540,8 +586,9 @@ class DuplexTraceController:
                 if trace.tp_driver and torch.distributed.is_available() and torch.distributed.is_initialized():
                     torch.distributed.broadcast(selected, src=0)
             else:
-                assert original_decode is not None
                 selected = original_decode(logits, *args, **kwargs)
+            if trace._inside_llm_chunk:
+                trace._active_llm_sample_ids.extend(_flat_ints(selected))
             if detailed:
                 trace._emit(
                     "llm.decode",
@@ -554,10 +601,16 @@ class DuplexTraceController:
 
         def traced_generate(duplex_self, *args, **kwargs):
             before = len(getattr(duplex_self, "total_ids", []))
-            result = original_generate(*args, **kwargs)
+            trace._active_llm_sample_ids = []
+            trace._inside_llm_chunk = True
+            try:
+                result = original_generate(*args, **kwargs)
+            finally:
+                trace._inside_llm_chunk = False
             accepted = list(getattr(duplex_self, "total_ids", []))[before:]
             fields = {
                 "token_ids": [int(item) for item in accepted],
+                "sampled_token_ids": list(trace._active_llm_sample_ids),
                 "is_listen": bool(_result_value(result, "is_listen", False)),
                 "end_of_turn": bool(_result_value(result, "end_of_turn", False)),
             }
@@ -570,8 +623,7 @@ class DuplexTraceController:
 
         if original_feed is not None:
             decoder.feed = types.MethodType(traced_feed, decoder)
-        if original_decode is not None:
-            decoder.decode = types.MethodType(traced_decode, decoder)
+        decoder.decode = types.MethodType(traced_decode, decoder)
         duplex.streaming_generate = types.MethodType(traced_generate, duplex)
 
     def _install_condition(self, duplex: Any) -> None:
@@ -613,8 +665,7 @@ class DuplexTraceController:
             return
         original_generate = self._save_original(tts, "generate_chunk")
         detailed = self.capture_mode == "replay"
-        if detailed or self.forcing.tts_tokens:
-            self._original_multinomial = torch.multinomial
+        self._original_multinomial = torch.multinomial
         trace = self
 
         def traced_multinomial(input_tensor, num_samples, replacement=False, *, generator=None, out=None):
@@ -651,6 +702,7 @@ class DuplexTraceController:
             if out is not None and trace._force_tts_samples:
                 out.copy_(selected)
                 selected = out
+            trace._active_tts_sample_ids.append(_flat_ints(selected))
             if detailed:
                 trace._emit(
                     "tts.sample",
@@ -667,6 +719,7 @@ class DuplexTraceController:
         def traced_generate(tts_self, *args, **kwargs):
             forced = trace.forcing.tts_tokens
             trace._active_tts_step = 0
+            trace._active_tts_sample_ids = []
             if forced:
                 if trace.reference is None:
                     raise RuntimeError("TTS token forcing requested without a replay reference")
@@ -679,6 +732,7 @@ class DuplexTraceController:
                 trace._force_tts_samples = False
             fields: dict[str, Any] = {
                 "source_llm_token_ids": list(trace._pending_tts_source_ids),
+                "sampled_token_ids": [list(tokens) for tokens in trace._active_tts_sample_ids],
             }
             if detailed:
                 fields.update({
@@ -870,6 +924,7 @@ def debug_trace_events(events: Iterable[dict[str, Any]]) -> list[dict[str, Any]]
                 **identity,
                 "kind": "llm.chunk",
                 "token_ids": list(event.get("token_ids") or []),
+                "sampled_token_ids": list(event.get("sampled_token_ids") or []),
                 "is_listen": bool(event.get("is_listen", False)),
                 "end_of_turn": bool(event.get("end_of_turn", False)),
             })
@@ -881,6 +936,9 @@ def debug_trace_events(events: Iterable[dict[str, Any]]) -> list[dict[str, Any]]
                 "kind": "tts.chunk",
                 "source_llm_token_ids": list(event.get("source_llm_token_ids") or []),
                 "token_ids": list(new_tokens.get("tokens") or []),
+                "sampled_token_ids": [
+                    list(tokens) for tokens in event.get("sampled_token_ids") or []
+                ],
             })
             continue
         if kind == "token2wav.call":

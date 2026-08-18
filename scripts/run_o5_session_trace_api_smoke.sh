@@ -133,6 +133,8 @@ for frame in debug:
     forbidden = {"shape", "dtype", "numel", "sha256", "_tensor", "probabilities"}
     if forbidden.intersection(frame):
         raise SystemExit(f"debug frame contains tensor metadata: {frame.get('kind')}")
+    if frame.get("kind") in {"llm.chunk", "tts.chunk"} and not isinstance(frame.get("sampled_token_ids"), list):
+        raise SystemExit(f"debug frame cannot drive teacher forcing: {frame.get('kind')}")
 print(json.dumps({
     "session_id": meta.get("session_id"),
     "session_dir": str(session_dir),

@@ -30,8 +30,8 @@ Replay 从 session 起点重新执行 `prepare -> (prefill -> generate -> finali
 `O5_SESSION_TRACE_MODE=tokens` 面向在线 API 排查。它只发送三种独立 WebSocket 帧：
 
 ```json
-{"type":"debug","kind":"llm.chunk","token_ids":[...],"is_listen":false,"end_of_turn":false}
-{"type":"debug","kind":"tts.chunk","source_llm_token_ids":[...],"token_ids":[...]}
+{"type":"debug","kind":"llm.chunk","token_ids":[...],"sampled_token_ids":[...],"is_listen":false,"end_of_turn":false}
+{"type":"debug","kind":"tts.chunk","source_llm_token_ids":[...],"token_ids":[...],"sampled_token_ids":[[...],...]}
 {"type":"debug","kind":"t2w.chunk","input_token_ids":[...],"committed_range":[...],"lookahead_range":[...],"output_sample_range":[...]}
 ```
 
@@ -41,7 +41,9 @@ Replay 从 session 起点重新执行 `prepare -> (prefill -> generate -> finali
 - 每次 TTS `generate_chunk()` 产生一个 `tts.chunk`。
 - 每次实际调用 `audio_tokenizer.stream()` 产生一个 `t2w.chunk`；受 buffer 和 prelook 影响，一个 TTS chunk 可以对应零个、一个或多个 T2W chunk。
 
-该模式不记录逐 token decode/sample，不读取 tensor 内容，不计算 shape、dtype、numel 或 hash，也不创建 `model_trace.jsonl`、`trace_manifest.json` 和 `trace_tensors/`。Gateway 忠实写入的 `stream.jsonl` 是事实来源。文字、音频、listen 等业务帧不混入 `trace` 字段。
+`token_ids` 是最终进入业务状态的 chunk 序列；`sampled_token_ids` 是同一 chunk 内实际发生的采样决策序列。LLM 最终序列可能包含框架追加的 unit 结束标记，TTS 最终序列会剔除触发停止的 EOS，因此 teacher forcing 必须消费后者。Replay reader 会在内存中展开 `sampled_token_ids`，逐次满足模型的 decode/sample 调用。
+
+该模式不发送逐 token decode/sample 事件，不保存 tensor，不计算 shape、dtype、numel 或 hash，也不创建 `model_trace.jsonl`、`trace_manifest.json` 和 `trace_tensors/`。Gateway 忠实写入的 `stream.jsonl` 是事实来源。文字、音频、listen 等业务帧不混入 `trace` 字段。
 
 ### 完整 replay sidecar
 
@@ -102,7 +104,9 @@ export O5_REPLAY_FORCING=llm,tts-condition,tts-token,vocoder
 export O5_REPLAY_FORCING=llm,tts-token,vocoder
 ```
 
-此时 condition 仍由本次 LLM hidden 正常计算；TTS acoustic token 由 reference 强制，因此下游 Token2Wav 不依赖保存的 condition tensor。`vocoder` 会恢复 reference 的静态 `rand_noise`，所以该模式仍要求 reference 使用完整 replay sidecar 录制。普通 `tokens` debug 不保存该 tensor，当前不能直接作为 forcing reference。
+此时 condition 仍由本次 LLM hidden 正常计算；TTS acoustic token 由 reference 强制，因此下游 Token2Wav 不依赖保存的 condition tensor。
+
+普通 `tokens` debug 可以直接作为 `llm,tts-token` forcing reference。它不保存 TTS condition 和 vocoder 静态 `rand_noise`，所以 `tts-condition` 或 `vocoder` forcing 仍要求 reference 使用完整 replay sidecar 录制。
 
 逐层记录是高开销选项，并且只允许用于 `replay` 模式：
 

@@ -293,12 +293,15 @@ def test_tokens_mode_emits_minimal_chunk_events_and_t2w_ranges():
 
     llm = next(event for event in events if event["kind"] == "llm.chunk")
     assert llm["token_ids"] == [2, 777]
+    assert llm["sampled_token_ids"] == [2]
     assert llm["is_listen"] is False
     assert llm["end_of_turn"] is False
 
     tts = next(event for event in events if event["kind"] == "tts.chunk")
     assert tts["source_llm_token_ids"] == [2]
     assert len(tts["token_ids"]) == 4
+    assert [token for step in tts["sampled_token_ids"][:-1] for token in step] == tts["token_ids"]
+    assert tts["sampled_token_ids"][-1] == [0, 0]
 
     call = next(event for event in events if event["kind"] == "t2w.chunk")
     assert call["input_range"] == [0, 3]
@@ -309,6 +312,44 @@ def test_tokens_mode_emits_minimal_chunk_events_and_t2w_ranges():
     forbidden = {"shape", "dtype", "numel", "sha256", "_tensor", "probabilities"}
     assert not forbidden.intersection(_walk_keys(events))
     controller.uninstall()
+
+
+def test_chunk_debug_reference_can_teacher_force_llm_and_tts(tmp_path: Path):
+    torch.manual_seed(0)
+    reference_duplex = _FakeDuplex(favored_llm_token=5, favored_tts_token=3, condition_bias=1.5)
+    reference_controller = DuplexTraceController(capture_mode="tokens").install(reference_duplex)
+    reference_result, reference_events = _run(reference_controller, reference_duplex)
+    reference_controller.uninstall()
+
+    debug_frames = debug_trace_events(reference_events)
+    session = tmp_path / "token-session"
+    session.mkdir()
+    (session / "stream.jsonl").write_text(
+        "".join(
+            json.dumps({"dir": "down", "frame": {"type": "debug", **frame}}) + "\n"
+            for frame in debug_frames
+        ),
+        encoding="utf-8",
+    )
+
+    replay = ReplayReference.load(session)
+    candidate_duplex = _FakeDuplex(favored_llm_token=9, favored_tts_token=6, condition_bias=8.0)
+    candidate_controller = DuplexTraceController(
+        capture_mode="tokens",
+        reference=replay,
+        forcing=ForcingPolicy.parse("llm,tts-token"),
+    ).install(candidate_duplex)
+    replay_result, replay_events = _run(candidate_controller, candidate_duplex)
+    candidate_controller.uninstall()
+
+    assert replay_result["text"] == reference_result["text"] == "token-5"
+    reference_tts = next(event for event in reference_events if event["kind"] == "tts.chunk")
+    replay_tts = next(event for event in replay_events if event["kind"] == "tts.chunk")
+    assert replay_tts["token_ids"] == reference_tts["token_ids"]
+    assert replay_tts["sampled_token_ids"] == reference_tts["sampled_token_ids"]
+    assert [event["kind"] for event in replay_events] == ["tts.chunk", "t2w.chunk", "llm.chunk"]
+    forbidden = {"shape", "dtype", "numel", "sha256", "_tensor", "probabilities"}
+    assert not forbidden.intersection(_walk_keys(replay_events))
 
 
 def test_recorded_session_materialization_and_comparison(tmp_path: Path):
