@@ -168,6 +168,10 @@ def test_record_bundle_and_force_replay(tmp_path: Path):
     assert len([event for event in events if event["kind"] == "tts.sample"]) == 3
     reference_chunk = next(event for event in events if event["kind"] == "tts.chunk")
     assert reference_chunk["new_tokens"]["shape"] == [1, 2, 2]
+    token2wav_call = next(event for event in events if event["kind"] == "token2wav.call")
+    assert token2wav_call["output_pcm"]["shape"] == [3]
+    assert torch.equal(token2wav_call["output_pcm"]["_tensor"], torch.tensor([99, 3, 3], dtype=torch.int16))
+    assert token2wav_call["state_before"] == {"prompt": None, "flow": None, "hift": None}
     debug_events = debug_trace_events(events)
     debug_chunk = next(event for event in debug_events if event["kind"] == "tts.chunk")
     assert debug_chunk["token_ids"] == reference_chunk["new_tokens"]["tokens"]

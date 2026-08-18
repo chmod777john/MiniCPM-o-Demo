@@ -50,6 +50,20 @@ def _tensor_meta(value: torch.Tensor, *, keep_value: bool) -> dict[str, Any]:
     return record
 
 
+def _tensor_tree_meta(value: Any) -> Any:
+    """Describe nested tensor state without retaining another tensor copy."""
+
+    if torch.is_tensor(value):
+        return _tensor_meta(value, keep_value=False)
+    if isinstance(value, dict):
+        return {str(key): _tensor_tree_meta(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_tensor_tree_meta(item) for item in value]
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return value
+    return {"type": type(value).__name__}
+
+
 def _token_meta(value: Any) -> dict[str, Any]:
     if torch.is_tensor(value):
         shape = list(value.shape)
@@ -720,6 +734,13 @@ class DuplexTraceController:
             prelook = int(getattr(duplex, "pre_lookahead", 0) or 0)
             committed = len(token_ids) if last_chunk else max(0, len(token_ids) - prelook)
             token_start = trace._t2w_token_pos
+            state_before = None
+            if detailed:
+                state_before = {
+                    "prompt": _tensor_tree_meta(getattr(tokenizer_self, "cache", None)),
+                    "flow": _tensor_tree_meta(getattr(tokenizer_self, "stream_cache", None)),
+                    "hift": _tensor_tree_meta(getattr(tokenizer_self, "hift_cache_dict", None)),
+                }
             output = original_stream(tokens, *args, **kwargs)
             if isinstance(output, (bytes, bytearray)):
                 samples = len(output) // 2
@@ -728,15 +749,28 @@ class DuplexTraceController:
             else:
                 samples = 0
             sample_start = trace._t2w_sample_pos
-            trace._emit(
-                "token2wav.call" if detailed else "t2w.chunk",
-                input_token_ids=token_ids,
-                input_range=[token_start, token_start + len(token_ids)],
-                committed_range=[token_start, token_start + committed],
-                lookahead_range=[token_start + committed, token_start + len(token_ids)],
-                output_sample_range=[sample_start, sample_start + samples],
-                last_chunk=last_chunk,
-            )
+            fields: dict[str, Any] = {
+                "input_token_ids": token_ids,
+                "input_range": [token_start, token_start + len(token_ids)],
+                "committed_range": [token_start, token_start + committed],
+                "lookahead_range": [token_start + committed, token_start + len(token_ids)],
+                "output_sample_range": [sample_start, sample_start + samples],
+                "last_chunk": last_chunk,
+            }
+            if detailed:
+                fields["state_before"] = state_before
+                fields["state_after"] = {
+                    "prompt": _tensor_tree_meta(getattr(tokenizer_self, "cache", None)),
+                    "flow": _tensor_tree_meta(getattr(tokenizer_self, "stream_cache", None)),
+                    "hift": _tensor_tree_meta(getattr(tokenizer_self, "hift_cache_dict", None)),
+                }
+                if isinstance(output, (bytes, bytearray)):
+                    pcm = np.frombuffer(output, dtype="<i2").copy()
+                    fields["output_pcm"] = _tensor_meta(torch.from_numpy(pcm), keep_value=True)
+                elif isinstance(output, np.ndarray):
+                    waveform = np.asarray(output).copy()
+                    fields["output_waveform"] = _tensor_meta(torch.from_numpy(waveform), keep_value=True)
+            trace._emit("token2wav.call" if detailed else "t2w.chunk", **fields)
             trace._t2w_token_pos += committed
             trace._t2w_sample_pos += samples
             return output
