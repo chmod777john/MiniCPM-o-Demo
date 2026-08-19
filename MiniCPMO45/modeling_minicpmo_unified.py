@@ -105,7 +105,7 @@ class MiniCPMO(BaseMiniCPMO):
             "listen_prob_scale": 1.0,
             "force_listen_count": 0,
             "tts_temperature": 0.2,
-            "tts_repetition_penalty": 1.10,
+            "tts_repetition_penalty": 1.05,
         }
 
     @property

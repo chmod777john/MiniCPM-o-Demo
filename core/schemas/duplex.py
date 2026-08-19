@@ -275,7 +275,7 @@ class DuplexConfig(BaseModel):
         description="TTS 温度"
     )
     tts_repetition_penalty: float = Field(
-        1.10,
+        1.05,
         ge=1.0,
         description="TTS 重复惩罚"
     )
