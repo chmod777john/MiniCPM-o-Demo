@@ -11,6 +11,7 @@ from typing import Any, Dict
 import torch
 
 from .base import DeploymentMode, BuildResult
+from .fla_runtime import configure_chunk_output, configure_fused_norm, configure_l2norm
 from .registry import register_mode
 
 logger = logging.getLogger("deploy.modes")
@@ -54,6 +55,11 @@ def _mk_config(cfg: Dict[str, Any]):
 
 def _load_full(cfg: Dict[str, Any], device: str):
     """Single-card: build MiniCPMO, load the full .pt, place on `device`, init_unified."""
+    # "auto" leaves FLA's normal autotuning untouched. Fixed values are only
+    # for reproducibility investigations on the pinned FLA 0.5.0 runtime.
+    configure_fused_norm(cfg.get("fla_fused_norm_config"))
+    configure_l2norm(cfg.get("fla_l2norm_config"))
+    configure_chunk_output(cfg.get("fla_chunk_output_config"))
     from accelerate import init_empty_weights
     from MiniCPMO45.modeling_minicpmo_unified import MiniCPMO
     from MiniCPMO45.processing_minicpmo import MiniCPMOProcessor
@@ -75,6 +81,10 @@ def _surgery_tp(
     sync_llm_calls: bool = False,
 ):
     """2-card TP: MiniCPMO with non-llm weights (mmap) + TP-sharded backbone via from_pretrained."""
+    # Apply any requested FLA pin before either rank creates its model.
+    configure_fused_norm(cfg.get("fla_fused_norm_config"))
+    configure_l2norm(cfg.get("fla_l2norm_config"))
+    configure_chunk_output(cfg.get("fla_chunk_output_config"))
     from accelerate import init_empty_weights
     from transformers import AutoConfig, AutoModelForCausalLM
     from .llm_wrapper import DistributedTPLLM
