@@ -6,7 +6,6 @@ import asyncio
 import base64
 import gc
 import io
-import json
 import logging
 import os
 import random
@@ -79,9 +78,12 @@ class PyTorchBackend:
         self.processor = None
         self.spmd_is_driver = False
         self.spmd_is_worker = False
-        self._token_trace: Optional[Dict[str, Any]] = None
+        self._trace_controller: Optional[Any] = None
+        self._trace_writer: Optional[Any] = None
+        self._trace_capture_mode = "tokens"
         self._token_trace_path: Optional[Path] = None
         self._token_trace_dir: Optional[Path] = None
+        self._trace_unit_index = -1
 
         # Duplex 暂停超时监控 task
         self._duplex_timeout_task: Optional[asyncio.Task] = None
@@ -94,6 +96,8 @@ class PyTorchBackend:
         if startup_seed is not None:
             self._seed_process(int(startup_seed))
             logger.info("[GPU %s] Startup seed set to %s", self.gpu_id, startup_seed)
+        if os.environ.get("O5_CAPTURE_LAYERS", "0").lower() in {"1", "true", "yes", "on"}:
+            os.environ["O5_LAYER_TRACE"] = "1"
 
         from core.processors.unified import UnifiedProcessor
 
@@ -127,33 +131,12 @@ class PyTorchBackend:
         if torch.cuda.is_available():
             torch.cuda.manual_seed_all(seed)
 
-    @staticmethod
-    def _token_meta(tokens: Any) -> Dict[str, Any]:
-        import hashlib
-
-        tensor = torch.as_tensor(tokens).detach().cpu().long().contiguous()
-        flat = tensor.reshape(-1)
-        data = flat.numpy().tobytes()
-        return {
-            "shape": list(tensor.shape),
-            "numel": int(flat.numel()),
-            "sha256": hashlib.sha256(data).hexdigest(),
-            "tokens": [int(x) for x in flat.numpy().tolist()],
-        }
-
-    def _write_token_trace(self) -> None:
-        if self._token_trace_path is None or self._token_trace is None:
-            return
-        self._token_trace_path.parent.mkdir(parents=True, exist_ok=True)
-        self._token_trace_path.write_text(
-            json.dumps(self._token_trace, ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
-
     def set_trace_unit_id(self, unit_id: Optional[str]) -> None:
-        if self._token_trace is not None:
-            self._token_trace["current_unit"] = unit_id
-            self._write_token_trace()
+        if self._trace_controller is None:
+            return
+        if unit_id is not None:
+            self._trace_unit_index += 1
+        self._trace_controller.set_unit(unit_id, self._trace_unit_index if unit_id is not None else None)
 
     @staticmethod
     def _safe_trace_session_id(session_id: str) -> str:
@@ -161,23 +144,61 @@ class PyTorchBackend:
         return safe[:128] or "session"
 
     def set_trace_session_id(self, session_id: Optional[str]) -> None:
-        if self._token_trace is None:
+        if self._trace_controller is None:
             return
-        if self._token_trace_dir is not None and session_id:
-            safe_session = self._safe_trace_session_id(session_id)
-            self._token_trace_path = self._token_trace_dir / safe_session / "token_trace.json"
-        self._token_trace.update({
-            "session_id": session_id,
-            "current_unit": None,
-            "generated_tts_chunks": [],
-            "token2wav_stream_inputs": [],
-        })
-        self._write_token_trace()
+        if self._trace_writer is not None:
+            remaining = self._trace_controller.drain()
+            if remaining:
+                self._trace_writer.append(remaining)
+            self._trace_writer.close()
+            self._trace_writer = None
+        self._trace_controller.set_session(session_id)
+        self._trace_unit_index = -1
+        if session_id is None or self._trace_capture_mode != "replay":
+            return
+
+        from core.tracing import SessionBundleWriter
+
+        if self._token_trace_dir is not None:
+            root = self._token_trace_dir / self._safe_trace_session_id(session_id)
+        elif self._token_trace_path is not None:
+            root = self._token_trace_path.parent
+        else:
+            return
+        self._trace_writer = SessionBundleWriter(
+            root,
+            source_implementation="demo-api",
+            manifest_extra={
+                "session_id": session_id,
+                "capture_mode": self._trace_capture_mode,
+                "deployment_mode": os.environ.get("O5_DEPLOY_MODE", "single_eager"),
+                "model_path": self.model_path,
+                "checkpoint": self.pt_path,
+            },
+        )
+        session_events = self._trace_controller.drain()
+        if session_events:
+            self._trace_writer.append(session_events)
+
+    def drain_trace_events(self, unit_id: Optional[str]) -> Optional[list[Dict[str, Any]]]:
+        if self._trace_controller is None:
+            return None
+        from core.tracing import debug_trace_events
+
+        events = self._trace_controller.drain(unit_id)
+        if not events:
+            return None
+        if self._trace_writer is not None:
+            self._trace_writer.append(events)
+        return debug_trace_events(events) or None
 
     def _install_token_trace_if_requested(self) -> None:
         trace_path = os.environ.get("O5_TOKEN_TRACE_PATH")
         trace_dir = os.environ.get("O5_TOKEN_TRACE_DIR")
         if not (trace_path or trace_dir) or self.processor is None:
+            return
+        if self.spmd_is_worker:
+            logger.info("[GPU %s] Session trace disabled on TP2 worker rank", self.gpu_id)
             return
 
         model = getattr(self.processor, "model", None)
@@ -186,61 +207,38 @@ class PyTorchBackend:
             logger.warning("O5_TOKEN_TRACE_PATH set but duplex model is unavailable")
             return
 
+        from core.tracing import (
+            DuplexTraceController,
+            ForcingPolicy,
+            MemoryTraceSink,
+            ReplayReference,
+        )
+
         self._token_trace_dir = Path(trace_dir) if trace_dir else None
         self._token_trace_path = Path(trace_path) if trace_path else None
-        self._token_trace = {
-            "session_id": None,
-            "current_unit": None,
-            "generated_tts_chunks": [],
-            "token2wav_stream_inputs": [],
-        }
-
-        original_generate_waveform = duplex._generate_waveform_from_tokens
-
-        def traced_generate_waveform(
-            traced_self: Any,
-            new_tokens: Any,
-            prompt_wav_path: Optional[str],
-            is_last_chunk: bool = False,
-            force_flush: bool = False,
-        ) -> Any:
-            assert self._token_trace is not None
-            self._token_trace["generated_tts_chunks"].append({
-                "unit_id": self._token_trace.get("current_unit"),
-                "new_tokens": self._token_meta(new_tokens),
-                "is_last_chunk": bool(is_last_chunk),
-                "force_flush": bool(force_flush),
-            })
-            self._write_token_trace()
-            return original_generate_waveform(
-                new_tokens,
-                prompt_wav_path,
-                is_last_chunk=is_last_chunk,
-                force_flush=force_flush,
-            )
-
-        duplex._generate_waveform_from_tokens = types.MethodType(traced_generate_waveform, duplex)
-
-        audio_tokenizer = getattr(getattr(model, "tts", None), "audio_tokenizer", None)
-        original_stream = getattr(audio_tokenizer, "stream", None)
-        if original_stream is not None:
-
-            def traced_stream(tokens: Any, *args: Any, **kwargs: Any) -> Any:
-                assert self._token_trace is not None
-                self._token_trace["token2wav_stream_inputs"].append({
-                    "unit_id": self._token_trace.get("current_unit"),
-                    "tokens": self._token_meta(tokens),
-                    "last_chunk": bool(kwargs.get("last_chunk", False)),
-                    "return_waveform": bool(kwargs.get("return_waveform", False)),
-                })
-                self._write_token_trace()
-                return original_stream(tokens, *args, **kwargs)
-
-            audio_tokenizer.stream = traced_stream
-
-        self._write_token_trace()
-        target = self._token_trace_path if self._token_trace_path is not None else f"{self._token_trace_dir}/<session>/token_trace.json"
-        logger.info("[GPU %s] Token trace enabled: %s", self.gpu_id, target)
+        self._trace_capture_mode = os.environ.get("O5_SESSION_TRACE_MODE", "tokens").strip().lower()
+        reference_path = os.environ.get("O5_REPLAY_REFERENCE")
+        forcing = ForcingPolicy.parse(os.environ.get("O5_REPLAY_FORCING", "none"))
+        if forcing.names() and not reference_path:
+            raise RuntimeError("O5_REPLAY_FORCING requires O5_REPLAY_REFERENCE")
+        reference = ReplayReference.load(Path(reference_path)) if reference_path else None
+        self._trace_controller = DuplexTraceController(
+            sink=MemoryTraceSink(),
+            capture_mode=self._trace_capture_mode,
+            reference=reference,
+            forcing=forcing,
+            tp_driver=self.spmd_is_driver,
+            capture_layers=os.environ.get("O5_CAPTURE_LAYERS", "0").lower() in {"1", "true", "yes", "on"},
+        ).install(duplex)
+        target = self._token_trace_path if self._token_trace_path is not None else f"{self._token_trace_dir}/<session>"
+        logger.info(
+            "[GPU %s] Session trace enabled: target=%s mode=%s forcing=%s reference=%s",
+            self.gpu_id,
+            target,
+            self._trace_capture_mode,
+            forcing.names(),
+            reference_path,
+        )
 
     def _get_spmd_mirror(self) -> Any:
         model = getattr(self.processor, "model", None)

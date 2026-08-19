@@ -338,6 +338,10 @@ class BackendProtocolSession:
     async def send_output_delta(self, kind: str, **fields: Any) -> None:
         await self.send("response.output.delta", kind=kind, **fields)
 
+    async def _send_debug_events(self, events: Optional[list[Dict[str, Any]]]) -> None:
+        for event in events or []:
+            await self.send("debug", **event)
+
     async def init(self, params: Dict[str, Any]) -> None:
         if self.initialized:
             raise RuntimeError("session is already initialized")
@@ -346,6 +350,9 @@ class BackendProtocolSession:
         if self.mode == "full_duplex":
             self._replay_manifest = await self._init_duplex(params)
         self.initialized = True
+        init_debug = None
+        if hasattr(self.backend, "drain_trace_events"):
+            init_debug = await asyncio.to_thread(self.backend.drain_trace_events, None)
         await self.send(
             "session.created",
             session_id=self.session_id,
@@ -353,6 +360,7 @@ class BackendProtocolSession:
             metrics=self._safe_metrics(),
             replay_manifest=self._replay_manifest,
         )
+        await self._send_debug_events(init_debug)
 
     async def push(self, message: Dict[str, Any]) -> None:
         if self.closed:
@@ -695,24 +703,23 @@ class BackendProtocolSession:
 
             t0 = time.perf_counter()
 
-            def _duplex_step() -> tuple[Any, float, Dict[str, Any], Dict[str, Any]]:
+            def _duplex_step() -> tuple[Any, float, Dict[str, Any], Dict[str, Any], Optional[list[Dict[str, Any]]]]:
                 if hasattr(self.backend, "set_trace_unit_id"):
                     self.backend.set_trace_unit_id(input_id)
-                try:
-                    prefill_t0 = time.perf_counter()
-                    prefill_result = self.backend.duplex_prefill(
-                        audio_waveform=audio_waveform,
-                        frame_list=decoded_frames.frame_list,
-                        max_slice_nums=max_slice_nums,
-                    )
-                    prefill_ms = (time.perf_counter() - prefill_t0) * 1000
-                    result = self.backend.duplex_generate(force_listen=force_listen)
-                    return result, prefill_ms, prefill_result, self._safe_metrics()
-                finally:
-                    if hasattr(self.backend, "set_trace_unit_id"):
-                        self.backend.set_trace_unit_id(None)
+                prefill_t0 = time.perf_counter()
+                prefill_result = self.backend.duplex_prefill(
+                    audio_waveform=audio_waveform,
+                    frame_list=decoded_frames.frame_list,
+                    max_slice_nums=max_slice_nums,
+                )
+                prefill_ms = (time.perf_counter() - prefill_t0) * 1000
+                result = self.backend.duplex_generate(force_listen=force_listen)
+                unit_trace = None
+                if hasattr(self.backend, "drain_trace_events"):
+                    unit_trace = self.backend.drain_trace_events(input_id)
+                return result, prefill_ms, prefill_result, self._safe_metrics(), unit_trace
 
-            result, prefill_ms, prefill_result, backend_metrics = await asyncio.to_thread(_duplex_step)
+            result, prefill_ms, prefill_result, backend_metrics, unit_trace = await asyncio.to_thread(_duplex_step)
             wall_clock_ms = (time.perf_counter() - t0) * 1000
             metrics = _result_metrics(result, backend_metrics)
             metrics["prefill_ms"] = round(prefill_ms, 1)
@@ -723,6 +730,7 @@ class BackendProtocolSession:
                     metrics["vision_slices"] = n_vision_images
                     metrics["vision_tokens"] = int(n_vision_images) * 64
 
+            await self._send_debug_events(unit_trace)
             if result.is_listen:
                 await self.send_output_delta(
                     "listen",
@@ -732,7 +740,7 @@ class BackendProtocolSession:
                     metrics=metrics,
                 )
                 self._active_response_id = None
-                self._schedule_finalize()
+                self._schedule_finalize(input_id)
                 return
 
             if self._active_response_id is None:
@@ -766,7 +774,7 @@ class BackendProtocolSession:
                 )
                 self._active_response_id = None
 
-            self._schedule_finalize()
+            self._schedule_finalize(input_id)
 
     def _safe_metrics(self) -> Dict[str, Any]:
         try:
@@ -782,7 +790,7 @@ class BackendProtocolSession:
             self._finalize_task.result()
             self._finalize_task = None
 
-    def _schedule_finalize(self) -> None:
+    def _schedule_finalize(self, input_id: Optional[str]) -> None:
         if self._finalize_task is not None and not self._finalize_task.done():
             raise RuntimeError("duplex finalize already in flight")
 
@@ -792,6 +800,13 @@ class BackendProtocolSession:
             try:
                 await asyncio.to_thread(self.backend.duplex_finalize)
             finally:
+                if hasattr(self.backend, "drain_trace_events"):
+                    with suppress(Exception):
+                        events = await asyncio.to_thread(self.backend.drain_trace_events, input_id)
+                        await self._send_debug_events(events)
+                if hasattr(self.backend, "set_trace_unit_id"):
+                    with suppress(Exception):
+                        await asyncio.to_thread(self.backend.set_trace_unit_id, None)
                 self._finalize_done.set()
 
         self._finalize_task = asyncio.create_task(_run())
