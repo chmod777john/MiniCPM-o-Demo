@@ -32,6 +32,17 @@ def _env_flag(name: str, default: bool) -> bool:
     return raw not in {"0", "false", "False", "no", "NO", "off", "OFF"}
 
 
+def _place_outer_model(model: torch.nn.Module, device: str) -> torch.nn.Module:
+    """Place the outer model, optionally preserving floating-point buffer dtypes."""
+    if not _env_flag("O5_PRESERVE_FLOAT_BUFFERS", True):
+        return model.bfloat16().eval().to(device)
+
+    for parameter in model.parameters():
+        if parameter.is_floating_point():
+            parameter.data = parameter.data.to(dtype=torch.bfloat16)
+    return model.eval().to(device)
+
+
 # ─────────────────────────── shared helpers ───────────────────────────
 def _mk_config(cfg: Dict[str, Any]):
     from transformers import AutoConfig
@@ -50,7 +61,7 @@ def _load_full(cfg: Dict[str, Any], device: str):
         model = MiniCPMO(_mk_config(cfg))
     sd = torch.load(cfg["pt_path"], map_location="cpu", weights_only=True, mmap=True)
     model.load_state_dict(sd, strict=False, assign=True); del sd
-    model.bfloat16().eval().to(device)
+    _place_outer_model(model, device)
     model.processor = MiniCPMOProcessor.from_pretrained(cfg["model_path"], trust_remote_code=True)
     return model
 
@@ -75,7 +86,7 @@ def _surgery_tp(
     model.load_state_dict({k: v for k, v in sd.items() if not k.startswith("llm.")},
                           strict=False, assign=True); del sd
     model.llm = None
-    model.to(device=device, dtype=torch.bfloat16)
+    _place_outer_model(model, device)
     tp_cfg = AutoConfig.from_pretrained(cfg["backbone_dir"], trust_remote_code=True)
     tp_cfg._attn_implementation = cfg.get("attn_implementation", "sdpa")
     tp = AutoModelForCausalLM.from_pretrained(
