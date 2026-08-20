@@ -1,7 +1,7 @@
 # O5 TP2 本地启动指南
 
-本文适用于没有 `cctl`、直接在一台有 NVIDIA GPU 的 Linux 机器上启动一套 O5 TP2 服务的情况。
-一套服务使用两张 GPU：一个 TP2 backend、一个 worker 和一个 HTTPS gateway。
+本文适用于没有 `cctl`、直接在一台有 NVIDIA GPU 的 Linux 机器上启动 O5 服务的情况，
+包括双卡 TP2 和单卡加速模式。
 
 ## 1. 目录和代码
 
@@ -9,8 +9,9 @@
 
 ```text
 o5-no-fc-speedup-tp2
-HEAD: 7180ecd40792d1bfe653393247b362c00da90d68
 ```
+
+启动时直接使用 `o5-no-fc-speedup-tp2` 分支的最新提交，不固定某个 commit。
 
 `MODEL_PATH` 不要指向 Demo 根目录，而是指向模型代码和配置目录。按下面的方式获取指定分支：
 
@@ -161,7 +162,64 @@ https://127.0.0.1:8009/omni
 仓库使用自签名证书，浏览器首次访问时需要接受证书例外。实时 API 的协议和路径保持 Demo
 原有定义，HTTPS gateway 对外提供入口，worker 和 TP2 backend 仅监听本机内部端口。
 
-## 6. 健康检查和日志
+## 6. 启动一套单卡加速服务
+
+单卡使用 `single_opt` 模式。它加载完整的 `.pt` checkpoint，不需要抽取 TP2
+`BACKBONE_DIR`；同时保留推理加速开关，包括 `batched_mm`、attention auto/SDPA、
+LLM/TTS graph、TTS fast、LM head、vision/audio fuse 和 vision batch。
+
+单卡只需要一张 GPU，例如使用 GPU `0`：
+
+```bash
+cd /path/to/MiniCPM-o-Demo
+
+export PROJECT_DIR=$PWD
+export VENV_DIR=$PWD/.venv
+export MODEL_PATH=/path/to/MiniCPM-o-4_6
+export PT_PATH=/path/to/chenmoye_iter_100.pt
+
+export O5_DEPLOY_MODE=single_opt
+export O5_ATTN_IMPLEMENTATION=auto
+export O5_EXPERTS_IMPLEMENTATION=batched_mm
+export O5_LLM_GRAPH=1
+export O5_TTS_GRAPH=1
+export O5_VOCODER_GRAPH=1
+export O5_TTS_FAST=1
+export O5_LMHEAD=1
+export O5_FUSE_VISION_AUDIO=1
+export O5_VISION_BATCH=1
+# 单卡默认使用 8K 上下文；显存充足时可改为 32768。
+export O5_LLM_CACHE=8192
+
+# 保留正常采样；不启用确定性回放。
+export O5_DETERMINISTIC_REPLAY=0
+export O5_TTS_ARGMAX=0
+
+export GPU_ID=0
+export BACKEND_HOST=127.0.0.1
+export BACKEND_PORT=22510
+export WORKER_HOST=127.0.0.1
+export WORKER_PORT=22410
+export GATEWAY_HOST=0.0.0.0
+export GATEWAY_PORT=8009
+export GATEWAY_INTERNAL_PORT=8010
+export ENABLE_FRP=0
+export LOG_DIR=$PWD/run-logs/o5-single-opt-local
+
+CUDA_VISIBLE_DEVICES=0 bash scripts/start_o5_cctl_service.sh
+```
+
+单卡服务访问方式和双卡相同：
+
+```text
+https://127.0.0.1:8009/omni
+```
+
+单卡模式不使用 `BACKBONE_DIR`；`PT_PATH` 必须是包含完整模型参数的 `.pt` 文件。
+若同一台机器上同时运行双卡和单卡服务，需要为其中一套修改 gateway、worker、backend
+和 internal gateway 端口。
+
+## 7. 健康检查和日志
 
 另开终端检查：
 
