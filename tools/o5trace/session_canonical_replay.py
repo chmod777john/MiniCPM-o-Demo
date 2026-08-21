@@ -38,7 +38,7 @@ from thin_duplex_video_probe import (
 
 
 DEFAULT_CANONICAL_ROOT = Path(
-    "/user/weihongliang/MiniCPM-o-4_6-modelbest-moe-35b-a3b_debug-session-replay-canonical-2026-07-26"
+    "/user/weihongliang/MiniCPM-o-4_6"
 )
 DEFAULT_CKPT_PATH = Path(
     "/user/weihongliang/o5_weights/houyueran_o5_MB_omni-sft2-8k-hyr_a2_i2_0722_iter_0002800.pt"
@@ -459,6 +459,7 @@ def main() -> int:
 
     units: list[dict[str, Any]] = []
     audio_parts: list[np.ndarray] = []
+    speak_audio_parts: list[np.ndarray] = []
     for idx, event in enumerate(unit_events):
         if token_trace is not None:
             token_trace["current_unit"] = event_input_id(event, idx)
@@ -476,15 +477,18 @@ def main() -> int:
         )
         waveform = result.get("audio_waveform")
         meta = audio_meta(waveform)
+        is_listen = bool(result.get("is_listen"))
         if waveform is not None and meta["samples"] > 0:
             part = np.asarray(waveform, dtype=np.float32)
             audio_parts.append(part)
+            if not is_listen:
+                speak_audio_parts.append(part)
             write_wav(out_dir / f"unit_{idx:03d}.wav", part)
         units.append({
             "unit_id": idx,
             "input_id": event_input_id(event, idx),
             "prefill_success": bool(prefill.get("success")) if isinstance(prefill, dict) else None,
-            "is_listen": bool(result.get("is_listen")),
+            "is_listen": is_listen,
             "text": result.get("text", ""),
             "end_of_turn": bool(result.get("end_of_turn")),
             "n_tokens": result.get("n_tokens"),
@@ -512,10 +516,13 @@ def main() -> int:
         "vocoder_state": vocoder_state,
         "token_trace": "token_trace.json" if token_trace is not None else None,
         "continuous_audio": "continuous.wav" if audio_parts else None,
+        "continuous_speak_audio": "continuous_speak.wav" if speak_audio_parts else None,
         "units": units,
     }
     if audio_parts:
         write_wav(out_dir / "continuous.wav", np.concatenate(audio_parts))
+    if speak_audio_parts:
+        write_wav(out_dir / "continuous_speak.wav", np.concatenate(speak_audio_parts))
     if token_trace is not None:
         trace_to_write = dict(token_trace)
         trace_to_write.pop("current_unit", None)
