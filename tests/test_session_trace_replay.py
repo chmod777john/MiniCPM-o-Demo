@@ -320,6 +320,27 @@ def test_reference_cursors_reset_for_a_new_session():
     assert reference.next_llm_token("unit-0") == 7
 
 
+def test_legacy_chunk_reference_without_input_ids_uses_global_order():
+    reference = ReplayReference([
+        {"kind": "llm.chunk", "sampled_token_ids": [5]},
+        {
+            "kind": "tts.chunk",
+            "sampled_token_ids": [[3, 4], [0, 0]],
+        },
+        {"kind": "llm.chunk", "sampled_token_ids": [6]},
+        {
+            "kind": "tts.chunk",
+            "sampled_token_ids": [[7, 8]],
+        },
+    ])
+
+    assert reference.next_llm_token("unit-000000") == 5
+    assert reference.next_llm_token("unit-000001") == 6
+    assert reference.next_tts_sample_tokens("unit-000000", expected_step=0) == [3, 4]
+    assert reference.next_tts_sample_tokens("unit-000000", expected_step=1) == [0, 0]
+    assert reference.next_tts_sample_tokens("unit-000001", expected_step=0) == [7, 8]
+
+
 def test_tokens_mode_emits_minimal_chunk_events_and_t2w_ranges():
     duplex = _FakeDuplex(favored_llm_token=2, favored_tts_token=4, condition_bias=0.0)
     controller = DuplexTraceController(capture_mode="tokens").install(duplex)
