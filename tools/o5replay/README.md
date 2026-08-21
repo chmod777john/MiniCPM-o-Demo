@@ -17,6 +17,7 @@
 | `run_session.py` | 统一的离线运行入口，支持 Canonical、Demo 单卡和 Demo TP2 |
 | `compare.py` | 对比两个 replay bundle 的 token、tensor、概率分布和音频元数据 |
 | `launch_matrix.py` | 通过 `cctl` 提交 reference 和多个并行 replay 任务 |
+| `replay_token2wav.py` | 只加载 Token2Wav，从 turn 起点重建流式状态并导出指定音频 chunk |
 | `session_io.py` | 读取 session、恢复媒体 blob、写出 replay 音频 |
 | `loaders.py` | 加载 Canonical、Demo 单卡或 Demo TP2 runtime |
 
@@ -205,6 +206,68 @@ teacher-forcing 不是直接读取 reference 的最终输出，而是继续执�
 | `vocoder` | vocoder 使用的静态随机噪声 | Token2Wav、flow、HiFT/vocoder forward |
 
 所有 forcing 都要求 reference 中的 `input_id`、unit 顺序和对应事件能够匹配。Replay 从 session 起点重新执行，不能直接从任意中间 KV cache 快照启动。
+
+## 单独重放 Token2Wav
+
+Token2Wav 的 streaming 路径不是无状态函数。每次 `stream()` 都会更新 flow cache 和
+HiFT cache，并且非末尾 chunk 包含 3 个 lookahead token。因此，要重建一个中间音频
+chunk，必须使用同一参考音频，从该 turn 的第一个 T2W 调用依次重放到目标调用。
+
+`replay_token2wav.py` 只加载约 1.2 GB 的 Token2Wav assets，不加载 LLM、视觉编码器或
+TTS token generator。例如从 API session 重建 `0039.wav`：
+
+```bash
+python tools/o5replay/replay_token2wav.py \
+  --session-dir /path/to/session \
+  --target-audio 0039.wav \
+  --output /path/to/replayed_0039.wav
+```
+
+也可以按文本定位：
+
+```bash
+python tools/o5replay/replay_token2wav.py \
+  --session-dir /path/to/session \
+  --target-text "Hello Kitty graphic" \
+  --output /path/to/replayed_hello_kitty.wav
+```
+
+需要定位声学差异时，可以同时保存每个调用的 `chunk_mel`、HiFT 输入/输出、CUDA RNG
+状态和 Flow 的 `rand_noise`：
+
+```bash
+python tools/o5replay/replay_token2wav.py \
+  --session-dir /path/to/session \
+  --target-audio 0039.wav \
+  --output /tmp/replayed_0039.wav \
+  --capture-dir /tmp/t2w-capture
+```
+
+之后可以用 `--flow-rand-noise-from` 固定 Flow 初始噪声，或用
+`--stream-rng-from` 恢复每个 T2W 调用前的 CUDA RNG 状态，从而分别观察 Flow 和 HiFT
+随机性的影响。捕获目录包含 `capture.json`、`arrays.npz`、`flow_rand_noise.npz` 和每次
+调用的 RNG 状态文件。
+
+要做 token 影响分析，可在固定两类随机状态后替换目标调用中的一个 token：
+
+```bash
+python tools/o5replay/replay_token2wav.py \
+  --session-dir /path/to/session \
+  --target-t2w-seq 67 \
+  --output /tmp/replayed_token_07.wav \
+  --capture-dir /tmp/t2w-token-07 \
+  --flow-rand-noise-from /tmp/t2w-capture \
+  --stream-rng-from /tmp/t2w-capture \
+  --perturb-token-index 7 \
+  --perturb-token-id 4218
+```
+
+`4218` 是静音 token。这个实验测量的是 token 的因果影响，不直接等价于判断 token
+“正确”或“错误”；要判断错误，需要另一个参考 token 序列进行同样的 counterfactual 对比。
+
+普通 `tokens` trace 没有保存 vocoder 的 `rand_noise` tensor，因此这种重放会恢复 token、
+lookahead 和流式 cache 演化，但不保证与原始 WAV bitwise 一致。需要严格复现时，应使用
+`capture_mode=replay` 记录并固定 vocoder state。
 
 ## Reference 的要求
 
