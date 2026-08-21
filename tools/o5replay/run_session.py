@@ -195,6 +195,7 @@ def run(args: argparse.Namespace) -> int:
 
     outputs: list[dict[str, Any]] = []
     waveforms: list[np.ndarray] = []
+    speak_waveforms: list[np.ndarray] = []
     output_log = out_dir / "replay_outputs.jsonl"
     units = session.units(args.max_units)
     completed = False
@@ -229,6 +230,8 @@ def run(args: argparse.Namespace) -> int:
                     audio_path = out_dir / "audio" / f"unit_{unit.index:06d}.wav"
                     write_wav(audio_path, waveform, OUTPUT_SAMPLE_RATE)
                     waveforms.append(waveform)
+                    if not bool(_result_value(result, "is_listen", False)):
+                        speak_waveforms.append(waveform)
                 row = {
                     "unit_index": unit.index,
                     "input_id": unit.input_id,
@@ -252,6 +255,8 @@ def run(args: argparse.Namespace) -> int:
                 print(json.dumps({"event": "unit", **row}, ensure_ascii=False), flush=True)
         if waveforms:
             write_wav(out_dir / "output_audio.wav", np.concatenate(waveforms), OUTPUT_SAMPLE_RATE)
+        if speak_waveforms:
+            write_wav(out_dir / "output_speak_audio.wav", np.concatenate(speak_waveforms), OUTPUT_SAMPLE_RATE)
         summary = {
             "schema": "o5.session-replay-result.v1",
             "target": args.target,
@@ -261,6 +266,8 @@ def run(args: argparse.Namespace) -> int:
             "forcing": forcing.names(),
             "capture_mode": args.capture_mode,
             "reference_session": str(Path(args.reference_session).resolve()) if args.reference_session else None,
+            "output_audio": "output_audio.wav" if waveforms else None,
+            "output_speak_audio": "output_speak_audio.wav" if speak_waveforms else None,
         }
         (out_dir / "replay_summary.json").write_text(
             json.dumps(summary, ensure_ascii=False, indent=2),
