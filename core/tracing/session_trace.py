@@ -290,6 +290,16 @@ class ReplayReference:
         self._cursor.clear()
         self._decision_cursor.clear()
 
+    def _reference_key(self, kind: str, input_id: Optional[str]) -> str:
+        """Use legacy global ordering when API debug frames lack input IDs."""
+
+        key = str(input_id or "")
+        if self._by_kind.get(kind, {}).get(key):
+            return key
+        if key and self._by_kind.get(kind, {}).get(""):
+            return ""
+        return key
+
     @classmethod
     def load(cls, root: Path) -> "ReplayReference":
         return cls(load_session_trace_events(Path(root), load_tensors=True))
@@ -305,11 +315,12 @@ class ReplayReference:
         return rows[index]
 
     def next_llm_token(self, input_id: Optional[str]) -> int:
-        key = str(input_id or "")
+        key = self._reference_key("llm.decode", input_id)
         detailed = self._by_kind.get("llm.decode", {}).get(key, [])
         if detailed:
-            return int(self._next("llm.decode", input_id)["selected_token_id"])
+            return int(self._next("llm.decode", key)["selected_token_id"])
 
+        key = self._reference_key("llm.chunk", input_id)
         decisions: list[int] = []
         for row in self._by_kind.get("llm.chunk", {}).get(key, []):
             sampled = row.get("sampled_token_ids")
@@ -318,14 +329,16 @@ class ReplayReference:
         return int(self._next_decision("llm.chunk.sampled_token_ids", key, decisions))
 
     def next_condition(self, input_id: Optional[str]) -> torch.Tensor:
-        row = self._next("tts.condition", input_id)
+        key = self._reference_key("tts.condition", input_id)
+        row = self._next("tts.condition", key)
         tensor = (row.get("used_condition") or {}).get("_tensor")
         if not torch.is_tensor(tensor):
             raise RuntimeError("reference TTS condition has no tensor payload; record with trace mode=replay")
         return tensor
 
     def next_tts_chunk_tokens(self, input_id: Optional[str]) -> torch.Tensor:
-        row = self._next("tts.chunk", input_id)
+        key = self._reference_key("tts.chunk", input_id)
+        row = self._next("tts.chunk", key)
         tensor = (row.get("new_tokens") or {}).get("_tensor")
         if torch.is_tensor(tensor):
             return tensor
@@ -339,10 +352,10 @@ class ReplayReference:
         return torch.tensor(tokens, dtype=torch.long).reshape(shape)
 
     def next_tts_sample_tokens(self, input_id: Optional[str], *, expected_step: int) -> list[int]:
-        key = str(input_id or "")
+        key = self._reference_key("tts.sample", input_id)
         detailed = self._by_kind.get("tts.sample", {}).get(key, [])
         if detailed:
-            row = self._next("tts.sample", input_id)
+            row = self._next("tts.sample", key)
             reference_step = row.get("step")
             if reference_step is not None and int(reference_step) != expected_step:
                 raise RuntimeError(
@@ -353,6 +366,7 @@ class ReplayReference:
                 raise RuntimeError("reference TTS sample has no selected token IDs")
             return [int(token) for token in tokens]
 
+        key = self._reference_key("tts.chunk", input_id)
         decisions: list[tuple[int, list[int]]] = []
         for row in self._by_kind.get("tts.chunk", {}).get(key, []):
             sampled = row.get("sampled_token_ids")
