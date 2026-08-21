@@ -207,6 +207,14 @@
         .error-msg { color: #ef4444; }
 
         /* Event-stream timeline */
+        .evstream-toolbar {
+            display: flex; align-items: center; gap: 8px;
+            padding: 8px 12px; background: #fafaf8;
+            border-bottom: 1px solid #e5e5e0;
+            font-size: 12px; color: #666;
+        }
+        .evstream-toolbar label { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+        .evstream-toolbar input { margin: 0; }
         .evstream { display: flex; flex-direction: column; gap: 4px; padding: 8px 0; }
         .ev {
             display: grid;
@@ -404,54 +412,66 @@
        text 拼显示、audio/frame 给内联播放/预览、blob 指针转 assets URL。   */
     function renderEventStream(events) {
         const el = document.getElementById('timeline');
-        const rows = [];
         const t0 = events.length ? events[0].ts : 0;
-        for (const ev of events) {
-            const f = ev.frame || {};
-            const type = f.type || '';
-            const kind = f.kind || '';
-            const dir = ev.dir || '';
-            const rel = t0 ? `+${((ev.ts - t0)).toFixed(2)}s` : '';
-            const dirCls = dir === 'up' ? 'ev-up' : 'ev-down';
+        function renderRows(showDebug) {
+            const rows = [];
+            for (const ev of events) {
+                const f = ev.frame || {};
+                const type = f.type || '';
+                if (!showDebug && type === 'debug') continue;
+                const kind = f.kind || '';
+                const dir = ev.dir || '';
+                const rel = t0 ? `+${((ev.ts - t0)).toFixed(2)}s` : '';
+                const dirCls = dir === 'up' ? 'ev-up' : 'ev-down';
 
-            let label, body = '';
-            if (type === 'session.init')      { label = 'session.init';  body = renderSessionInit(f.payload || {}); }
-            else if (type === 'session.created') {
-                label = 'session.created';
-                body = `<code>${esc(f.session_id||'')}</code> <span class="ev-sub">${esc(f.mode||'')}</span>`;
-                body += renderReplayManifest(f.replay_manifest);
-            }
-            else if (type === 'session.closed')  { label = 'session.closed'; body = `<span class="ev-sub">${esc(f.reason||'')}</span>`; }
-            else if (type === 'input.append') {
-                label = 'input ▲';
-                const inp = f.input || {};
-                if (inp.messages) body += `<div class="ev-text">${esc(summarizeMessages(inp.messages))}</div>`;
-                if (inp.audio)  body += audioChip(blobUrl(inp.audio), 'user audio');
-                if (Array.isArray(inp.video_frames)) {
-                    for (const fr of inp.video_frames) { const u = blobUrl(fr); if (u) body += `<img class="ev-frame" src="${u}" loading="lazy">`; }
+                let label, body = '';
+                if (type === 'session.init')      { label = 'session.init';  body = renderSessionInit(f.payload || {}); }
+                else if (type === 'session.created') {
+                    label = 'session.created';
+                    body = `<code>${esc(f.session_id||'')}</code> <span class="ev-sub">${esc(f.mode||'')}</span>`;
+                    body += renderReplayManifest(f.replay_manifest);
                 }
-            }
-            else if (type === 'response.output.delta') {
-                if (kind === 'text')  { label = 'text ▼';  body = `<span class="ev-text">${esc(f.text||'')}</span>`; }
-                else if (kind === 'audio') { label = 'audio ▼'; body = audioChip(blobUrl(f.audio), 'ai audio'); }
-                else if (kind === 'listen') { label = 'listen ▼'; body = '<span class="ev-sub">model listening</span>'; }
-                else { label = 'delta ▼'; body = miniJson(f); }
-            }
-            else if (type === 'response.done') {
-                label = 'response.done ▼';
-                body = `<span class="ev-text">${esc(f.text||'')}</span>`;
-                if (f.audio) body += audioChip(blobUrl(f.audio), 'ai audio');
-            }
-            else { label = type || '(unknown)'; body = miniJson(f); }
+                else if (type === 'session.closed')  { label = 'session.closed'; body = `<span class="ev-sub">${esc(f.reason||'')}</span>`; }
+                else if (type === 'input.append') {
+                    label = 'input ▲';
+                    const inp = f.input || {};
+                    if (inp.messages) body += `<div class="ev-text">${esc(summarizeMessages(inp.messages))}</div>`;
+                    if (inp.audio)  body += audioChip(blobUrl(inp.audio), 'user audio');
+                    if (Array.isArray(inp.video_frames)) {
+                        for (const fr of inp.video_frames) { const u = blobUrl(fr); if (u) body += `<img class="ev-frame" src="${u}" loading="lazy">`; }
+                    }
+                }
+                else if (type === 'response.output.delta') {
+                    if (kind === 'text')  { label = 'text ▼';  body = `<span class="ev-text">${esc(f.text||'')}</span>`; }
+                    else if (kind === 'audio') { label = 'audio ▼'; body = audioChip(blobUrl(f.audio), 'ai audio'); }
+                    else if (kind === 'listen') { label = 'listen ▼'; body = '<span class="ev-sub">model listening</span>'; }
+                    else { label = 'delta ▼'; body = miniJson(f); }
+                }
+                else if (type === 'response.done') {
+                    label = 'response.done ▼';
+                    body = `<span class="ev-text">${esc(f.text||'')}</span>`;
+                    if (f.audio) body += audioChip(blobUrl(f.audio), 'ai audio');
+                }
+                else { label = type || '(unknown)'; body = miniJson(f); }
 
-            rows.push(`<div class="ev ${dirCls}">
-                <span class="ev-seq">#${ev.seq}</span>
-                <span class="ev-ts">${rel}</span>
-                <span class="ev-label">${esc(label)}</span>
-                <div class="ev-body">${body}</div>
-            </div>`);
+                rows.push(`<div class="ev ${dirCls}">
+                    <span class="ev-seq">#${ev.seq}</span>
+                    <span class="ev-ts">${rel}</span>
+                    <span class="ev-label">${esc(label)}</span>
+                    <div class="ev-body">${body}</div>
+                </div>`);
+            }
+            return rows.join('');
         }
-        el.innerHTML = `<div class="evstream">${rows.join('')}</div>`;
+
+        el.innerHTML = `<div class="evstream-toolbar">
+            <label><input type="checkbox" id="show-debug-events"> Show debug</label>
+        </div><div class="evstream">${renderRows(false)}</div>`;
+        const debugToggle = el.querySelector('#show-debug-events');
+        debugToggle.addEventListener('change', () => {
+            el.querySelector('.evstream').innerHTML = renderRows(debugToggle.checked);
+            initAudioCtrls(el);
+        });
         initAudioCtrls(el);
     }
 
