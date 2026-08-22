@@ -46,6 +46,7 @@ def _apply_safe_engine_env(args: argparse.Namespace) -> None:
     _set_env_flag("O5_LMHEAD", args.lmhead)
     _set_env_flag("O5_FUSE_VISION_AUDIO", args.fuse_vision_audio)
     _set_env_flag("O5_VISION_BATCH", args.batch_vision_feed)
+    _set_env_flag("O5_UNIT_PREFILL_BATCH", args.unit_prefill_batch)
     os.environ["O5_LLM_CACHE"] = str(args.o5_llm_cache)
 
 
@@ -195,6 +196,7 @@ def _engine_summary(args: argparse.Namespace) -> dict[str, Any]:
         "vocoder_graph": args.vocoder_graph,
         "fuse_vision_audio": args.fuse_vision_audio,
         "batch_vision_feed": args.batch_vision_feed,
+        "unit_prefill_batch": args.unit_prefill_batch,
         "llm_graph": args.llm_graph,
         "llm_cache": args.o5_llm_cache,
         "tp": tp,
@@ -489,6 +491,12 @@ def main() -> int:
     parser.add_argument("--lmhead", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--fuse-vision-audio", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--batch-vision-feed", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument(
+        "--unit-prefill-batch",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="merge the complete multimodal input unit into one LLM prefill",
+    )
     parser.add_argument("--overwrite", action="store_true")
     args = parser.parse_args()
 

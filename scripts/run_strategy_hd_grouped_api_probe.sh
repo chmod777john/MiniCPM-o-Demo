@@ -51,6 +51,7 @@ export O5_TTS_FAST=1
 export O5_LMHEAD=1
 export O5_FUSE_VISION_AUDIO=1
 export O5_VISION_BATCH=1
+export O5_UNIT_PREFILL_BATCH=1
 export O5_SPMD_HEARTBEAT_INTERVAL=30
 export O5_TOKEN_TRACE_DIR="${RUN_DIR}/sessions"
 export O5_SESSION_TRACE_MODE=tokens
@@ -72,6 +73,7 @@ BRANCH="$(git branch --show-current)"
     echo "experts=${O5_EXPERTS_IMPLEMENTATION} grouped_prefill_min_tokens=${O5_GROUPED_PREFILL_MIN_TOKENS}"
     echo "strategy_hd=true strategy_hd_max_slice_nums=4"
     echo "llm_graph=${O5_LLM_GRAPH} tts_graph=${O5_TTS_GRAPH} vocoder_graph=${O5_VOCODER_GRAPH}"
+    echo "unit_prefill_batch=${O5_UNIT_PREFILL_BATCH}"
     echo "llm_cache=${O5_LLM_CACHE} attn=${O5_ATTN_IMPLEMENTATION}"
 } | tee "${RUN_DIR}/run_config.txt"
 

@@ -157,6 +157,7 @@ def _enable_engine(model, *, tp: bool, cfg: Dict[str, Any], token_broadcast: boo
     vocoder_graph = _env_flag("O5_VOCODER_GRAPH", False)
     fuse_vision_audio = _env_flag("O5_FUSE_VISION_AUDIO", True)
     batch_vision = _env_flag("O5_VISION_BATCH", True)
+    unit_prefill_batch = _env_flag("O5_UNIT_PREFILL_BATCH", True)
     OPT.update({"tts_fast": tts_fast, "lmhead": lmhead, "tts_graph": tts_graph,
                 "vocoder_graph": vocoder_graph, "fuse_vision_audio": fuse_vision_audio,
                 "llm_graph": llm_graph})
@@ -165,6 +166,7 @@ def _enable_engine(model, *, tp: bool, cfg: Dict[str, Any], token_broadcast: boo
         if c is not None and hasattr(c, "_attn_implementation"):
             c._attn_implementation = "eager"
     os.environ["O5_VISION_BATCH"] = "1" if batch_vision else "0"
+    os.environ["O5_UNIT_PREFILL_BATCH"] = "1" if unit_prefill_batch else "0"
     os.environ["O5_LLM_CACHE"] = str(cfg.get("llm_cache_len", 8192))
     vocoder_graph_enabled = _enable_vocoder_bucket(model) if vocoder_graph else False
     requested_experts_impl = _experts_impl()
@@ -172,6 +174,7 @@ def _enable_engine(model, *, tp: bool, cfg: Dict[str, Any], token_broadcast: boo
            "tts_fast": tts_fast, "lmhead": lmhead, "tts_graph": tts_graph,
            "vocoder_graph": vocoder_graph_enabled,
            "fuse_vision_audio": fuse_vision_audio, "batch_vision_feed": batch_vision,
+           "unit_prefill_batch": unit_prefill_batch,
            "llm_graph": llm_graph, "llm_cache": cfg.get("llm_cache_len", 8192)}
     if tp and token_broadcast:
         _install_token_broadcast(model)

@@ -10,6 +10,7 @@ INTEGRATION.md for the equivalence evidence):
   - TTS backbone attn -> eager (required so the TTS CUDA graph can capture)
   - OPT flags: tts_fast, lmhead, tts_graph, fuse_vision_audio, llm_graph  (opt_flags.py)
   - batch_vision_feed via env O5_VISION_BATCH=1
+  - complete multimodal unit prefill via env O5_UNIT_PREFILL_BATCH=1
   - vocoder DiT CUDA graph for the dominant chunk size (50)
 The TTS/LLM CUDA graphs capture lazily on the FIRST request (~1-2s one-time); send a warmup request
 at startup if you want the first real request to be fast.
@@ -50,6 +51,7 @@ def enable_o5_optimizations(model, logger=None, vocoder_chunk_sizes=(50,)):
     OPT.update({"tts_fast": True, "lmhead": True, "tts_graph": True,
                 "fuse_vision_audio": True, "llm_graph": True})
     os.environ["O5_VISION_BATCH"] = "1"   # batch the vision token feeds into the fused forward
+    os.environ["O5_UNIT_PREFILL_BATCH"] = "1"  # submit each complete multimodal unit as one LLM prefill
 
     # 4) vocoder DiT CUDA graph: exact graphs for the stable sizes {50,302} (bit-identical) PLUS
     #    pad-to-50 bucketing for the short flush chunks cs<50 (gate-verified float-reorder ~0.003 mel).

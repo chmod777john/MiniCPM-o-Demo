@@ -3149,6 +3149,7 @@ class MiniCPMODuplex:
         text_list: Optional[list] = None,
         max_slice_nums: Optional[Union[int, List[int]]] = None,
         batch_vision_feed: bool = False,
+        merge_unit_feed: Optional[bool] = None,
     ):
         """Streaming prefill - called once per second, processing audio/video data
 
@@ -3161,6 +3162,8 @@ class MiniCPMODuplex:
                            Can be an int (same for all images) or a list matching frame_list length
             batch_vision_feed: if True, batch all vision embeddings into a single feed call for better performance.
                               if False (default), feed each embedding individually (original behavior).
+            merge_unit_feed: if True, concatenate the complete unit prefill in the original order and
+                             execute one decoder.feed call. If None, read O5_UNIT_PREFILL_BATCH.
 
         Process:
             0. determine mode based on input: AUDIO / VISION / OMNI
@@ -3186,6 +3189,7 @@ class MiniCPMODuplex:
         cost_audio_process = 0.0
         cost_audio_embed = 0.0
         cost_audio_feed = 0.0
+        cost_unit_feed = 0.0
         effective_max_slice_nums = None
 
         def _make_result(success, reasons=""):
@@ -3202,6 +3206,7 @@ class MiniCPMODuplex:
                 "cost_audio_process": cost_audio_process,
                 "cost_audio_embed": cost_audio_embed,
                 "cost_audio_feed": cost_audio_feed,
+                "cost_unit_feed": cost_unit_feed,
                 "cost_all": time.time() - start_time,
                 "effective_max_slice_nums": effective_max_slice_nums,
                 "strategy_hd_next_max_slice_nums": self._next_strategy_max_slice_nums,
@@ -3227,6 +3232,27 @@ class MiniCPMODuplex:
 
         self.pending_logits = None
         effective_max_slice_nums = self._resolve_max_slice_nums(max_slice_nums)
+        if merge_unit_feed is None:
+            merge_unit_feed = os.environ.get("O5_UNIT_PREFILL_BATCH", "0").lower() in {
+                "1", "true", "yes", "on"
+            }
+        merge_unit_feed = bool(merge_unit_feed)
+
+        # A unit's multimodal prefix is logically one causal sequence. Keep the
+        # old staged path available, while allowing optimized deployments to
+        # submit the whole sequence to the LLM in one variable-length prefill.
+        unit_feed_parts = []
+        unit_feed_length = 0
+        pending_logits_position = None
+
+        def _queue_unit_feed(embeds):
+            nonlocal unit_feed_length
+            if embeds.dim() == 1:
+                embeds = embeds.unsqueeze(0)
+            start = unit_feed_length
+            unit_feed_parts.append(embeds)
+            unit_feed_length += embeds.shape[0]
+            return start, unit_feed_length
 
         # sliding window: record unit start position
         self.decoder.register_unit_start()
@@ -3235,7 +3261,11 @@ class MiniCPMODuplex:
         self._current_unit_prefill_tokens = []
 
         # Step 1: Feed <unit> token
-        self.decoder.feed(self.decoder.embed_token(self.unit_token_id))
+        unit_embed = self.decoder.embed_token(self.unit_token_id)
+        if merge_unit_feed:
+            _queue_unit_feed(unit_embed)
+        else:
+            self.decoder.feed(unit_embed)
         self._current_unit_prefill_tokens.append(self.unit_token_id)
 
         # Step 2: process image
@@ -3363,7 +3393,20 @@ class MiniCPMODuplex:
                     feed_operations[-1] = (feed_operations[-1][0], True, feed_operations[-1][2])
 
                 # execute feed operations
-                if batch_vision_feed and feed_operations:
+                if merge_unit_feed:
+                    for embed, _is_last, token_id in feed_operations:
+                        _queue_unit_feed(embed)
+                        if token_id is not None:
+                            self._current_unit_prefill_tokens.append(token_id)
+                        else:
+                            embed_dim = embed.shape[0] if len(embed.shape) > 1 else 1
+                            self._current_unit_prefill_tokens.append(("img", embed_dim))
+                    # In VISION mode the next token is decoded from the final
+                    # vision token. Audio/text, when present, may override this
+                    # boundary below to preserve the staged path semantics.
+                    if mode == "VISION":
+                        pending_logits_position = unit_feed_length - 1
+                elif batch_vision_feed and feed_operations:
                     # batch mode: concatenate all embeddings and feed at once
                     # this reduces LLM forward passes from N to 1
                     #
@@ -3467,7 +3510,11 @@ class MiniCPMODuplex:
             cost_audio_embed = time.time() - t0
 
             t0 = time.time()
-            self.pending_logits, _ = self.decoder.feed(audio_embeds, return_logits=True)
+            if merge_unit_feed:
+                _audio_start, audio_end = _queue_unit_feed(audio_embeds)
+                pending_logits_position = audio_end - 1
+            else:
+                self.pending_logits, _ = self.decoder.feed(audio_embeds, return_logits=True)
             cost_audio_feed = time.time() - t0
 
             # schema tracking: use tuple to mark audio embedding: ("audio", dim)
@@ -3499,7 +3546,11 @@ class MiniCPMODuplex:
                 text_embeds = self.decoder.embed_token(text_token_ids_tensor)
 
                 # feed to decoder
-                if mode == "TEXT":
+                if merge_unit_feed:
+                    _text_start, text_end = _queue_unit_feed(text_embeds)
+                    if mode == "TEXT":
+                        pending_logits_position = text_end - 1
+                elif mode == "TEXT":
                     # text-only mode: get logits from the last token
                     self.pending_logits, _ = self.decoder.feed(text_embeds, return_logits=True)
                 else:
@@ -3509,6 +3560,27 @@ class MiniCPMODuplex:
                 # schema tracking: record text token IDs
                 for token_id in text_token_ids:
                     self._current_unit_prefill_tokens.append(token_id)
+
+        if merge_unit_feed:
+            all_unit_embeds = torch.cat(unit_feed_parts, dim=0)
+            t0 = time.time()
+            if pending_logits_position is None:
+                self.decoder.feed(all_unit_embeds)
+            else:
+                self.pending_logits, _ = self.decoder.feed(
+                    all_unit_embeds,
+                    return_logits=True,
+                    logits_position=pending_logits_position,
+                )
+            cost_unit_feed = time.time() - t0
+            # Preserve the existing modality timing fields for callers that
+            # already consume them, while exposing the exact combined-feed cost.
+            if has_audio:
+                cost_audio_feed = cost_unit_feed
+            elif has_frames:
+                cost_vision_feed = cost_unit_feed
+            else:
+                cost_audio_feed = cost_unit_feed
 
         self.current_mode = mode
 

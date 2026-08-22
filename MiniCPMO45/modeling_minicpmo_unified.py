@@ -306,6 +306,7 @@ class MiniCPMO(BaseMiniCPMO):
         text_list: Optional[List] = None,
         max_slice_nums: Optional[int] = None,
         batch_vision_feed: bool = False,
+        merge_unit_feed: Optional[bool] = None,
     ):
         if self.duplex is None:
             raise RuntimeError("Duplex is not initialized; call init_unified() first")
@@ -315,6 +316,7 @@ class MiniCPMO(BaseMiniCPMO):
             text_list=text_list,
             max_slice_nums=max_slice_nums,
             batch_vision_feed=batch_vision_feed,
+            merge_unit_feed=merge_unit_feed,
         )
 
     def duplex_generate(

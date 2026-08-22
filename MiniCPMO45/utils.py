@@ -2277,12 +2277,22 @@ class StreamDecoder:
         return self.m.model.embed_tokens(tids)
 
     @torch.no_grad()
-    def feed(self, embeds: torch.Tensor, return_logits: bool = False):
+    def feed(
+        self,
+        embeds: torch.Tensor,
+        return_logits: bool = False,
+        logits_position: Optional[int] = None,
+    ):
         """
         embeds : [L, H]   —— new embedding sequence fed into model at once
+        logits_position: optional position within this new sequence whose
+            logits should be returned. Defaults to the final position.
         """
         L = embeds.size(0)
         device = embeds.device
+        if logits_position is not None and not 0 <= int(logits_position) < L:
+            raise ValueError(f"logits_position={logits_position} is outside feed length L={L}")
+        _logits_index = L - 1 if logits_position is None else int(logits_position)
 
         from .opt_flags import OPT as _OPT
         if bool(_OPT.get("llm_graph")):
@@ -2309,7 +2319,7 @@ class StreamDecoder:
             self._static_pos = _pos + L
             self.cache = _r.cache
             if return_logits:
-                logits = self.m.lm_head(_h[:, -1:])[:, -1]
+                logits = self.m.lm_head(_h[:, _logits_index : _logits_index + 1])[:, -1]
                 # CUDA graph decode reuses the same output buffer on every replay.
                 hidden = _h.clone() if L == 1 else _h
                 return logits, hidden
@@ -2332,7 +2342,7 @@ class StreamDecoder:
             self.cache = out.past_key_values
             if return_logits:
                 _h = out.hidden_states[-1]
-                return self.m.lm_head(_h[:, -1:])[:, -1], _h
+                return self.m.lm_head(_h[:, _logits_index : _logits_index + 1])[:, -1], _h
             return
 
         past_len = self.get_cache_length()
@@ -2340,7 +2350,7 @@ class StreamDecoder:
 
         if _OPT.get("lmhead"):
             # skip CausalLM internal full-vocab lm_head + our double recompute;
-            # run backbone, lm_head on LAST position only. Bit-identical logits + hidden.
+            # run backbone, lm_head on the requested boundary position only.
             out = self.m.model(
                 inputs_embeds=embeds.unsqueeze(0),  # [1, L, H]
                 position_ids=pos_ids,
@@ -2351,7 +2361,7 @@ class StreamDecoder:
             self.cache = out.past_key_values
             if return_logits:
                 _h = out.hidden_states[-1]
-                logits = self.m.lm_head(_h[:, -1:])[:, -1]  # [1, vocab]
+                logits = self.m.lm_head(_h[:, _logits_index : _logits_index + 1])[:, -1]  # [1, vocab]
                 return logits, _h
         else:
             out = self.m(
@@ -2366,8 +2376,9 @@ class StreamDecoder:
             self.cache = out.past_key_values
 
             if return_logits:
-                logits = self.m.lm_head(out.hidden_states[-1])[:, -1]  # [1, vocab]
-                return logits, out.hidden_states[-1]
+                _h = out.hidden_states[-1]
+                logits = self.m.lm_head(_h[:, _logits_index : _logits_index + 1])[:, -1]  # [1, vocab]
+                return logits, _h
 
     @torch.no_grad()
     def decode(
