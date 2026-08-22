@@ -885,6 +885,8 @@ class DuplexView:
             "text_repetition_window_size",
             "listen_prob_scale",
             "force_listen_count",
+            "strategy_hd",
+            "strategy_hd_max_slice_nums",
         ):
             if hasattr(duplex, attr):
                 setattr(duplex, attr, getattr(self.config, attr))
@@ -950,7 +952,7 @@ class DuplexView:
         audio_waveform: Optional[np.ndarray] = None,
         audio_path: Optional[str] = None,
         frame_list: Optional[List[np.ndarray]] = None,
-        max_slice_nums: int = 1,
+        max_slice_nums: Optional[int] = None,
     ) -> dict:
         """预填充用户音频
         

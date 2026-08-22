@@ -2802,6 +2802,10 @@ class MiniCPMODuplex:
         "basic_window_low_tokens": 6000,
         "context_previous_max_tokens": 500,
         "context_max_units": 24,
+        # Lag-one strategy-HD policy. While enabled, modeling owns the
+        # current slice count so stale client values cannot bypass it.
+        "strategy_hd": False,
+        "strategy_hd_max_slice_nums": 4,
     }
 
     @classmethod
@@ -2876,6 +2880,10 @@ class MiniCPMODuplex:
         instance.text_repetition_window_size = get_param("text_repetition_window_size")
         instance.listen_prob_scale = get_param("listen_prob_scale")
         instance.force_listen_count = get_param("force_listen_count")
+        instance.strategy_hd = bool(get_param("strategy_hd"))
+        instance.strategy_hd_max_slice_nums = int(get_param("strategy_hd_max_slice_nums") or 4)
+        if instance.strategy_hd_max_slice_nums < 1:
+            raise ValueError("strategy_hd_max_slice_nums must be >= 1")
 
         # TTS generation config
         tts_temp_value = get_param("tts_temperature")
@@ -3029,6 +3037,24 @@ class MiniCPMODuplex:
         self.prefill_schema_tokens = []
         self._current_unit_prefill_tokens = []
 
+        # Consumed by the next prefill and updated after the current generate.
+        self._next_strategy_max_slice_nums = 1
+
+    def _resolve_max_slice_nums(
+        self, max_slice_nums: Optional[Union[int, List[int]]]
+    ) -> Union[int, List[int]]:
+        """Resolve the current unit's slice count without advancing state."""
+        if self.strategy_hd:
+            return self._next_strategy_max_slice_nums
+        return 1 if max_slice_nums is None else max_slice_nums
+
+    def _update_strategy_after_generate(self, is_listen: bool) -> None:
+        """Select the slice count consumed by the following unit."""
+        if self.strategy_hd and not is_listen:
+            self._next_strategy_max_slice_nums = self.strategy_hd_max_slice_nums
+        else:
+            self._next_strategy_max_slice_nums = 1
+
     def prepare(
         self,
         prefix_system_prompt: Optional[str] = None,
@@ -3121,7 +3147,7 @@ class MiniCPMODuplex:
         audio_waveform: Optional[np.ndarray] = None,
         frame_list: Optional[list] = None,
         text_list: Optional[list] = None,
-        max_slice_nums: Union[int, List[int]] = 1,
+        max_slice_nums: Optional[Union[int, List[int]]] = None,
         batch_vision_feed: bool = False,
     ):
         """Streaming prefill - called once per second, processing audio/video data
@@ -3130,7 +3156,8 @@ class MiniCPMODuplex:
             audio_waveform: audio waveform data
             frame_list: image frame list
             text_list: text
-            max_slice_nums: maximum number of slices for HD image encoding (default 1, no slicing)
+            max_slice_nums: maximum number of slices for HD image encoding. When
+                           strategy_hd is enabled, modeling owns this value.
                            Can be an int (same for all images) or a list matching frame_list length
             batch_vision_feed: if True, batch all vision embeddings into a single feed call for better performance.
                               if False (default), feed each embedding individually (original behavior).
@@ -3159,6 +3186,7 @@ class MiniCPMODuplex:
         cost_audio_process = 0.0
         cost_audio_embed = 0.0
         cost_audio_feed = 0.0
+        effective_max_slice_nums = None
 
         def _make_result(success, reasons=""):
             reason = reasons
@@ -3175,6 +3203,8 @@ class MiniCPMODuplex:
                 "cost_audio_embed": cost_audio_embed,
                 "cost_audio_feed": cost_audio_feed,
                 "cost_all": time.time() - start_time,
+                "effective_max_slice_nums": effective_max_slice_nums,
+                "strategy_hd_next_max_slice_nums": self._next_strategy_max_slice_nums,
             }
 
         if self.is_session_stop_set() or self.is_break_set():
@@ -3196,6 +3226,7 @@ class MiniCPMODuplex:
             return _make_result(False)
 
         self.pending_logits = None
+        effective_max_slice_nums = self._resolve_max_slice_nums(max_slice_nums)
 
         # sliding window: record unit start position
         self.decoder.register_unit_start()
@@ -3212,10 +3243,10 @@ class MiniCPMODuplex:
             t0 = time.time()
 
             # normalize max_slice_nums to a list matching frame_list length
-            if isinstance(max_slice_nums, int):
-                max_slice_nums_list = [max_slice_nums] * len(frame_list)
+            if isinstance(effective_max_slice_nums, int):
+                max_slice_nums_list = [effective_max_slice_nums] * len(frame_list)
             else:
-                max_slice_nums_list = list(max_slice_nums)
+                max_slice_nums_list = list(effective_max_slice_nums)
                 if len(max_slice_nums_list) != len(frame_list):
                     raise ValueError(
                         f"max_slice_nums list length ({len(max_slice_nums_list)}) "
@@ -3506,6 +3537,7 @@ class MiniCPMODuplex:
         start_time = time.time()
 
         if self.is_session_stop_set() or self.is_break_set():
+            self._update_strategy_after_generate(is_listen=True)
             return {
                 "is_listen": True,
                 "text": "",
@@ -3523,6 +3555,7 @@ class MiniCPMODuplex:
 
         # check if there are pending logits to process
         if not hasattr(self, "pending_logits") or self.pending_logits is None:
+            self._update_strategy_after_generate(is_listen=True)
             return {
                 "is_listen": True,
                 "text": "",
@@ -3641,6 +3674,7 @@ class MiniCPMODuplex:
 
         if is_listen:
             self.total_hidden.append([])
+            self._update_strategy_after_generate(is_listen=True)
             return {
                 "is_listen": True,
                 "text": "",
@@ -3660,6 +3694,7 @@ class MiniCPMODuplex:
         text = generated_text  # reuse already calculated text
 
         if not self.generate_audio:
+            self._update_strategy_after_generate(is_listen=False)
             return {
                 "is_listen": False,
                 "text": text,
@@ -3730,6 +3765,7 @@ class MiniCPMODuplex:
             self._reset_token2wav_for_new_turn()
 
         end_time = time.time()
+        self._update_strategy_after_generate(is_listen=False)
 
         return {
             "is_listen": False,

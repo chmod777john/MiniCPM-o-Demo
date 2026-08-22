@@ -330,6 +330,7 @@ class BackendProtocolSession:
         self._op_lock = asyncio.Lock()
         self._active_response_id: Optional[str] = None
         self._replay_manifest: Optional[Dict[str, Any]] = None
+        self._strategy_hd = False
 
     async def send(self, event_type: str, **fields: Any) -> None:
         data = {"type": event_type, **{k: v for k, v in fields.items() if v is not None}}
@@ -457,6 +458,7 @@ class BackendProtocolSession:
         if "use_tts" in params:
             config["generate_audio"] = bool(params.get("use_tts"))
         resolved_config = _resolved_duplex_config(config)
+        self._strategy_hd = bool(resolved_config.get("strategy_hd", False))
         effective_llm_seed = seed if seed is not None else _torch_initial_seed()
         if config:
             await asyncio.to_thread(self.backend.set_duplex_config, resolved_config)
@@ -700,7 +702,16 @@ class BackendProtocolSession:
             decoded_frames = decode_frame_base64_list(_extract_frame_base64_list(payload))
             hints = _first_dict(payload.get("hints"))
             force_listen = bool(_coalesce(payload.get("force_listen"), hints.get("force_listen"), default=False))
-            max_slice_nums = int(_coalesce(payload.get("max_slice_nums"), hints.get("max_slice_nums"), default=1))
+            requested_max_slice_nums = _coalesce(
+                payload.get("max_slice_nums"), hints.get("max_slice_nums"), default=None
+            )
+            # Strategy-HD owns the lag-one value. Ordinary requests preserve
+            # the existing explicit value/default of one slice.
+            max_slice_nums = (
+                None
+                if self._strategy_hd
+                else int(requested_max_slice_nums) if requested_max_slice_nums is not None else 1
+            )
 
             t0 = time.perf_counter()
 
@@ -726,6 +737,8 @@ class BackendProtocolSession:
             metrics["prefill_ms"] = round(prefill_ms, 1)
             metrics["wall_clock_ms"] = round(wall_clock_ms, 1)
             if isinstance(prefill_result, dict):
+                if prefill_result.get("effective_max_slice_nums") is not None:
+                    metrics["effective_max_slice_nums"] = prefill_result["effective_max_slice_nums"]
                 n_vision_images = prefill_result.get("n_vision_images")
                 if n_vision_images is not None:
                     metrics["vision_slices"] = n_vision_images

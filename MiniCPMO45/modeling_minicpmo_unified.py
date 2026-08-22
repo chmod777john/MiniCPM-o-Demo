@@ -106,6 +106,8 @@ class MiniCPMO(BaseMiniCPMO):
             "force_listen_count": 0,
             "tts_temperature": 0.2,
             "tts_repetition_penalty": 1.05,
+            "strategy_hd": False,
+            "strategy_hd_max_slice_nums": 4,
         }
 
     @property
@@ -302,7 +304,7 @@ class MiniCPMO(BaseMiniCPMO):
         audio_waveform: Optional[np.ndarray] = None,
         frame_list: Optional[List] = None,
         text_list: Optional[List] = None,
-        max_slice_nums: int = 1,
+        max_slice_nums: Optional[int] = None,
         batch_vision_feed: bool = False,
     ):
         if self.duplex is None:

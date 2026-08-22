@@ -565,7 +565,7 @@ class PyTorchBackend:
         self,
         audio_waveform: Optional[np.ndarray] = None,
         frame_list: Optional[list] = None,
-        max_slice_nums: int = 1,
+        max_slice_nums: Optional[int] = None,
     ) -> Dict[str, Any]:
         duplex_view = self.processor.set_duplex_mode()
         return duplex_view.prefill(
