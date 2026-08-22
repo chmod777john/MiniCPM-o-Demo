@@ -27,6 +27,7 @@ export PROJECT_DIR VENV_DIR O5_DEPLOY_MODE=tp2 O5_EXPERTS_IMPLEMENTATION=hybrid
 export O5_GROUPED_PREFILL_MIN_TOKENS=100 O5_LLM_CACHE=32768
 export O5_LLM_GRAPH=1 O5_TTS_GRAPH=1 O5_VOCODER_GRAPH=0 O5_TTS_FAST=1
 export O5_LMHEAD=1 O5_FUSE_VISION_AUDIO=1 O5_VISION_BATCH=1
+export O5_UNIT_PREFILL_BATCH="${O5_UNIT_PREFILL_BATCH:-1}"
 export TOKENIZERS_PARALLELISM=false TRANSFORMERS_OFFLINE=1 HF_HUB_OFFLINE=1
 
 echo "[strategy-hd-replay-tp2] project=${PROJECT_DIR}"
@@ -34,7 +35,7 @@ echo "[strategy-hd-replay-tp2] commit=$(git -C "${PROJECT_DIR}" rev-parse HEAD)"
 echo "[strategy-hd-replay-tp2] branch=$(git -C "${PROJECT_DIR}" branch --show-current)"
 echo "[strategy-hd-replay-tp2] venv=${VENV_DIR}"
 echo "[strategy-hd-replay-tp2] session=${SESSION_DIR} out=${OUT_DIR} reference=${REFERENCE_SESSION:-none} forcing=${FORCING}"
-echo "[strategy-hd-replay-tp2] experts=${O5_EXPERTS_IMPLEMENTATION} threshold=${O5_GROUPED_PREFILL_MIN_TOKENS} strategy_hd=1 max_slice=4"
+echo "[strategy-hd-replay-tp2] experts=${O5_EXPERTS_IMPLEMENTATION} threshold=${O5_GROUPED_PREFILL_MIN_TOKENS} unit_prefill_batch=${O5_UNIT_PREFILL_BATCH} strategy_hd=1 max_slice=4"
 
 cd "${PROJECT_DIR}"
 REPLAY_ARGS=(

@@ -339,6 +339,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--lmhead", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--fuse-vision-audio", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--batch-vision-feed", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument(
+        "--unit-prefill-batch",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="merge one multimodal unit into one feed; defaults to O5_UNIT_PREFILL_BATCH or enabled",
+    )
     return parser.parse_args()
 
 

@@ -197,6 +197,12 @@ def configure_demo_environment(args: Any) -> None:
     _set_flag("O5_LMHEAD", args.lmhead)
     _set_flag("O5_FUSE_VISION_AUDIO", args.fuse_vision_audio)
     _set_flag("O5_VISION_BATCH", args.batch_vision_feed)
+    # Keep the production/replay default enabled, while allowing ablations to
+    # select the legacy split feed path without editing this loader.
+    if args.unit_prefill_batch is not None:
+        _set_flag("O5_UNIT_PREFILL_BATCH", args.unit_prefill_batch)
+    else:
+        os.environ.setdefault("O5_UNIT_PREFILL_BATCH", "1")
     _set_flag("O5_LAYER_TRACE", args.capture_layers)
 
 
