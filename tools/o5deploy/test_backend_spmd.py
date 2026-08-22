@@ -13,11 +13,28 @@ REF = os.path.join(WORKTREE, "assets/ref_audio/ref_minicpm_signature.wav")
 
 def main():
     from core.processors.backend_factory import create_backend
-    conf = {"model_path": os.environ["MODEL_PATH"], "gpu_id": 0, "pt_path": os.environ["PT_PATH"],
-            "ref_audio_path": REF, "duplex_pause_timeout": 60.0, "compile": False,
-            "chat_vocoder": "token2wav", "attn_implementation": "sdpa",
-            "deployment_mode": "tp2", "backbone_dir": os.environ["BACKBONE_DIR"],
-            "llm_cache_len": int(os.environ.get("O5_LLM_CACHE", "8192"))}
+    conf = {
+        "gpu_id": 0,
+        "ref_audio_path": REF,
+        "duplex_pause_timeout": 60.0,
+        "compile": False,
+        "chat_vocoder": "token2wav",
+        "attn_implementation": "sdpa",
+        "deployment_mode": "tp2",
+        "llm_cache_len": int(os.environ.get("O5_LLM_CACHE", "8192")),
+    }
+    # Leave artifact paths absent by default so this smoke test exercises the
+    # same local safetensors resolution as the serving entrypoint. Explicit
+    # paths remain available for legacy and multi-checkpoint tests.
+    for env_key, config_key in {
+        "MODEL_PATH": "model_path",
+        "PT_PATH": "pt_path",
+        "BACKBONE_DIR": "backbone_dir",
+        "O5_WEIGHTS_DIR": "weights_dir",
+        "O5_ASSETS_DIR": "assets_dir",
+    }.items():
+        if os.environ.get(env_key):
+            conf[config_key] = os.environ[env_key]
     torch.manual_seed(1234); np.random.seed(1234)
     be = create_backend(conf)
     be.load_model()                          # framework tp2 build on BOTH ranks
