@@ -28,6 +28,12 @@ def _experts_impl() -> str:
     return os.environ.get("O5_EXPERTS_IMPLEMENTATION", "batched_mm")
 
 
+def _initial_experts_impl() -> str:
+    from MiniCPMO45.moe_runtime import initial_experts_impl
+
+    return initial_experts_impl(_experts_impl())
+
+
 def _env_flag(name: str, default: bool) -> bool:
     raw = os.environ.get(name)
     if raw is None:
@@ -112,7 +118,7 @@ def _surgery_tp(
         attn_implementation=cfg.get("attn_implementation", "sdpa"),
     )
     attn_impl = cfg.get("attn_implementation", "sdpa")
-    experts_impl = _experts_impl()
+    experts_impl = _initial_experts_impl()
     for m in tp.modules():
         c = getattr(m, "config", None)
         if c is not None:
@@ -136,7 +142,7 @@ def _enable_engine(model, *, tp: bool, cfg: Dict[str, Any], token_broadcast: boo
     tp=True additionally installs the token-broadcast SPMD sync on the decoder."""
     from MiniCPMO45.opt_flags import OPT
     # deployed MoE on both paths
-    experts_impl = _experts_impl()
+    experts_impl = _initial_experts_impl()
     seen = set()
     for m in model.modules():
         c = getattr(m, "config", None)
@@ -161,7 +167,9 @@ def _enable_engine(model, *, tp: bool, cfg: Dict[str, Any], token_broadcast: boo
     os.environ["O5_VISION_BATCH"] = "1" if batch_vision else "0"
     os.environ["O5_LLM_CACHE"] = str(cfg.get("llm_cache_len", 8192))
     vocoder_graph_enabled = _enable_vocoder_bucket(model) if vocoder_graph else False
-    eng = {"experts": experts_impl, "tts_fast": tts_fast, "lmhead": lmhead, "tts_graph": tts_graph,
+    requested_experts_impl = _experts_impl()
+    eng = {"experts": requested_experts_impl, "experts_initial": experts_impl,
+           "tts_fast": tts_fast, "lmhead": lmhead, "tts_graph": tts_graph,
            "vocoder_graph": vocoder_graph_enabled,
            "fuse_vision_audio": fuse_vision_audio, "batch_vision_feed": batch_vision,
            "llm_graph": llm_graph, "llm_cache": cfg.get("llm_cache_len", 8192)}

@@ -102,6 +102,8 @@ def _sampling_config(args: argparse.Namespace) -> dict[str, Any]:
         "length_penalty": args.length_penalty,
         "tts_temperature": args.tts_temperature,
         "tts_repetition_penalty": args.tts_repetition_penalty,
+        "strategy_hd": args.strategy_hd,
+        "strategy_hd_max_slice_nums": args.strategy_hd_max_slice_nums,
     }
 
 
@@ -244,7 +246,7 @@ def _infer_one(
             prefill = backend.duplex_prefill(
                 audio_waveform=chunk,
                 frame_list=frame_list or None,
-                max_slice_nums=1,
+                max_slice_nums=None if args.strategy_hd else 1,
             )
             result = backend.duplex_generate()
             backend.duplex_finalize()
@@ -273,6 +275,9 @@ def _infer_one(
                     metadata={
                         "end_of_turn": bool(_backend_result_value(result, "end_of_turn", False)),
                         "prefill_success": bool(prefill.get("success")) if isinstance(prefill, dict) else None,
+                        "effective_max_slice_nums": (
+                            prefill.get("effective_max_slice_nums") if isinstance(prefill, dict) else None
+                        ),
                         "n_tokens": _backend_result_value(result, "n_tokens", 0),
                         "n_tts_tokens": _backend_result_value(result, "n_tts_tokens", 0),
                     },
@@ -358,6 +363,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--length-penalty", type=float, default=1.1)
     parser.add_argument("--force-listen-count", type=int, default=0)
     parser.add_argument("--max-new-speak-tokens-per-chunk", type=int, default=20)
+    parser.add_argument("--strategy-hd", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--strategy-hd-max-slice-nums", type=int, default=4)
     parser.add_argument("--attn-implementation", default="sdpa")
     parser.add_argument(
         "--deployment-mode",
@@ -365,7 +372,12 @@ def parse_args() -> argparse.Namespace:
         default="tp2",
         help="single_opt uses one GPU with the optimization engine; tp2 uses 2-GPU tensor parallelism",
     )
-    parser.add_argument("--experts-implementation", choices=("eager", "batched_mm"), default="batched_mm")
+    parser.add_argument(
+        "--experts-implementation",
+        choices=("eager", "batched_mm", "grouped_mm", "hybrid"),
+        default="batched_mm",
+    )
+    parser.add_argument("--grouped-prefill-min-tokens", type=int, default=100)
     parser.add_argument("--o5-llm-cache", type=int, default=65536)
     parser.add_argument("--llm-graph", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--tts-graph", action=argparse.BooleanOptionalAction, default=True)
@@ -415,6 +427,7 @@ def main() -> int:
     output_root.mkdir(parents=True, exist_ok=True)
     os.environ["HEK_CHAOQUN_DATA_ROOT"] = args.data_root
     os.environ["O5_EXPERTS_IMPLEMENTATION"] = args.experts_implementation
+    os.environ["O5_GROUPED_PREFILL_MIN_TOKENS"] = str(args.grouped_prefill_min_tokens)
     os.environ["O5_LLM_CACHE"] = str(args.o5_llm_cache)
     os.environ["DEMO_GIT_COMMIT"] = os.popen(f"git -C {REPO_ROOT} rev-parse HEAD").read().strip()
     # tp2_duplex_video_probe owns the deployment flag wiring.  Set every flag

@@ -76,6 +76,8 @@ def _sampling(args: argparse.Namespace, session: RecordedSession) -> dict[str, A
         "tts_temperature": float(value("tts_temperature", 0.8)),
         "tts_repetition_penalty": float(value("tts_repetition_penalty", 1.05)),
         "n_timesteps": int(value("n_timesteps", 10)),
+        "strategy_hd": _bool_override(args.strategy_hd, config.get("strategy_hd", False)),
+        "strategy_hd_max_slice_nums": int(value("strategy_hd_max_slice_nums", 4)),
     }
 
 
@@ -320,7 +322,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--tts-repetition-penalty", type=float)
     parser.add_argument("--n-timesteps", type=int)
 
-    parser.add_argument("--experts-implementation", choices=("eager", "batched_mm"), default="batched_mm")
+    parser.add_argument(
+        "--experts-implementation",
+        choices=("eager", "batched_mm", "grouped_mm", "hybrid"),
+        default="batched_mm",
+    )
+    parser.add_argument("--grouped-prefill-min-tokens", type=int, default=100)
+    parser.add_argument("--strategy-hd", action=argparse.BooleanOptionalAction, default=None)
+    parser.add_argument("--strategy-hd-max-slice-nums", type=int, default=None)
     parser.add_argument("--demo-single-mode", choices=("single_eager", "single_opt"), default="single_opt")
     parser.add_argument("--llm-cache", type=int, default=32768)
     parser.add_argument("--llm-graph", action=argparse.BooleanOptionalAction, default=True)

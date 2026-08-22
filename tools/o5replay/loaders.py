@@ -188,6 +188,7 @@ def configure_demo_environment(args: Any) -> None:
     if args.assets_dir:
         os.environ["O5_ASSETS_DIR"] = str(args.assets_dir)
     os.environ["O5_EXPERTS_IMPLEMENTATION"] = args.experts_implementation
+    os.environ["O5_GROUPED_PREFILL_MIN_TOKENS"] = str(args.grouped_prefill_min_tokens)
     os.environ["O5_LLM_CACHE"] = str(args.llm_cache)
     _set_flag("O5_LLM_GRAPH", args.llm_graph)
     _set_flag("O5_TTS_GRAPH", args.tts_graph)
