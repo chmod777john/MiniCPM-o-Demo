@@ -8,9 +8,10 @@ Worker 和 Gateway 统一读取此文件。
     2. config.json（与本文件同级目录，gitignored）
     3. Pydantic 默认值（本文件中定义）
 
-首次部署时，复制 config.example.json 为 config.json 并修改 model_path：
+首次部署时，可直接复制 config.example.json；默认会使用仓库内代码和自动发现的
+完整 safetensors bundle。只有切换模型或 assets 时才需要修改配置：
     cp config.example.json config.json
-    # 编辑 config.json 中的 model.model_path
+    # 可选：编辑 config.json 中的 model.weights_dir 或 model.assets_dir
 
 使用方式：
     from config import get_config

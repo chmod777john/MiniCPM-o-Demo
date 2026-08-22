@@ -43,8 +43,11 @@ python tools/o5deploy/export_full_safetensors.py \
 
 bundle 根目录保存 Demo 外层权重，`llm/config.json` 保存 TP2 使用的 Qwen
 配置；TP2 复用根目录的同一批 shard，不再额外复制一份 LLM backbone。
-运行时通过 `O5_WEIGHTS_DIR=/path/to/o5_full_hf` 指定即可。若 bundle 放在
-仓库默认 `weights/` 或本机默认 artifact 位置，也无需设置环境变量。
+运行时通过 `O5_WEIGHTS_DIR=/path/to/o5_full_hf` 指定即可。Token2Wav 的
+`assets/token2wav` 是运行时文件，不属于模型权重；可通过
+`O5_ASSETS_DIR=/path/to/assets` 指定包含 `token2wav/` 的目录。若 bundle 和
+assets 放在默认位置，则两个环境变量都可以省略，服务也不需要传
+`--model-path` 或 `--pt-path`。
 
 ## 3. 旧 TP2 兼容路径：抽取独立 backbone（一次性,~65GB）
 
@@ -69,7 +72,9 @@ python tools/o5deploy/extract_backbone.py
 ```json
 { "model": {
     "deployment_mode": "tp2",                 // single_eager | single_opt | tp2
-    "llm_cache_len": 32768                      // tp2 上下文上限(single_opt 默认 8192)
+    "llm_cache_len": 32768,                     // tp2 上下文上限(single_opt 默认 8192)
+    "weights_dir": null,                        // 可选；默认自动发现完整 bundle
+    "assets_dir": null                          // 可选；目录内应包含 token2wav/
 } }
 ```
 或用环境变量覆盖:`O5_DEPLOY_MODE=tp2 O5_BACKBONE_DIR=... O5_LLM_CACHE=32768`。
@@ -80,11 +85,12 @@ python tools/o5deploy/extract_backbone.py
 
 - **single_eager / single_opt(单进程,起法不变):**
   ```bash
-  python -m py_backend.server --model-path $MODEL_PATH --pt-path $PT_PATH --port 22500
+  python -m py_backend.server --port 22500
   ```
 - **tp2(双卡 SPMD,torchrun 2 进程):**
   ```bash
-  O5_WEIGHTS_DIR=/path/to/o5_full_hf bash core/deploy/launch_tp2.sh --port 22500
+  O5_WEIGHTS_DIR=/path/to/o5_full_hf O5_ASSETS_DIR=/path/to/assets \
+    bash core/deploy/launch_tp2.sh --port 22500
   ```
   rank0 起 HTTP(对外 `/backend` WebSocket),rank1 自动进 `worker_loop`(不起 HTTP,镜像 rank0 的模型计算)。gateway / 客户端只连 rank0,**协议不变**。
 
