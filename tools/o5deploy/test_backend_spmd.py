@@ -62,8 +62,8 @@ def main():
     fr=[Image.open(os.path.join(fdir,f)).convert("RGB") for f in sorted(os.listdir(fdir))]
     na=len(ac); nf=len(fr)
 
-    dv = be.processor.set_duplex_mode()
-    dv.prepare(ref_audio_path=REF, prompt_wav_path=REF)   # -> _mcall duplex_prepare -> mirror
+    be.processor.set_duplex_mode()
+    be.duplex_prepare(ref_audio_path=REF, prompt_wav_path=REF)  # mirror prepare to rank 1
     log("[backend] warmup 8 via backend methods (mirrored) ...")
     for u in range(8):
         be.duplex_prefill(audio_waveform=ac[u%na], frame_list=[fr[u%nf]])
