@@ -151,6 +151,7 @@ class MiniCPMO(BaseMiniCPMO):
         self.duplex = DuplexCapability.from_existing_model(
             model=self,
             device=device,
+            tts_model_dir=token2wav_dir,
             **self._duplex_config,
         )
         self._unified_initialized = True

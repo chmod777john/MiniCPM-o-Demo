@@ -2809,6 +2809,7 @@ class MiniCPMODuplex:
         cls,
         model: "MiniCPMO",
         device: Optional[str] = None,
+        tts_model_dir: Optional[str] = None,
         **kwargs,
     ) -> "MiniCPMODuplex":
         """Create MiniCPMODuplex from an existing MiniCPMO instance."""
@@ -2857,7 +2858,11 @@ class MiniCPMODuplex:
         # Initialize TTS (same as __init__)
         enable_float16 = get_param("enable_float16")
         n_timesteps = get_param("n_timesteps")
-        instance.model.init_tts(enable_float16=enable_float16, n_timesteps=n_timesteps)
+        instance.model.init_tts(
+            model_dir=tts_model_dir,
+            enable_float16=enable_float16,
+            n_timesteps=n_timesteps,
+        )
 
         instance.break_event = threading.Event()
         instance.session_stop_event = threading.Event()
@@ -5398,4 +5403,3 @@ def gen_logits(num_code: int, top_p=0.7, top_k=20, repetition_penalty=1.0):
         logits_processors.append(CustomRepetitionPenaltyLogitsProcessorRepeat(repetition_penalty, num_code, 16))
 
     return logits_warpers, logits_processors
-
