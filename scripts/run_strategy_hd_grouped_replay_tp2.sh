@@ -5,6 +5,8 @@ PROJECT_DIR="${PROJECT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 VENV_DIR="${VENV_DIR:-/user/weihongliang/MiniCPM-o-Demo-wt-o5-inference-refactor-2026-06-30/.venv-high-cu128-vllm021}"
 SESSION_DIR="${SESSION_DIR:-/user/weihongliang/o5_replay_strategy_hd_input_8u_20260822}"
 OUT_DIR="${OUT_DIR:-/user/weihongliang/o5_replay_strategy_hd_runs_20260822/demo-tp2-free}"
+REFERENCE_SESSION="${REFERENCE_SESSION:-}"
+FORCING="${FORCING:-none}"
 MODEL_PATH="${MODEL_PATH:-/user/weihongliang/MiniCPM-o-4_6}"
 CKPT_PATH="${CKPT_PATH:-/user/weihongliang/o5_weights/chenmoye_minicpm_5o_moe_omni_long_context_sft_stage2_sft2_8k_audio_online_process_on_online_audio_process_v2_iter_100.pt}"
 BACKBONE_DIR="${BACKBONE_DIR:-/user/weihongliang/o5_weights/o5_backbone_hf_chenmoye_minicpm_5o_moe_omni_long_context_sft_stage2_sft2_8k_audio_online_process_on_online_audio_process_v2_iter_100}"
@@ -31,24 +33,29 @@ echo "[strategy-hd-replay-tp2] project=${PROJECT_DIR}"
 echo "[strategy-hd-replay-tp2] commit=$(git -C "${PROJECT_DIR}" rev-parse HEAD)"
 echo "[strategy-hd-replay-tp2] branch=$(git -C "${PROJECT_DIR}" branch --show-current)"
 echo "[strategy-hd-replay-tp2] venv=${VENV_DIR}"
-echo "[strategy-hd-replay-tp2] session=${SESSION_DIR} out=${OUT_DIR}"
+echo "[strategy-hd-replay-tp2] session=${SESSION_DIR} out=${OUT_DIR} reference=${REFERENCE_SESSION:-none} forcing=${FORCING}"
 echo "[strategy-hd-replay-tp2] experts=${O5_EXPERTS_IMPLEMENTATION} threshold=${O5_GROUPED_PREFILL_MIN_TOKENS} strategy_hd=1 max_slice=4"
 
 cd "${PROJECT_DIR}"
+REPLAY_ARGS=(
+    --session-dir "${SESSION_DIR}"
+    --out-dir "${OUT_DIR}"
+    --target demo-tp2
+    --forcing "${FORCING}"
+    --capture-mode replay
+    --max-units 8
+    --overwrite
+    --canonical-root "${CANONICAL_ROOT}"
+    --token2wav-dir "${TOKEN2WAV_DIR}"
+    --model-path "${MODEL_PATH}"
+    --ckpt-path "${CKPT_PATH}"
+    --backbone-dir "${BACKBONE_DIR}"
+)
+if [ -n "${REFERENCE_SESSION}" ]; then
+    REPLAY_ARGS+=(--reference-session "${REFERENCE_SESSION}")
+fi
 exec "${TORCHRUN}" --standalone --nproc_per_node=2 \
-    tools/o5replay/run_session.py \
-    --session-dir "${SESSION_DIR}" \
-    --out-dir "${OUT_DIR}" \
-    --target demo-tp2 \
-    --forcing none \
-    --capture-mode replay \
-    --max-units 8 \
-    --overwrite \
-    --canonical-root "${CANONICAL_ROOT}" \
-    --token2wav-dir "${TOKEN2WAV_DIR}" \
-    --model-path "${MODEL_PATH}" \
-    --ckpt-path "${CKPT_PATH}" \
-    --backbone-dir "${BACKBONE_DIR}" \
+    tools/o5replay/run_session.py "${REPLAY_ARGS[@]}" \
     --llm-cache 32768 \
     --attn-implementation sdpa \
     --generate-audio \
