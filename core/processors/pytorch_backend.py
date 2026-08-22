@@ -57,6 +57,7 @@ class PyTorchBackend:
         model_path: str,
         gpu_id: int,
         pt_path: Optional[str] = None,
+        weights_dir: Optional[str] = None,
         ref_audio_path: Optional[str] = None,
         duplex_pause_timeout: float = 60.0,
         compile: bool = False,
@@ -67,6 +68,7 @@ class PyTorchBackend:
         self.model_path = model_path
         self.gpu_id = gpu_id
         self.pt_path = pt_path
+        self.weights_dir = weights_dir
         self.ref_audio_path = ref_audio_path
         self.duplex_pause_timeout = duplex_pause_timeout
         self.compile = compile
@@ -104,6 +106,7 @@ class PyTorchBackend:
         self.processor = UnifiedProcessor(
             model_path=self.model_path,
             pt_path=self.pt_path,
+            weights_dir=self.weights_dir,
             ref_audio_path=self.ref_audio_path,
             preload_both_tts=self.preload_both_tts,
             compile=self.compile,

@@ -987,6 +987,8 @@ def main() -> None:
     parser.add_argument("--port", type=int, default=22500)
     parser.add_argument("--model-path", default=None)
     parser.add_argument("--pt-path", default=None)
+    parser.add_argument("--weights-dir", default=None)
+    parser.add_argument("--assets-dir", default=None)
     parser.add_argument("--ref-audio-path", default=None)
     parser.add_argument("--gpu-id", type=int, default=0)
     parser.add_argument("--worker-index", type=int, default=0)
@@ -994,16 +996,13 @@ def main() -> None:
     args = parser.parse_args()
 
     model_path = args.model_path or cfg.model.model_path
-    if not model_path:
-        parser.error(
-            "model path is required for the backend: pass --model-path <dir> "
-            "or set model.model_path in config.json"
-        )
 
     SERVER_CONFIG.update({
         "model_path": model_path,
         "gpu_id": args.gpu_id,
         "pt_path": args.pt_path or cfg.model.pt_path,
+        "weights_dir": args.weights_dir or getattr(cfg.model, "weights_dir", None),
+        "assets_dir": args.assets_dir or getattr(cfg.model, "assets_dir", None),
         "ref_audio_path": args.ref_audio_path or cfg.ref_audio_path,
         "duplex_pause_timeout": args.duplex_pause_timeout or cfg.duplex_pause_timeout,
         "compile": cfg.compile,

@@ -13,6 +13,7 @@ import torch
 from .base import DeploymentMode, BuildResult
 from .fla_runtime import configure_chunk_output, configure_fused_norm, configure_l2norm
 from .registry import register_mode
+from .weights import load_safetensors_into
 
 logger = logging.getLogger("deploy.modes")
 
@@ -54,7 +55,7 @@ def _mk_config(cfg: Dict[str, Any]):
 
 
 def _load_full(cfg: Dict[str, Any], device: str):
-    """Single-card: build MiniCPMO, load the full .pt, place on `device`, init_unified."""
+    """Single-card: build MiniCPMO and load either HF shards or legacy PT."""
     # "auto" leaves FLA's normal autotuning untouched. Fixed values are only
     # for reproducibility investigations on the pinned FLA 0.5.0 runtime.
     configure_fused_norm(cfg.get("fla_fused_norm_config"))
@@ -65,8 +66,11 @@ def _load_full(cfg: Dict[str, Any], device: str):
     from MiniCPMO45.processing_minicpmo import MiniCPMOProcessor
     with init_empty_weights():
         model = MiniCPMO(_mk_config(cfg))
-    sd = torch.load(cfg["pt_path"], map_location="cpu", weights_only=True, mmap=True)
-    model.load_state_dict(sd, strict=False, assign=True); del sd
+    if cfg.get("weights_dir"):
+        load_safetensors_into(model, cfg["weights_dir"])
+    else:
+        sd = torch.load(cfg["pt_path"], map_location="cpu", weights_only=True, mmap=True)
+        model.load_state_dict(sd, strict=False, assign=True); del sd
     _place_outer_model(model, device)
     model.processor = MiniCPMOProcessor.from_pretrained(cfg["model_path"], trust_remote_code=True)
     return model
@@ -92,15 +96,28 @@ def _surgery_tp(
     from MiniCPMO45.processing_minicpmo import MiniCPMOProcessor
     with init_empty_weights():
         model = MiniCPMO(_mk_config(cfg))
-    sd = torch.load(cfg["pt_path"], map_location="cpu", weights_only=True, mmap=True)
-    model.load_state_dict({k: v for k, v in sd.items() if not k.startswith("llm.")},
-                          strict=False, assign=True); del sd
+    if cfg.get("weights_dir"):
+        load_safetensors_into(model, cfg["weights_dir"], exclude_prefixes=("llm.",))
+    else:
+        sd = torch.load(cfg["pt_path"], map_location="cpu", weights_only=True, mmap=True)
+        model.load_state_dict({k: v for k, v in sd.items() if not k.startswith("llm.")},
+                              strict=False, assign=True); del sd
     model.llm = None
     _place_outer_model(model, device)
-    tp_cfg = AutoConfig.from_pretrained(cfg["backbone_dir"], trust_remote_code=True)
+    # A complete O5 safetensors bundle also contains ``llm/config.json`` and
+    # native Qwen ``model.*`` keys.  Reuse its root shards for TP2 so a second
+    # 65GB LLM copy is not needed.  The legacy standalone backbone remains a
+    # compatible fallback for older deployments.
+    tp_root = cfg.get("weights_dir") or cfg["backbone_dir"]
+    tp_config_root = (
+        os.path.join(cfg["weights_dir"], "llm")
+        if cfg.get("weights_dir") and os.path.isfile(os.path.join(cfg["weights_dir"], "llm", "config.json"))
+        else cfg["backbone_dir"]
+    )
+    tp_cfg = AutoConfig.from_pretrained(tp_config_root, trust_remote_code=True)
     tp_cfg._attn_implementation = cfg.get("attn_implementation", "sdpa")
     tp = AutoModelForCausalLM.from_pretrained(
-        cfg["backbone_dir"],
+        tp_root,
         config=tp_cfg,
         tp_plan="auto",
         dtype=torch.bfloat16,
@@ -203,6 +220,7 @@ def _init_unified(model, cfg: Dict[str, Any]):
         duplex_config=cfg.get("duplex_config", _DEFAULT_DUP),
         device="cuda",
         chat_vocoder=cfg.get("chat_vocoder", "token2wav"),
+        assets_dir=cfg.get("assets_dir"),
     )
 
 

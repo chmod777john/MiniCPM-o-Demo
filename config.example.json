@@ -1,7 +1,8 @@
 {
     "model": {
-        "model_path": "openbmb/MiniCPM-o-4_5",
         "pt_path": null,
+        "weights_dir": null,
+        "assets_dir": null,
         "attn_implementation": "auto"
     },
     "audio": {

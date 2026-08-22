@@ -126,6 +126,7 @@ from core.schemas import (
     # Common
     Message, Role,
 )
+from o5_paths import resolve_artifacts
 
 if TYPE_CHECKING:
     from MiniCPMO45.modeling_minicpmo_unified import MiniCPMO, ProcessorMode as ModelProcessorMode
@@ -1257,8 +1258,9 @@ class UnifiedProcessor(BaseProcessor):
 
     def __init__(
         self,
-        model_path: str,
+        model_path: Optional[str] = None,
         pt_path: Optional[str] = None,
+        weights_dir: Optional[str] = None,
         device: str = "cuda",
         ref_audio_path: Optional[str] = None,
         duplex_config: Optional[DuplexConfig] = None,
@@ -1282,7 +1284,16 @@ class UnifiedProcessor(BaseProcessor):
             attn_implementation: Attention implementation
                 ("auto" / "flash_attention_2" / "sdpa" / "eager").
         """
-        self.pt_path = pt_path
+        artifacts = resolve_artifacts(
+            model_path=model_path,
+            pt_path=pt_path,
+            weights_dir=weights_dir,
+            assets_dir=os.environ.get("O5_ASSETS_DIR"),
+        )
+        self.model_path = artifacts["model_path"]
+        self.weights_dir = artifacts["weights_dir"]
+        self.pt_path = artifacts["pt_path"]
+        self.assets_dir = artifacts["assets_dir"]
         self.ref_audio_path = ref_audio_path
         self.duplex_config = duplex_config or DuplexConfig()
         self.preload_both_tts = preload_both_tts
@@ -1427,6 +1438,8 @@ class UnifiedProcessor(BaseProcessor):
             import core.deploy as _deploy
             _cfg = {
                 "model_path": self.model_path, "pt_path": self.pt_path,
+                "weights_dir": self.weights_dir,
+                "assets_dir": self.assets_dir,
                 "backbone_dir": _os.environ.get("O5_BACKBONE_DIR", ""),
                 "chat_vocoder": self.chat_vocoder,
                 "attn_implementation": self._resolve_attn_implementation(),
@@ -1464,7 +1477,20 @@ class UnifiedProcessor(BaseProcessor):
 
         pt_only_checkpoint = bool(self.pt_path) and not self._has_hf_checkpoint_files(self.model_path)
         pt_already_loaded = False
-        if pt_only_checkpoint:
+        if self.weights_dir:
+            logger.info("Loading complete safetensors bundle: %s", self.weights_dir)
+            config = AutoConfig.from_pretrained(self.model_path, trust_remote_code=True)
+            config._attn_implementation = resolved_attn
+            config._name_or_path = self.model_path
+            config.name_or_path = self.model_path
+            from accelerate import init_empty_weights
+            from core.deploy.weights import load_safetensors_into
+
+            with init_empty_weights():
+                self.model = MiniCPMO(config)
+            load_safetensors_into(self.model, self.weights_dir)
+            pt_already_loaded = True
+        elif pt_only_checkpoint:
             logger.info(
                 "No HF checkpoint files found in model_path; "
                 "building model from config and loading pt directly"
@@ -1538,6 +1564,7 @@ class UnifiedProcessor(BaseProcessor):
             },
             device=self.device,
             chat_vocoder=self.chat_vocoder,
+            assets_dir=self.assets_dir,
         )
 
         init_time = time.time() - init_start

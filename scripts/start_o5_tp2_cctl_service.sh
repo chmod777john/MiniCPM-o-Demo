@@ -2,9 +2,13 @@
 set -euo pipefail
 
 PROJECT_DIR="${PROJECT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
-MODEL_PATH="${MODEL_PATH:-}"
-PT_PATH="${PT_PATH:-}"
-BACKBONE_DIR="${BACKBONE_DIR:-${O5_BACKBONE_DIR:-}}"
+MODEL_PATH="${MODEL_PATH:-${PROJECT_DIR}/MiniCPMO45}"
+PT_PATH="${PT_PATH:-${O5_PT_PATH:-}}"
+WEIGHTS_DIR="${WEIGHTS_DIR:-${O5_WEIGHTS_DIR:-${PROJECT_DIR}/weights}}"
+BACKBONE_DIR="${BACKBONE_DIR:-${O5_BACKBONE_DIR:-${WEIGHTS_DIR}/llm}}"
+if [ ! -d "${BACKBONE_DIR}" ]; then
+    BACKBONE_DIR="/user/weihongliang/o5_weights/o5_backbone_hf_chenmoye_minicpm_5o_moe_omni_long_context_sft_stage2_sft2_8k_audio_online_process_on_online_audio_process_v2_iter_100"
+fi
 VENV_DIR="${VENV_DIR:-${PROJECT_DIR}/.venv}"
 
 BACKEND_HOST="${BACKEND_HOST:-127.0.0.1}"
@@ -33,6 +37,7 @@ cd "${PROJECT_DIR}"
 export PYTHONPATH="${PROJECT_DIR}:${PYTHONPATH:-}"
 export TOKENIZERS_PARALLELISM="${TOKENIZERS_PARALLELISM:-false}"
 export O5_BACKBONE_DIR="${BACKBONE_DIR}"
+if [ -d "${WEIGHTS_DIR}" ]; then export O5_WEIGHTS_DIR="${WEIGHTS_DIR}"; fi
 export O5_LLM_CACHE
 export O5_SPMD_HEARTBEAT_INTERVAL
 export O5_DETERMINISTIC_REPLAY
@@ -48,7 +53,9 @@ GATEWAY_REGISTRY_URL="http://127.0.0.1:${GATEWAY_INTERNAL_PORT}/internal/workers
 
 if [ ! -x "${PYTHON}" ]; then echo "[tp2-start] missing python: ${PYTHON}" >&2; exit 1; fi
 if [ -z "${MODEL_PATH}" ] || [ ! -d "${MODEL_PATH}" ]; then echo "[tp2-start] missing MODEL_PATH=${MODEL_PATH}" >&2; exit 1; fi
-if [ -z "${PT_PATH}" ] || [ ! -f "${PT_PATH}" ]; then echo "[tp2-start] missing PT_PATH=${PT_PATH}" >&2; exit 1; fi
+has_safetensors=0
+if [ -f "${WEIGHTS_DIR}/model.safetensors.index.json" ] || [ -f "${WEIGHTS_DIR}/model.safetensors" ]; then has_safetensors=1; fi
+if [ "${has_safetensors}" -eq 0 ] && [ -n "${PT_PATH}" ] && [ ! -f "${PT_PATH}" ]; then echo "[tp2-start] explicit PT_PATH does not exist: ${PT_PATH}" >&2; exit 1; fi
 if [ -z "${BACKBONE_DIR}" ] || [ ! -d "${BACKBONE_DIR}" ]; then echo "[tp2-start] missing BACKBONE_DIR=${BACKBONE_DIR}" >&2; exit 1; fi
 
 backend_pid=""; worker_pid=""; gateway_pid=""; frpc_pid=""
@@ -76,7 +83,8 @@ wait_http() {
 
 echo "[tp2-start] project=${PROJECT_DIR}"
 echo "[tp2-start] model=${MODEL_PATH}"
-echo "[tp2-start] pt=${PT_PATH}"
+echo "[tp2-start] pt=${PT_PATH:-<auto/default safetensors>}"
+echo "[tp2-start] weights=${WEIGHTS_DIR} safetensors=${has_safetensors}"
 echo "[tp2-start] token_trace_dir=${O5_TOKEN_TRACE_DIR}"
 echo "[tp2-start] backbone=${BACKBONE_DIR} llm_cache=${O5_LLM_CACHE} spmd_heartbeat=${O5_SPMD_HEARTBEAT_INTERVAL}"
 echo "[tp2-start] deterministic_replay=${O5_DETERMINISTIC_REPLAY} session_seed=${O5_SESSION_SEED} tts_argmax=${O5_TTS_ARGMAX}"
@@ -89,9 +97,9 @@ echo "[tp2-start] gateway=https://${GATEWAY_HOST}:${GATEWAY_PORT} backend=${BACK
 gateway_pid=$!
 wait_http "http://127.0.0.1:${GATEWAY_INTERNAL_PORT}/health" 120 "gateway-internal"
 
-"${PROJECT_DIR}/core/deploy/launch_tp2.sh" \
-    --host "${BACKEND_HOST}" --port "${BACKEND_PORT}" \
-    --model-path "${MODEL_PATH}" --pt-path "${PT_PATH}" \
+tp_server_args=(--host "${BACKEND_HOST}" --port "${BACKEND_PORT}" --model-path "${MODEL_PATH}")
+[ -n "${PT_PATH}" ] && tp_server_args+=(--pt-path "${PT_PATH}")
+"${PROJECT_DIR}/core/deploy/launch_tp2.sh" "${tp_server_args[@]}" \
     > "${LOG_DIR}/backend_tp2.log" 2>&1 &
 backend_pid=$!
 wait_http "${BACKEND_URL}/health" 1200 "backend-tp2"

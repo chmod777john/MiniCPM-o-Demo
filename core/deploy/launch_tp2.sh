@@ -4,11 +4,12 @@
 # for the per-layer NCCL all_reduce. The deployment-mode framework (core.deploy) builds the
 # TP-sharded model on each rank when O5_DEPLOY_MODE=tp2.
 #
-# Prereqs: (1) extract the HF backbone once via tools/extract_backbone.py -> $O5_BACKBONE_DIR.
-#          (2) config.json: model.deployment_mode="tp2", model.backbone_dir, model.llm_cache_len.
+# A complete O5 safetensors bundle is preferred. It contains the Qwen config
+# under ``llm/`` and the same root shards are reused for TP2. Older deployments
+# may still set O5_BACKBONE_DIR to a standalone HF backbone directory.
 set -eo pipefail
 export O5_DEPLOY_MODE=${O5_DEPLOY_MODE:-tp2}
-export O5_BACKBONE_DIR=${O5_BACKBONE_DIR:?set to the extracted HF backbone dir}
+export O5_BACKBONE_DIR=${O5_BACKBONE_DIR:-}
 export O5_LLM_CACHE=${O5_LLM_CACHE:-32768}
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 TORCHRUN=${TORCHRUN:-torchrun}

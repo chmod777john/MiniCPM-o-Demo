@@ -2,8 +2,9 @@
 set -euo pipefail
 
 PROJECT_DIR="${PROJECT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
-MODEL_PATH="${MODEL_PATH:-}"
-PT_PATH="${PT_PATH:-}"
+MODEL_PATH="${MODEL_PATH:-${PROJECT_DIR}/MiniCPMO45}"
+PT_PATH="${PT_PATH:-${O5_PT_PATH:-}}"
+WEIGHTS_DIR="${WEIGHTS_DIR:-${O5_WEIGHTS_DIR:-${PROJECT_DIR}/weights}}"
 VENV_DIR="${VENV_DIR:-${PROJECT_DIR}/.venv}"
 
 BACKEND_HOST="${BACKEND_HOST:-127.0.0.1}"
@@ -29,6 +30,7 @@ cd "${PROJECT_DIR}"
 export PYTHONPATH="${PROJECT_DIR}:${PYTHONPATH:-}"
 export TOKENIZERS_PARALLELISM="${TOKENIZERS_PARALLELISM:-false}"
 export O5_TOKEN_TRACE_DIR
+if [ -d "${WEIGHTS_DIR}" ]; then export O5_WEIGHTS_DIR="${WEIGHTS_DIR}"; fi
 
 PYTHON="${VENV_DIR}/bin/python"
 BACKEND_URL="http://${BACKEND_HOST}:${BACKEND_PORT}"
@@ -44,9 +46,12 @@ if [ -z "${MODEL_PATH}" ] || [ ! -d "${MODEL_PATH}" ]; then
     echo "[start] set MODEL_PATH=/path/to/model-code-and-tokenizer" >&2
     exit 1
 fi
-if [ -z "${PT_PATH}" ] || [ ! -f "${PT_PATH}" ]; then
-    echo "[start] missing pt file: ${PT_PATH}" >&2
-    echo "[start] set PT_PATH=/path/to/checkpoint.pt" >&2
+has_safetensors=0
+if [ -f "${WEIGHTS_DIR}/model.safetensors.index.json" ] || [ -f "${WEIGHTS_DIR}/model.safetensors" ]; then
+    has_safetensors=1
+fi
+if [ "${has_safetensors}" -eq 0 ] && [ -n "${PT_PATH}" ] && [ ! -f "${PT_PATH}" ]; then
+    echo "[start] explicit PT_PATH does not exist: ${PT_PATH}" >&2
     exit 1
 fi
 
@@ -83,7 +88,8 @@ wait_http() {
 
 echo "[start] project=${PROJECT_DIR}"
 echo "[start] model=${MODEL_PATH}"
-echo "[start] pt=${PT_PATH}"
+echo "[start] pt=${PT_PATH:-<auto/default safetensors>}"
+echo "[start] weights=${WEIGHTS_DIR} safetensors=${has_safetensors}"
 echo "[start] token_trace_dir=${O5_TOKEN_TRACE_DIR}"
 echo "[start] gateway=https://${GATEWAY_HOST}:${GATEWAY_PORT} internal=:${GATEWAY_INTERNAL_PORT}"
 echo "[start] backend=${BACKEND_URL} worker=${WORKER_ENDPOINT}"
@@ -99,12 +105,9 @@ echo "[start] backend=${BACKEND_URL} worker=${WORKER_ENDPOINT}"
 gateway_pid=$!
 wait_http "http://127.0.0.1:${GATEWAY_INTERNAL_PORT}/health" 120 "gateway-internal"
 
-"${PYTHON}" -m py_backend.server \
-    --host "${BACKEND_HOST}" \
-    --port "${BACKEND_PORT}" \
-    --model-path "${MODEL_PATH}" \
-    --pt-path "${PT_PATH}" \
-    --gpu-id "${GPU_ID}" \
+server_args=(--host "${BACKEND_HOST}" --port "${BACKEND_PORT}" --model-path "${MODEL_PATH}" --gpu-id "${GPU_ID}")
+[ -n "${PT_PATH}" ] && server_args+=(--pt-path "${PT_PATH}")
+"${PYTHON}" -m py_backend.server "${server_args[@]}" \
     > "${LOG_DIR}/backend.log" 2>&1 &
 backend_pid=$!
 wait_http "${BACKEND_URL}/health" 900 "backend"
