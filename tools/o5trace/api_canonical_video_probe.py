@@ -104,6 +104,8 @@ def duplex_config(args: argparse.Namespace) -> dict[str, Any]:
         "length_penalty": args.length_penalty,
         "chunk_ms": args.chunk_ms,
         "sample_rate": INPUT_SAMPLE_RATE,
+        "strategy_hd": args.strategy_hd,
+        "strategy_hd_max_slice_nums": args.strategy_hd_max_slice_nums,
     }
     if args.listen_top_k is not None:
         config["listen_top_k"] = args.listen_top_k
@@ -403,6 +405,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--text-repetition-window-size", type=int, default=512)
     parser.add_argument("--length-penalty", type=float, default=1.1)
     parser.add_argument("--post-audio-drain-ms", type=float, default=200.0)
+    parser.add_argument(
+        "--strategy-hd",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="enable lag-one strategy-HD slice scheduling in the API session",
+    )
+    parser.add_argument("--strategy-hd-max-slice-nums", type=int, default=4)
     parser.add_argument("--event-timeout-s", type=float, default=600.0)
     parser.add_argument("--open-timeout", type=float, default=15.0)
     parser.add_argument("--max-message-mb", type=int, default=128)
