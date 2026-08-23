@@ -7,8 +7,7 @@
     cd /user/sunweiyue/lib/swy-dev/minicpmo45_service
     CUDA_VISIBLE_DEVICES=0 PYTHONPATH=. .venv/base/bin/python worker.py \\
         --port 10031 \\
-        --model-path /path/to/base_model \\
-        --pt-path /path/to/custom.pt \\
+        --weights-dir /path/to/full/safetensors/bundle \\
         --ref-audio-path /path/to/ref.wav
 """
 
@@ -393,8 +392,8 @@ def main():
     parser = argparse.ArgumentParser(description="MiniCPMO45 Worker")
     parser.add_argument("--port", type=int, default=None, help=f"Worker port (default: from config, base={cfg.worker_base_port})")
     parser.add_argument("--host", type=str, default="0.0.0.0", help="Host")
-    parser.add_argument("--model-path", type=str, default=None, help="Base model path")
-    parser.add_argument("--pt-path", type=str, default=None, help="Custom weights path (.pt)")
+    parser.add_argument("--weights-dir", type=str, default=None, help="Complete safetensors bundle")
+    parser.add_argument("--assets-dir", type=str, default=None, help="Runtime assets directory")
     parser.add_argument("--ref-audio-path", type=str, default=None, help="Default ref audio path")
     parser.add_argument("--gpu-id", type=int, default=None, help="GPU ID (inferred from port if not set)")
     parser.add_argument("--worker-index", type=int, default=0, help="Worker index (0, 1, 2, ...)")
@@ -406,9 +405,9 @@ def main():
     gpu_id = args.gpu_id if args.gpu_id is not None else args.worker_index
 
     WORKER_CONFIG.update({
-        "model_path": args.model_path or cfg.model.model_path,
         "gpu_id": gpu_id,
-        "pt_path": args.pt_path or cfg.model.pt_path,
+        "weights_dir": args.weights_dir or cfg.model.weights_dir,
+        "assets_dir": args.assets_dir or cfg.model.assets_dir,
         "ref_audio_path": args.ref_audio_path or cfg.ref_audio_path,
         "duplex_pause_timeout": args.duplex_pause_timeout or cfg.duplex_pause_timeout,
         "backend_server_url": args.backend_server_url,

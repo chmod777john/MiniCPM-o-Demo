@@ -1,6 +1,6 @@
 """Shipped deployment-mode builders. Each build() returns a ready-to-serve MiniCPMO.
 
-config keys used: model_path, pt_path, backbone_dir (tp2), chat_vocoder, attn_implementation,
+config keys used: weights_dir, assets_dir, chat_vocoder, attn_implementation,
 llm_cache_len (tp2/opt graph StaticCache width), duplex_config (optional override).
 """
 from __future__ import annotations
@@ -9,6 +9,7 @@ import logging
 from typing import Any, Dict
 
 import torch
+from o5_paths import DEFAULT_MODEL_PATH
 
 from .base import DeploymentMode, BuildResult
 from .fla_runtime import configure_chunk_output, configure_fused_norm, configure_l2norm
@@ -48,14 +49,15 @@ def _place_outer_model(model: torch.nn.Module, device: str) -> torch.nn.Module:
 # ─────────────────────────── shared helpers ───────────────────────────
 def _mk_config(cfg: Dict[str, Any]):
     from transformers import AutoConfig
-    c = AutoConfig.from_pretrained(cfg["model_path"], trust_remote_code=True)
+    model_path = str(DEFAULT_MODEL_PATH)
+    c = AutoConfig.from_pretrained(model_path, trust_remote_code=True)
     c._attn_implementation = cfg.get("attn_implementation", "sdpa")
-    c._name_or_path = cfg["model_path"]; c.name_or_path = cfg["model_path"]
+    c._name_or_path = model_path; c.name_or_path = model_path
     return c
 
 
 def _load_full(cfg: Dict[str, Any], device: str):
-    """Single-card: build MiniCPMO and load either HF shards or legacy PT."""
+    """Single-card: build MiniCPMO from the complete safetensors bundle."""
     # "auto" leaves FLA's normal autotuning untouched. Fixed values are only
     # for reproducibility investigations on the pinned FLA 0.5.0 runtime.
     configure_fused_norm(cfg.get("fla_fused_norm_config"))
@@ -66,13 +68,9 @@ def _load_full(cfg: Dict[str, Any], device: str):
     from MiniCPMO45.processing_minicpmo import MiniCPMOProcessor
     with init_empty_weights():
         model = MiniCPMO(_mk_config(cfg))
-    if cfg.get("weights_dir"):
-        load_safetensors_into(model, cfg["weights_dir"])
-    else:
-        sd = torch.load(cfg["pt_path"], map_location="cpu", weights_only=True, mmap=True)
-        model.load_state_dict(sd, strict=False, assign=True); del sd
+    load_safetensors_into(model, cfg["weights_dir"])
     _place_outer_model(model, device)
-    model.processor = MiniCPMOProcessor.from_pretrained(cfg["model_path"], trust_remote_code=True)
+    model.processor = MiniCPMOProcessor.from_pretrained(str(DEFAULT_MODEL_PATH), trust_remote_code=True)
     return model
 
 
@@ -96,24 +94,14 @@ def _surgery_tp(
     from MiniCPMO45.processing_minicpmo import MiniCPMOProcessor
     with init_empty_weights():
         model = MiniCPMO(_mk_config(cfg))
-    if cfg.get("weights_dir"):
-        load_safetensors_into(model, cfg["weights_dir"], exclude_prefixes=("llm.",))
-    else:
-        sd = torch.load(cfg["pt_path"], map_location="cpu", weights_only=True, mmap=True)
-        model.load_state_dict({k: v for k, v in sd.items() if not k.startswith("llm.")},
-                              strict=False, assign=True); del sd
+    load_safetensors_into(model, cfg["weights_dir"], exclude_prefixes=("llm.",))
     model.llm = None
     _place_outer_model(model, device)
-    # A complete O5 safetensors bundle also contains ``llm/config.json`` and
-    # native Qwen ``model.*`` keys.  Reuse its root shards for TP2 so a second
-    # 65GB LLM copy is not needed.  The legacy standalone backbone remains a
-    # compatible fallback for older deployments.
-    tp_root = cfg.get("weights_dir") or cfg["backbone_dir"]
-    tp_config_root = (
-        os.path.join(cfg["weights_dir"], "llm")
-        if cfg.get("weights_dir") and os.path.isfile(os.path.join(cfg["weights_dir"], "llm", "config.json"))
-        else cfg["backbone_dir"]
-    )
+    # The complete bundle contains the native Qwen config and root shards.
+    # Keeping one artifact for both outer modules and TP avoids a second copy
+    # of the standalone backbone and removes a source of checkpoint skew.
+    tp_root = cfg["weights_dir"]
+    tp_config_root = os.path.join(cfg["weights_dir"], "llm")
     tp_cfg = AutoConfig.from_pretrained(tp_config_root, trust_remote_code=True)
     tp_cfg._attn_implementation = cfg.get("attn_implementation", "sdpa")
     tp = AutoModelForCausalLM.from_pretrained(
@@ -139,7 +127,7 @@ def _surgery_tp(
         world_size=world_size,
         sync_calls=sync_llm_calls,
     )
-    model.processor = MiniCPMOProcessor.from_pretrained(cfg["model_path"], trust_remote_code=True)
+    model.processor = MiniCPMOProcessor.from_pretrained(str(DEFAULT_MODEL_PATH), trust_remote_code=True)
     return model
 
 

@@ -36,7 +36,6 @@ from tools.o5replay.session_io import (  # noqa: E402
 )
 
 
-DEFAULT_MODEL_PATH = "/user/weihongliang/MiniCPM-o-4_6"
 DEFAULT_CANONICAL_ROOT = (
     "/user/weihongliang/worktrees/"
     "moe-35b-a3b-canonical-tts-drift-investigation-2026-08-17"
@@ -45,11 +44,6 @@ DEFAULT_CKPT = (
     "/user/weihongliang/o5_weights/"
     "chenmoye_minicpm_5o_moe_omni_long_context_sft_stage2_sft2_8k_"
     "audio_online_process_on_online_audio_process_v2_iter_100.pt"
-)
-DEFAULT_BACKBONE = (
-    "/user/weihongliang/o5_weights/"
-    "o5_backbone_hf_chenmoye_minicpm_5o_moe_omni_long_context_sft_stage2_"
-    "sft2_8k_audio_online_process_on_online_audio_process_v2_iter_100"
 )
 
 
@@ -163,6 +157,11 @@ def run(args: argparse.Namespace) -> int:
     seed_all(seed)
     runtime = load_runtime(args, sampling)
     seed_all(seed)
+    resolved_weights = (
+        getattr(runtime.backend, "weights_dir", None)
+        if args.target != "canonical"
+        else None
+    )
     controller = DuplexTraceController(
         sink=MemoryTraceSink(),
         capture_mode=args.capture_mode,
@@ -185,9 +184,10 @@ def run(args: argparse.Namespace) -> int:
             "input_session": str(session.root),
             "seed": seed,
             "target": args.target,
-            "checkpoint": str(Path(args.ckpt_path).resolve()),
-            "model_path": str(Path(args.model_path).resolve()),
-            "backbone_dir": str(Path(args.backbone_dir).resolve()),
+            "canonical_root": str(Path(args.canonical_root).resolve()) if args.target == "canonical" else None,
+            "checkpoint": str(Path(args.ckpt_path).resolve()) if args.target == "canonical" else None,
+            "weights_dir": str(Path(resolved_weights).resolve()) if resolved_weights else None,
+            "assets_dir": str(Path(args.assets_dir).resolve()) if args.assets_dir else None,
             "sampling": sampling,
         },
     )
@@ -299,9 +299,9 @@ def parse_args() -> argparse.Namespace:
 
     parser.add_argument("--canonical-root", default=DEFAULT_CANONICAL_ROOT)
     parser.add_argument("--token2wav-dir", default="/user/weihongliang/o5_model_assets/token2wav")
-    parser.add_argument("--model-path", default=DEFAULT_MODEL_PATH)
     parser.add_argument("--ckpt-path", default=DEFAULT_CKPT)
-    parser.add_argument("--backbone-dir", default=DEFAULT_BACKBONE)
+    parser.add_argument("--weights-dir")
+    parser.add_argument("--assets-dir")
     parser.add_argument("--device", default="cuda:0")
     parser.add_argument("--attn-implementation", default="sdpa")
 

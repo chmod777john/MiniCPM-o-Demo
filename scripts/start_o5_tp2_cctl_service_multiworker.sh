@@ -2,11 +2,7 @@
 set -euo pipefail
 
 PROJECT_DIR="${PROJECT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
-MODEL_PATH="${MODEL_PATH:-${PROJECT_DIR}/MiniCPMO45}"
-PT_PATH="${PT_PATH:-${O5_PT_PATH:-}}"
 WEIGHTS_DIR="${WEIGHTS_DIR:-${O5_WEIGHTS_DIR:-${PROJECT_DIR}/weights}}"
-BACKBONE_DIR="${BACKBONE_DIR:-${O5_BACKBONE_DIR:-${WEIGHTS_DIR}/llm}}"
-if [ ! -d "${BACKBONE_DIR}" ]; then BACKBONE_DIR="/user/weihongliang/o5_weights/o5_backbone_hf_chenmoye_minicpm_5o_moe_omni_long_context_sft_stage2_sft2_8k_audio_online_process_on_online_audio_process_v2_iter_100"; fi
 VENV_DIR="${VENV_DIR:-${PROJECT_DIR}/.venv}"
 
 BACKEND_HOST="${BACKEND_HOST:-127.0.0.1}"
@@ -37,7 +33,6 @@ cd "${PROJECT_DIR}"
 
 export PYTHONPATH="${PROJECT_DIR}:${PYTHONPATH:-}"
 export TOKENIZERS_PARALLELISM="${TOKENIZERS_PARALLELISM:-false}"
-export O5_BACKBONE_DIR="${BACKBONE_DIR}"
 if [ -d "${WEIGHTS_DIR}" ]; then export O5_WEIGHTS_DIR="${WEIGHTS_DIR}"; fi
 export O5_LLM_CACHE
 export O5_SPMD_HEARTBEAT_INTERVAL
@@ -47,11 +42,8 @@ export TORCHRUN="${VENV_DIR}/bin/torchrun"
 PYTHON="${VENV_DIR}/bin/python"
 
 if [ ! -x "${PYTHON}" ]; then echo "[tp2-mw-start] missing python: ${PYTHON}" >&2; exit 1; fi
-if [ -z "${MODEL_PATH}" ] || [ ! -d "${MODEL_PATH}" ]; then echo "[tp2-mw-start] missing MODEL_PATH=${MODEL_PATH}" >&2; exit 1; fi
 has_safetensors=0
-if [ -f "${WEIGHTS_DIR}/model.safetensors.index.json" ] || [ -f "${WEIGHTS_DIR}/model.safetensors" ]; then has_safetensors=1; fi
-if [ "${has_safetensors}" -eq 0 ] && [ -n "${PT_PATH}" ] && [ ! -f "${PT_PATH}" ]; then echo "[tp2-mw-start] explicit PT_PATH does not exist: ${PT_PATH}" >&2; exit 1; fi
-if [ -z "${BACKBONE_DIR}" ] || [ ! -d "${BACKBONE_DIR}" ]; then echo "[tp2-mw-start] missing BACKBONE_DIR=${BACKBONE_DIR}" >&2; exit 1; fi
+if [ -f "${WEIGHTS_DIR}/model.safetensors.index.json" ] && [ -f "${WEIGHTS_DIR}/llm/config.json" ]; then has_safetensors=1; fi
 if [ "${GPUS_PER_WORKER}" -ne 2 ]; then echo "[tp2-mw-start] TP2 requires GPUS_PER_WORKER=2" >&2; exit 1; fi
 
 pids=()
@@ -115,10 +107,8 @@ visible_devices_for_worker() {
 }
 
 echo "[tp2-mw-start] project=${PROJECT_DIR}"
-echo "[tp2-mw-start] model=${MODEL_PATH}"
-echo "[tp2-mw-start] pt=${PT_PATH}"
+echo "[tp2-mw-start] weights=${WEIGHTS_DIR} safetensors=${has_safetensors}"
 echo "[tp2-mw-start] token_trace_dir=${O5_TOKEN_TRACE_DIR}"
-echo "[tp2-mw-start] backbone=${BACKBONE_DIR}"
 echo "[tp2-mw-start] workers=${NUM_WORKERS} gpus_per_worker=${GPUS_PER_WORKER} total_gpus=$((NUM_WORKERS * GPUS_PER_WORKER))"
 echo "[tp2-mw-start] llm_cache=${O5_LLM_CACHE} spmd_heartbeat=${O5_SPMD_HEARTBEAT_INTERVAL}"
 echo "[tp2-mw-start] deployment_mode=${O5_DEPLOY_MODE:-tp2} llm_graph=${O5_LLM_GRAPH:-1}"
@@ -146,8 +136,7 @@ for ((i=0; i<NUM_WORKERS; i++)); do
     worker_endpoints+=("${worker_endpoint}")
 
     echo "[tp2-mw-start] backend ${i}: cuda_visible=${visible_devices} master_port=${master_port} url=${backend_url}"
-    tp_server_args=(--host "${BACKEND_HOST}" --port "${backend_port}" --model-path "${MODEL_PATH}")
-    [ -n "${PT_PATH}" ] && tp_server_args+=(--pt-path "${PT_PATH}")
+    tp_server_args=(--host "${BACKEND_HOST}" --port "${backend_port}" --weights-dir "${WEIGHTS_DIR}")
     CUDA_VISIBLE_DEVICES="${visible_devices}" \
     O5_TORCHRUN_MASTER_PORT="${master_port}" \
     "${PROJECT_DIR}/core/deploy/launch_tp2.sh" "${tp_server_args[@]}" \

@@ -16,7 +16,7 @@ Worker 和 Gateway 统一读取此文件。
 使用方式：
     from config import get_config
     config = get_config()
-    print(config.model.model_path)
+    print(config.model.weights_dir)
     print(config.audio.playback_delay_ms)
 """
 
@@ -26,7 +26,6 @@ import os
 from typing import List, Optional
 
 from pydantic import BaseModel, Field
-from o5_paths import DEFAULT_MODEL_PATH
 
 logger = logging.getLogger(__name__)
 
@@ -42,17 +41,6 @@ class ModelConfig(BaseModel):
 
     model_config = {"protected_namespaces": ()}
 
-    model_path: str = Field(
-        default_factory=lambda: str(DEFAULT_MODEL_PATH),
-        description=(
-            "模型代码和配置目录；默认使用仓库内 MiniCPMO45。"
-            "运行时权重由 weights_dir 或兼容的 pt_path 单独解析。"
-        ),
-    )
-    pt_path: Optional[str] = Field(
-        default=None,
-        description="兼容旧部署的 .pt 权重路径；优先使用完整 safetensors bundle。",
-    )
     weights_dir: Optional[str] = Field(
         default=None,
         description="完整 HF safetensors 权重目录；为空时使用 O5_WEIGHTS_DIR 或默认 bundle。",
@@ -71,10 +59,6 @@ class ModelConfig(BaseModel):
             "tp2_llm = 实验性双卡张量并行，rank 同步下沉到 LLM wrapper。"
             "新模式在 core/deploy/modes.py 注册即可。"
         ),
-    )
-    backbone_dir: Optional[str] = Field(
-        default=None,
-        description="tp2 模式：抽取出的 HF 格式骨干目录（from_pretrained(tp_plan) 分片加载）。",
     )
     llm_cache_len: int = Field(
         default=8192,
@@ -327,8 +311,7 @@ def load_config(path: str = _CONFIG_PATH) -> ServiceConfig:
     gateway / worker 进程无需 config.json 即可启动。
 
     backend 默认使用仓库内的 `MiniCPMO45` 配置和代码，并自动寻找完整
-    safetensors bundle；`model_path`、`weights_dir`、`assets_dir` 和旧的
-    `pt_path` 都可以按需覆盖，这里不要求显式填写任何一个。
+    safetensors bundle；`weights_dir` 和 `assets_dir` 可以按需覆盖。
 
     Args:
         path: config.json 的路径
@@ -351,7 +334,7 @@ def load_config(path: str = _CONFIG_PATH) -> ServiceConfig:
 
     config = ServiceConfig(**data)
     logger.info(
-        f"配置已加载: model={config.model.model_path or '(未设置)'}, "
+        f"配置已加载: weights={config.model.weights_dir or '(auto)'}, "
         f"attn_implementation={config.attn_implementation}, "
         f"gateway_port={config.gateway_port}, "
         f"playback_delay_ms={config.playback_delay_ms}, "

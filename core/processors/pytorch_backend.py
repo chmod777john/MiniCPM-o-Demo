@@ -24,6 +24,7 @@ from core.schemas.metrics import BackendMetrics
 from core.schemas.common import Message
 from core.schemas.duplex import DuplexConfig, DuplexGenerateResult
 from core.schemas.streaming import StreamingChunk, StreamingRequest, StreamingResponse
+from o5_paths import DEFAULT_MODEL_PATH
 
 logger = logging.getLogger("pytorch_backend")
 
@@ -54,9 +55,7 @@ class PyTorchBackend:
 
     def __init__(
         self,
-        model_path: str,
         gpu_id: int,
-        pt_path: Optional[str] = None,
         weights_dir: Optional[str] = None,
         ref_audio_path: Optional[str] = None,
         duplex_pause_timeout: float = 60.0,
@@ -65,9 +64,8 @@ class PyTorchBackend:
         attn_implementation: str = "auto",
         preload_both_tts: bool = True,
     ):
-        self.model_path = model_path
+        self.model_path = str(DEFAULT_MODEL_PATH)
         self.gpu_id = gpu_id
-        self.pt_path = pt_path
         self.weights_dir = weights_dir
         self.ref_audio_path = ref_audio_path
         self.duplex_pause_timeout = duplex_pause_timeout
@@ -104,8 +102,6 @@ class PyTorchBackend:
         from core.processors.unified import UnifiedProcessor
 
         self.processor = UnifiedProcessor(
-            model_path=self.model_path,
-            pt_path=self.pt_path,
             weights_dir=self.weights_dir,
             ref_audio_path=self.ref_audio_path,
             preload_both_tts=self.preload_both_tts,
@@ -175,8 +171,7 @@ class PyTorchBackend:
                 "session_id": session_id,
                 "capture_mode": self._trace_capture_mode,
                 "deployment_mode": os.environ.get("O5_DEPLOY_MODE", "single_eager"),
-                "model_path": self.model_path,
-                "checkpoint": self.pt_path,
+                "weights_dir": self.weights_dir,
             },
         )
         session_events = self._trace_controller.drain()

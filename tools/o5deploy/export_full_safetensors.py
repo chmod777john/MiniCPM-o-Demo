@@ -28,9 +28,12 @@ from transformers import AutoConfig  # noqa: E402
 from transformers.modeling_utils import split_torch_state_dict_into_shards  # noqa: E402
 
 from MiniCPMO45.modeling_minicpmo_unified import MiniCPMO  # noqa: E402
-from o5_paths import (  # noqa: E402
-    DEFAULT_CHECKPOINT_PATH,
-    DEFAULT_MODEL_PATH,
+from o5_paths import DEFAULT_MODEL_PATH  # noqa: E402
+
+DEFAULT_SOURCE_CHECKPOINT = Path(
+    "/user/weihongliang/o5_weights/"
+    "chenmoye_minicpm_5o_moe_omni_long_context_sft_stage2_sft2_8k_"
+    "audio_online_process_on_online_audio_process_v2_iter_100.pt"
 )
 
 
@@ -48,7 +51,7 @@ def load_state_dict(path: Path) -> dict:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model-path", default=str(DEFAULT_MODEL_PATH))
-    parser.add_argument("--pt-path", default=str(DEFAULT_CHECKPOINT_PATH))
+    parser.add_argument("--pt-path", default=str(DEFAULT_SOURCE_CHECKPOINT))
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--max-shard-size", default="5GB")
     return parser.parse_args()

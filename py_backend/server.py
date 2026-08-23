@@ -141,7 +141,8 @@ def _model_dump(obj: Any) -> Dict[str, Any]:
 def _runtime_env_snapshot() -> Dict[str, Any]:
     keys = (
         "O5_DEPLOY_MODE",
-        "O5_BACKBONE_DIR",
+        "O5_WEIGHTS_DIR",
+        "O5_ASSETS_DIR",
         "O5_LLM_CACHE",
         "O5_CACHE_CLOSE_MARGIN",
         "O5_LLM_GRAPH",
@@ -985,8 +986,6 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="MiniCPMO45 backend protocol server")
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=22500)
-    parser.add_argument("--model-path", default=None)
-    parser.add_argument("--pt-path", default=None)
     parser.add_argument("--weights-dir", default=None)
     parser.add_argument("--assets-dir", default=None)
     parser.add_argument("--ref-audio-path", default=None)
@@ -995,12 +994,8 @@ def main() -> None:
     parser.add_argument("--duplex-pause-timeout", type=float, default=None)
     args = parser.parse_args()
 
-    model_path = args.model_path or cfg.model.model_path
-
     SERVER_CONFIG.update({
-        "model_path": model_path,
         "gpu_id": args.gpu_id,
-        "pt_path": args.pt_path or cfg.model.pt_path,
         "weights_dir": args.weights_dir or getattr(cfg.model, "weights_dir", None),
         "assets_dir": args.assets_dir or getattr(cfg.model, "assets_dir", None),
         "ref_audio_path": args.ref_audio_path or cfg.ref_audio_path,
@@ -1011,7 +1006,6 @@ def main() -> None:
         "preload_both_tts": os.environ.get("O5_PRELOAD_BOTH_TTS", "1").lower()
         in {"1", "true", "yes", "on"},
         "deployment_mode": getattr(cfg.model, "deployment_mode", "single_eager"),
-        "backbone_dir": getattr(cfg.model, "backbone_dir", None),
         "llm_cache_len": getattr(cfg.model, "llm_cache_len", 8192),
     })
 

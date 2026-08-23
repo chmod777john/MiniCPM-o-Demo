@@ -183,7 +183,10 @@ def _set_flag(name: str, enabled: bool) -> None:
 
 def configure_demo_environment(args: Any) -> None:
     os.environ["O5_DEPLOY_MODE"] = "tp2" if args.target == "demo-tp2" else args.demo_single_mode
-    os.environ["O5_BACKBONE_DIR"] = str(args.backbone_dir)
+    if args.weights_dir:
+        os.environ["O5_WEIGHTS_DIR"] = str(args.weights_dir)
+    if args.assets_dir:
+        os.environ["O5_ASSETS_DIR"] = str(args.assets_dir)
     os.environ["O5_EXPERTS_IMPLEMENTATION"] = args.experts_implementation
     os.environ["O5_LLM_CACHE"] = str(args.llm_cache)
     _set_flag("O5_LLM_GRAPH", args.llm_graph)
@@ -204,9 +207,8 @@ def load_demo(args: Any, sampling: dict[str, Any]) -> RuntimeAdapter:
     rank = int(os.environ.get("LOCAL_RANK", os.environ.get("RANK", "0")))
     backend = create_backend({
         "deployment_mode": mode,
-        "model_path": str(args.model_path),
-        "pt_path": str(args.ckpt_path),
-        "backbone_dir": str(args.backbone_dir),
+        "weights_dir": args.weights_dir,
+        "assets_dir": args.assets_dir,
         "gpu_id": rank,
         "chat_vocoder": "token2wav",
         "attn_implementation": args.attn_implementation,

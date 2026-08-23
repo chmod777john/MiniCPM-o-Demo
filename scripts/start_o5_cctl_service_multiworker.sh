@@ -2,8 +2,6 @@
 set -euo pipefail
 
 PROJECT_DIR="${PROJECT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
-MODEL_PATH="${MODEL_PATH:-${PROJECT_DIR}/MiniCPMO45}"
-PT_PATH="${PT_PATH:-${O5_PT_PATH:-}}"
 WEIGHTS_DIR="${WEIGHTS_DIR:-${O5_WEIGHTS_DIR:-${PROJECT_DIR}/weights}}"
 VENV_DIR="${VENV_DIR:-${PROJECT_DIR}/.venv}"
 
@@ -40,16 +38,8 @@ if [ ! -x "${PYTHON}" ]; then
     echo "[start] missing python: ${PYTHON}" >&2
     exit 1
 fi
-if [ -z "${MODEL_PATH}" ] || [ ! -d "${MODEL_PATH}" ]; then
-    echo "[start] missing model dir: ${MODEL_PATH}" >&2
-    exit 1
-fi
 has_safetensors=0
-if [ -f "${WEIGHTS_DIR}/model.safetensors.index.json" ] || [ -f "${WEIGHTS_DIR}/model.safetensors" ]; then has_safetensors=1; fi
-if [ "${has_safetensors}" -eq 0 ] && [ -n "${PT_PATH}" ] && [ ! -f "${PT_PATH}" ]; then
-    echo "[start] explicit PT_PATH does not exist: ${PT_PATH}" >&2
-    exit 1
-fi
+if [ -f "${WEIGHTS_DIR}/model.safetensors.index.json" ] && [ -f "${WEIGHTS_DIR}/llm/config.json" ]; then has_safetensors=1; fi
 
 pids=()
 frpc_loop_pid=""
@@ -110,8 +100,7 @@ start_frpc_retry_loop() {
 }
 
 echo "[start] project=${PROJECT_DIR}"
-echo "[start] model=${MODEL_PATH}"
-echo "[start] pt=${PT_PATH}"
+echo "[start] weights=${WEIGHTS_DIR} safetensors=${has_safetensors}"
 echo "[start] token_trace_dir=${O5_TOKEN_TRACE_DIR}"
 echo "[start] workers=${NUM_WORKERS} backend_base=${BACKEND_BASE_PORT} worker_base=${WORKER_BASE_PORT}"
 echo "[start] backend_start_stagger_seconds=${BACKEND_START_STAGGER_SECONDS}"
@@ -149,8 +138,7 @@ for ((i=0; i<NUM_WORKERS; i++)); do
     CUDA_VISIBLE_DEVICES="${gpu_id}" "${PYTHON}" -m py_backend.server \
         --host "${BACKEND_HOST}" \
         --port "${backend_port}" \
-        --model-path "${MODEL_PATH}" \
-        --pt-path "${PT_PATH}" \
+        --weights-dir "${WEIGHTS_DIR}" \
         --gpu-id 0 \
         > "${LOG_DIR}/backend_${i}.log" 2>&1 &
     pids+=("$!")

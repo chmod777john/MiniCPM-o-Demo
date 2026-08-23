@@ -24,17 +24,11 @@ def main():
         "llm_cache_len": int(os.environ.get("O5_LLM_CACHE", "8192")),
     }
     # Leave artifact paths absent by default so this smoke test exercises the
-    # same local safetensors resolution as the serving entrypoint. Explicit
-    # paths remain available for legacy and multi-checkpoint tests.
-    for env_key, config_key in {
-        "MODEL_PATH": "model_path",
-        "PT_PATH": "pt_path",
-        "BACKBONE_DIR": "backbone_dir",
-        "O5_WEIGHTS_DIR": "weights_dir",
-        "O5_ASSETS_DIR": "assets_dir",
-    }.items():
-        if os.environ.get(env_key):
-            conf[config_key] = os.environ[env_key]
+    # same complete-bundle resolution as the serving entrypoint.
+    if os.environ.get("O5_WEIGHTS_DIR"):
+        conf["weights_dir"] = os.environ["O5_WEIGHTS_DIR"]
+    if os.environ.get("O5_ASSETS_DIR"):
+        conf["assets_dir"] = os.environ["O5_ASSETS_DIR"]
     torch.manual_seed(1234); np.random.seed(1234)
     be = create_backend(conf)
     be.load_model()                          # framework tp2 build on BOTH ranks
