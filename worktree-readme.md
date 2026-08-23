@@ -1,9 +1,8 @@
-# Worktree: wt/o5-no-fc-speedup-tp2-default-local-load-2026-08-22
+# Worktree
 
-- Created: 2026-08-22 UTC
+- Created: 2026-08-23
 - Base branch: `o5-no-fc-speedup-tp2`
-- Base commit: `ad070af` (`feat(replay): capture T2W intermediates and token sensitivity`)
-- Purpose: make Demo loading self-contained by default. Replace the runtime
-  dependency on the legacy `.pt` checkpoint with one complete safetensors
-  bundle, keep an optional assets directory, and validate default loading and
-  Canonical alignment without requiring callers to pass `model-path`.
+- Base commit: `261dcea` (`fix(tokenizer): remove stale added-token override`)
+- Branch: `wt/o5-no-fc-speedup-tp2-default-local-load-2026-08-22-clean-replay-2026-08-23`
+- Purpose: isolate the clean default local-load result from the later uncommitted diagnosis/ablation probes, then rerun the LLM teacher-forcing replay and argmax-reversal check.
+- Scope: retain the complete safetensors artifact path and default local assets; do not carry uncommitted experimental switches or probe code from the source worktree.
