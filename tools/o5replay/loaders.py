@@ -123,6 +123,17 @@ class RuntimeAdapter:
 
 
 def load_canonical(args: Any, sampling: dict[str, Any]) -> RuntimeAdapter:
+    from core.deploy.fla_runtime import (
+        configure_chunk_output,
+        configure_fused_norm,
+        configure_l2norm,
+    )
+
+    # Apply the same pinned FLA autotuner choices before Canonical constructs
+    # its model. This makes repeated Canonical runs a controlled baseline.
+    configure_fused_norm(args.fla_fused_norm_config)
+    configure_l2norm(args.fla_l2norm_config)
+    configure_chunk_output(args.fla_chunk_output_config)
     root = Path(args.canonical_root).resolve()
     if not (root / "configuration_minicpmo.py").is_file():
         raise FileNotFoundError(f"canonical model code not found: {root}")
@@ -216,6 +227,9 @@ def load_demo(args: Any, sampling: dict[str, Any]) -> RuntimeAdapter:
         "attn_implementation": args.attn_implementation,
         "llm_cache_len": args.llm_cache,
         "duplex_config": sampling,
+        "fla_fused_norm_config": args.fla_fused_norm_config,
+        "fla_l2norm_config": args.fla_l2norm_config,
+        "fla_chunk_output_config": args.fla_chunk_output_config,
     })
     backend.load_model()
     if getattr(backend, "spmd_is_worker", False):

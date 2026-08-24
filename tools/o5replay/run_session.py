@@ -189,6 +189,11 @@ def run(args: argparse.Namespace) -> int:
             "model_path": str(Path(args.model_path).resolve()),
             "backbone_dir": str(Path(args.backbone_dir).resolve()),
             "sampling": sampling,
+            "fla": {
+                "fused_norm": args.fla_fused_norm_config,
+                "l2norm": args.fla_l2norm_config,
+                "chunk_output": args.fla_chunk_output_config,
+            },
         },
     )
     writer.append(controller.drain())
@@ -284,6 +289,12 @@ def run(args: argparse.Namespace) -> int:
 
 
 def parse_args() -> argparse.Namespace:
+    from core.deploy.fla_runtime import (
+        CHUNK_OUTPUT_CONFIGS,
+        FUSED_NORM_CONFIGS,
+        L2NORM_CONFIGS,
+    )
+
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--session-dir", required=True)
     parser.add_argument("--out-dir", required=True)
@@ -304,6 +315,21 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--backbone-dir", default=DEFAULT_BACKBONE)
     parser.add_argument("--device", default="cuda:0")
     parser.add_argument("--attn-implementation", default="sdpa")
+    parser.add_argument(
+        "--fla-fused-norm-config",
+        choices=FUSED_NORM_CONFIGS,
+        default=os.environ.get("O5_FLA_FUSED_NORM_CONFIG", "auto"),
+    )
+    parser.add_argument(
+        "--fla-l2norm-config",
+        choices=L2NORM_CONFIGS,
+        default=os.environ.get("O5_FLA_L2NORM_CONFIG", "auto"),
+    )
+    parser.add_argument(
+        "--fla-chunk-output-config",
+        choices=CHUNK_OUTPUT_CONFIGS,
+        default=os.environ.get("O5_FLA_CHUNK_OUTPUT_CONFIG", "auto"),
+    )
 
     parser.add_argument("--generate-audio", action=argparse.BooleanOptionalAction, default=None)
     parser.add_argument("--ls-mode")
