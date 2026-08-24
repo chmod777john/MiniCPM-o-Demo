@@ -113,6 +113,10 @@ class RuntimeAdapter:
     def shutdown(self) -> None:
         if self.backend is None:
             return
+        shutdown = self.backend._get_spmd_shutdown()
+        if callable(shutdown) and getattr(self.backend, "spmd_is_driver", False):
+            shutdown()
+            return
         mirror = self.backend._get_spmd_mirror()
         if mirror is not None and getattr(mirror, "is_driver", False):
             mirror.shutdown()
@@ -215,10 +219,10 @@ def load_demo(args: Any, sampling: dict[str, Any]) -> RuntimeAdapter:
     })
     backend.load_model()
     if getattr(backend, "spmd_is_worker", False):
-        mirror = backend._get_spmd_mirror()
-        if mirror is None:
-            raise RuntimeError("TP2 backend worker has no SPMD mirror")
-        mirror.worker_loop()
+        worker_loop = backend._get_spmd_worker_loop()
+        if not callable(worker_loop):
+            raise RuntimeError("TP2 backend worker has no model-provided worker loop")
+        worker_loop()
         sys.stdout.flush()
         os._exit(0)
     model = backend.processor.model

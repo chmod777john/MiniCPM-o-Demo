@@ -238,6 +238,14 @@ class PyTorchBackend:
         model = getattr(self.processor, "model", None)
         return getattr(model, "_spmd_mirror", None)
 
+    def _get_spmd_worker_loop(self) -> Any:
+        model = getattr(self.processor, "model", None)
+        return getattr(model, "_spmd_worker_loop", None)
+
+    def _get_spmd_shutdown(self) -> Any:
+        model = getattr(self.processor, "model", None)
+        return getattr(model, "_spmd_shutdown", None)
+
     def _get_spmd_noop(self) -> Any:
         model = getattr(self.processor, "model", None)
         return getattr(model, "_spmd_noop", None)
@@ -249,6 +257,11 @@ class PyTorchBackend:
         boundary.  Backend chat/duplex/FC APIs should remain single-rank business
         logic and must not be mirrored wholesale.
         """
+        deployment = getattr(self.processor, "_deploy", None)
+        if deployment is not None and int(getattr(deployment, "world_size", 1)) > 1:
+            self.spmd_is_driver = bool(getattr(deployment, "is_driver", False))
+            self.spmd_is_worker = not self.spmd_is_driver
+            return
         if self._get_spmd_noop() is not None:
             self.spmd_is_driver = True
             self.spmd_is_worker = False
