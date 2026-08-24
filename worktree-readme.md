@@ -1,3 +1,24 @@
+# Worktree
+
+- Created: 2026-08-24
+- Branch: `align-enhance-fc`
+- Base branch: `o5-fc-dev`
+- Base commit: `28a54d23c1373620871ca122122623ed6965cc77`
+- Source to integrate: `o5-no-fc-speedup-tp2`
+- Source commit at setup: `ad070af99a726a9ac41da8fb2326bb2503deef74`
+
+## Purpose
+
+Integrate the validated TP2 and acceleration history into the FC implementation
+while preserving the source commits where Git can do so. The resulting branch
+must retain FC capability, preserve the no-FC duplex replay/alignment tooling,
+and support controlled canonical, unaccelerated, and fully accelerated
+teacher-forcing comparisons.
+
+The original FC and speedup worktrees are not modified by this worktree.
+
+## Inherited worktree history
+
 # Worktree: o5-fc-dev
 
 - Created: 2026-07-26
