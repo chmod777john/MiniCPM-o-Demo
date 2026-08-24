@@ -17,6 +17,17 @@ teacher-forcing comparisons.
 
 The original FC and speedup worktrees are not modified by this worktree.
 
+## Current continuation
+
+- `cc0d07c fix(deploy): preserve explicit llm cache length`: keeps an explicit
+  `O5_LLM_CACHE`, with TP2 defaulting to 32768 and single-card optimization to
+  8192 when neither env nor config provides a value.
+- `54acb58 fix(tp2): synchronize llm allocator cleanup`: propagates the
+  rank-0 session cleanup to the rank-1 LLM/graph worker so both ranks run
+  allocator cleanup. This stays below the FC/duplex API boundary.
+- Focused FC tests: 52 passed in the existing accel venv. GPU alignment runs
+  are still pending; use `agent-dev` first and `agent-train` only when needed.
+
 ## Inherited worktree history
 
 # Worktree: o5-fc-dev

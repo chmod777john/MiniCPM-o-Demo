@@ -48,5 +48,23 @@ versions will be recorded before GPU execution.
 
 - Worktree created from the clean FC tip.
 - FC remote fetched and confirmed unchanged.
-- TP2 merge not yet completed.
-- No GPU experiment has been started from this worktree.
+- TP2 integration is present on the current branch. The integration keeps the
+  FC runtime and the LLM/graph-boundary synchronization model; it does not
+  restore the removed whole-backend SPMD mirror.
+- `cc0d07c fix(deploy): preserve explicit llm cache length` fixes an actual
+  configuration precedence bug: an explicit `O5_LLM_CACHE` now wins over the
+  old hard-coded `cfg.get(..., 8192)` fallback. With no explicit value, TP2
+  defaults to 32768 and single-card optimization defaults to 8192.
+- `54acb58 fix(tp2): synchronize llm allocator cleanup` adds a small LLM
+  boundary cleanup command. FC/duplex session cleanup on rank 0 now asks the
+  rank-1 LLM/graph worker to run `gc.collect()` and `torch.cuda.empty_cache()`
+  as well. This addresses the observed rank-1 reserved-memory plateau without
+  mirroring FC or duplex methods.
+- Static checks passed: Python compilation, shell syntax checks, and
+  `git diff --check`.
+- Using the existing project accel venv
+  `/user/weihongliang/MiniCPM-o-Demo-wt-o5-inference-refactor-2026-06-30/.venv-accel`
+  with `PYTHONPATH=.`, the focused FC tests passed: **52 passed**.
+- No GPU experiment has been started from this worktree yet. The planned
+  priority remains `agent-dev`; if it has no suitable cards, use `agent-train`
+  without killing unrelated jobs.
