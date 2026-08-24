@@ -7,6 +7,7 @@ import argparse
 import base64
 import json
 import os
+import platform
 import shutil
 import sys
 import time
@@ -148,6 +149,41 @@ def _runtime_attention_implementation(runtime: Any) -> Any:
     return None
 
 
+def _runtime_environment(device: str) -> dict[str, Any]:
+    """Record execution facts that can change CUDA reduction behavior."""
+    info: dict[str, Any] = {
+        "hostname": platform.node(),
+        "python": sys.executable,
+        "python_version": platform.python_version(),
+        "torch_version": torch.__version__,
+        "torch_git_version": getattr(torch.version, "git_version", None),
+        "cuda_runtime": torch.version.cuda,
+        "cuda_visible_devices": os.environ.get("CUDA_VISIBLE_DEVICES"),
+        "device_requested": device,
+        "cublas_workspace_config": os.environ.get("CUBLAS_WORKSPACE_CONFIG"),
+        "deterministic_algorithms": bool(torch.are_deterministic_algorithms_enabled()),
+        "matmul_allow_tf32": bool(torch.backends.cuda.matmul.allow_tf32),
+        "cudnn_allow_tf32": bool(torch.backends.cudnn.allow_tf32),
+        "fla": {
+            "fused_norm": os.environ.get("O5_FLA_FUSED_NORM_CONFIG"),
+            "l2norm": os.environ.get("O5_FLA_L2NORM_CONFIG"),
+            "chunk_output": os.environ.get("O5_FLA_CHUNK_OUTPUT_CONFIG"),
+        },
+    }
+    if torch.cuda.is_available():
+        index = torch.device(device).index
+        if index is None:
+            index = torch.cuda.current_device()
+        properties = torch.cuda.get_device_properties(index)
+        info["cuda_device_index"] = index
+        info["cuda_device_name"] = properties.name
+        device_uuid = getattr(properties, "uuid", None)
+        info["cuda_device_uuid"] = str(device_uuid) if device_uuid is not None else None
+        info["cuda_device_major"] = properties.major
+        info["cuda_device_minor"] = properties.minor
+    return info
+
+
 def _is_tp2_worker(args: argparse.Namespace) -> bool:
     return args.target == "demo-tp2" and int(os.environ.get("RANK", "0")) != 0
 
@@ -179,6 +215,7 @@ def run(args: argparse.Namespace) -> int:
     seed_all(seed)
     runtime = load_runtime(args, sampling)
     seed_all(seed)
+    runtime_environment = _runtime_environment(args.device)
     controller = DuplexTraceController(
         sink=MemoryTraceSink(),
         capture_mode=args.capture_mode,
@@ -206,6 +243,7 @@ def run(args: argparse.Namespace) -> int:
             "checkpoint": str(Path(args.ckpt_path).resolve()),
             "model_path": str(Path(args.model_path).resolve()),
             "backbone_dir": str(Path(args.backbone_dir).resolve()),
+            "runtime_environment": runtime_environment,
             "sampling": sampling,
             "fla": {
                 "fused_norm": args.fla_fused_norm_config,
