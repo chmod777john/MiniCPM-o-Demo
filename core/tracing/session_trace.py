@@ -567,11 +567,10 @@ class DuplexTraceController:
         def traced_feed(decoder_self, embeds, return_logits=False, logits_position=None):
             cache_before = int(decoder_self.get_cache_length()) if hasattr(decoder_self, "get_cache_length") else None
             trace._layer_outputs.clear()
-            result = original_feed(
-                embeds,
-                return_logits=True,
-                logits_position=logits_position,
-            )
+            feed_kwargs = {"return_logits": True}
+            if logits_position is not None:
+                feed_kwargs["logits_position"] = logits_position
+            result = original_feed(embeds, **feed_kwargs)
             if result is None:
                 raise RuntimeError("decoder.feed(return_logits=True) returned no result")
             logits, hidden = result
