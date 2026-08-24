@@ -151,3 +151,29 @@ the first call, which is the expected signature of this buffer mismatch. The
 single-eager path now uses the same parameter-only placement helper as the
 canonical and TP2 controlled paths. A focused unit test checks parameter BF16
 conversion and float buffer preservation.
+
+## Single-eager attention configuration mismatch
+
+The next investigation found a separate configuration propagation bug. The
+replay command passed `--attn-implementation sdpa`, and the outer
+`MiniCPMOConfig` received it, but `MiniCPMO.__init__()` creates the Qwen text
+config independently with `AutoConfig.for_model()`. The subsequent public
+field copy uses `config.to_dict()`, while Transformers intentionally omits the
+private `_attn_implementation` field from that dictionary. In the shared
+accel environment this produced:
+
+```text
+outer config: sdpa
+new Qwen text config: None
+```
+
+Therefore the previous demo comparison did not prove an SDPA-vs-Canonical
+comparison; the text backbone's attention implementation was not explicitly
+resolved at construction. The fix explicitly copies
+`config._attn_implementation` into the newly created text config. Replay
+manifests now record both the requested and the actual text-backbone attention
+implementation so this class of experiment-control error is visible.
+
+The corrected single-eager replay is pending. No TP2 or acceleration result
+will be treated as a baseline until this run is compared with the stable
+Canonical reference again.

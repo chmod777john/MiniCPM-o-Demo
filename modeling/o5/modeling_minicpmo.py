@@ -193,6 +193,14 @@ class MiniCPMO(MiniCPMOPreTrainedModel):
 
         text_model_type = getattr(config, "text_model_type", "qwen3_5_text")
         text_config = AutoConfig.for_model(text_model_type)
+        # ``_attn_implementation`` is intentionally a private Transformers
+        # config field, so it is not included by ``config.to_dict()``.  The
+        # text config is created independently below and must receive the
+        # resolved implementation explicitly; otherwise an outer ``sdpa``
+        # setting can silently turn into the Qwen default during construction.
+        text_config._attn_implementation = getattr(
+            config, "_attn_implementation", "eager"
+        )
         if torch.cuda.is_available() and torch.cuda.get_device_capability()[0] < 9:
             # torch._grouped_mm used by the default MoE grouped implementation is H100-only in torch 2.8.
             text_config._experts_implementation = "eager"
@@ -5398,4 +5406,3 @@ def gen_logits(num_code: int, top_p=0.7, top_k=20, repetition_penalty=1.0):
         logits_processors.append(CustomRepetitionPenaltyLogitsProcessorRepeat(repetition_penalty, num_code, 16))
 
     return logits_warpers, logits_processors
-

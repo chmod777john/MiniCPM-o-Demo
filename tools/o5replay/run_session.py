@@ -132,6 +132,22 @@ def _prepare_out_dir(args: argparse.Namespace) -> Path:
     return out_dir
 
 
+def _runtime_attention_implementation(runtime: Any) -> Any:
+    """Return the resolved text-backbone attention setting for the manifest."""
+    model = getattr(runtime, "model", None)
+    llm = getattr(model, "llm", None)
+    candidates = (
+        getattr(llm, "config", None),
+        getattr(getattr(llm, "model", None), "config", None),
+        getattr(getattr(llm, "inner", None), "config", None),
+    )
+    for config in candidates:
+        value = getattr(config, "_attn_implementation", None)
+        if value is not None:
+            return value
+    return None
+
+
 def _is_tp2_worker(args: argparse.Namespace) -> bool:
     return args.target == "demo-tp2" and int(os.environ.get("RANK", "0")) != 0
 
@@ -185,6 +201,8 @@ def run(args: argparse.Namespace) -> int:
             "input_session": str(session.root),
             "seed": seed,
             "target": args.target,
+            "requested_attn_implementation": args.attn_implementation,
+            "actual_text_attn_implementation": _runtime_attention_implementation(runtime),
             "checkpoint": str(Path(args.ckpt_path).resolve()),
             "model_path": str(Path(args.model_path).resolve()),
             "backbone_dir": str(Path(args.backbone_dir).resolve()),
