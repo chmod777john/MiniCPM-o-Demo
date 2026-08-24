@@ -136,3 +136,18 @@ Validation:
 
 The fixed-FLA Canonical/Demo replay pair must be rerun with this correction
 before any TP2 or acceleration conclusion is considered valid.
+
+## Single-eager buffer mismatch
+
+The corrected argmax replay exposed a second, independent baseline issue. The
+FC demo's legacy `single_eager` loader called `model.bfloat16()`, which casts
+floating-point buffers as well as parameters. Canonical's controlled loader
+casts parameters only and deliberately keeps the LLM RoPE `inv_freq` buffer in
+float32. The TP2 deployment builder already followed the latter policy, but
+the single-eager path had not been updated.
+
+The first `llm.feed` embeddings were equal while hidden states diverged from
+the first call, which is the expected signature of this buffer mismatch. The
+single-eager path now uses the same parameter-only placement helper as the
+canonical and TP2 controlled paths. A focused unit test checks parameter BF16
+conversion and float buffer preservation.

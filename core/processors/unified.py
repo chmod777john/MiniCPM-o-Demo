@@ -185,6 +185,15 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _place_model_preserving_float_buffers(model: torch.nn.Module, device: str) -> torch.nn.Module:
+    """Cast parameters like the canonical loader while preserving float buffers."""
+
+    for parameter in model.parameters():
+        if parameter.is_floating_point() and parameter.dtype != torch.bfloat16:
+            parameter.data = parameter.data.to(dtype=torch.bfloat16)
+    return model.eval().to(device)
+
+
 # ============================================================
 # View 类：各模式的专用接口
 # ============================================================
@@ -3063,11 +3072,12 @@ class UnifiedProcessor(BaseProcessor):
                 "Quantized model detected — skipping .bfloat16() cast "
                 "(quantized layers use integer weights)"
             )
+            if self.device == "cuda":
+                self.model.cuda()
         else:
-            self.model.bfloat16().eval()
-
-        if self.device == "cuda":
-            self.model.cuda()
+            # RoPE and other numerical-state buffers must remain float32. The
+            # canonical replay loader and TP2 builder use the same policy.
+            _place_model_preserving_float_buffers(self.model, self.device)
 
         load_time = time.time() - start
         logger.info(

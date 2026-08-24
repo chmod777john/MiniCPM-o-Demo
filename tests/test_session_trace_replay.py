@@ -22,6 +22,7 @@ from core.sampling import tts_argmax_scope
 from py_backend.server import BackendProtocolSession, BackendServerState
 from core.processors.pytorch_backend import PyTorchBackend
 from core.processors.unified import DuplexView
+from core.processors.unified import _place_model_preserving_float_buffers
 from core.schemas.duplex import DuplexConfig
 from tools.o5replay.compare import compare
 from tools.o5replay.run_session import _is_tp2_worker
@@ -166,6 +167,17 @@ def test_duplex_config_restores_tensor_tts_temperature():
     assert model.duplex.tts_temperature.shape == (1,)
     assert model.duplex.tts_temperature.device == next(model.parameters()).device
     assert model.duplex.tts_temperature.item() == pytest.approx(0.6)
+
+
+def test_model_placement_preserves_float_buffers():
+    module = torch.nn.Module()
+    module.weight = torch.nn.Parameter(torch.ones(2, dtype=torch.float32))
+    module.register_buffer("inv_freq", torch.ones(2, dtype=torch.float32))
+
+    _place_model_preserving_float_buffers(module, "cpu")
+
+    assert module.weight.dtype == torch.bfloat16
+    assert module.inv_freq.dtype == torch.float32
 
 
 def test_record_bundle_and_force_replay(tmp_path: Path):
