@@ -966,6 +966,7 @@ class DuplexView:
         system_prompt_text: Optional[str] = None,
         ref_audio_path: Optional[str] = None,
         prompt_wav_path: Optional[str] = None,
+        llm_seed: Optional[int] = None,
     ) -> str:
         """准备双工会话
         
@@ -994,6 +995,7 @@ class DuplexView:
             suffix_system_prompt=suffix_system_prompt,
             ref_audio=ref_audio,
             prompt_wav_path=prompt_wav_path or ref_audio_path or self.ref_audio_path,
+            llm_seed=llm_seed,
         )
         
         logger.info(f"双工会话准备完成")

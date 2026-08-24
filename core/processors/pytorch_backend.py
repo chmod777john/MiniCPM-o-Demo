@@ -509,6 +509,7 @@ class PyTorchBackend:
         prompt_wav_path: Optional[str] = None,
         length_penalty: float = 1.0,
         sampling: Optional[Dict[str, Any]] = None,
+        llm_seed: Optional[int] = None,
     ) -> str:
         if sampling:
             self.set_duplex_config(sampling)
@@ -517,6 +518,7 @@ class PyTorchBackend:
             system_prompt_text=system_prompt_text,
             ref_audio_path=ref_audio_path or self.ref_audio_path,
             prompt_wav_path=prompt_wav_path,
+            llm_seed=llm_seed,
         )
 
     def duplex_prefill(

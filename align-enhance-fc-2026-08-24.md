@@ -65,6 +65,38 @@ versions will be recorded before GPU execution.
 - Using the existing project accel venv
   `/user/weihongliang/MiniCPM-o-Demo-wt-o5-inference-refactor-2026-06-30/.venv-accel`
   with `PYTHONPATH=.`, the focused FC tests passed: **52 passed**.
-- No GPU experiment has been started from this worktree yet. The planned
-  priority remains `agent-dev`; if it has no suitable cards, use `agent-train`
-  without killing unrelated jobs.
+- The replay CLI fixed-FLA wiring was added in `0fd0905
+  test(replay): expose fixed FLA configs`. It exposes and records:
+  `32x8` fused gated RMSNorm, `16x8` L2Norm, and `128x128x8` chunk output.
+
+## Experiment 1: Canonical fixed-FLA self-replay
+
+- Input: `/user/weihongliang/o5_replay_strategy_hd_input_8u_20260822_canonical_hd`
+  (8 units from `omni_demo_duplex_01.mp4`).
+- Checkpoint: `chenmoye ... iter_100.pt` under
+  `/user/weihongliang/o5_weights/`.
+- Runtime: commit `0fd0905`, `.venv-accel`, seed `0`, greedy LLM decode,
+  `O5_TTS_ARGMAX=1`, and all three fixed FLA configs above.
+- Jobs: `779159` and `779158`, both 1 GPU in `agent-train`.
+- Comparison:
+  `/user/weihongliang/o5_align_enhance_fc_exp_20260824/canonical-fixedfla-comparison.json`
+
+Result: Canonical is bitwise stable for this 8-unit run. All 320 trace events
+paired; LLM feed hidden/logits (93/93), decode logits (24/24), TTS hidden/logits
+and probabilities (89/89), TTS condition (4/4), TTS tokens (4/4), token2wav
+inputs and PCM chunks (4/4), and merged PCM16 audio are bitwise equal. The
+merged audio SHA256 is
+`f195a4e1a5979399f5fec642aca0379bd11e9dc1829b850b5d2a6d3154fc25dd`.
+
+This establishes a stable Canonical reference for the next comparisons; it
+does not yet establish alignment of `align-enhance-fc` with Canonical.
+
+## Replay interface adaptation
+
+The first `single_eager` no-acceleration run (`779192`) reached model loading
+but stopped before the first unit because FC's `PyTorchBackend.duplex_prepare()`
+did not expose the existing `llm_seed` argument. The underlying O5 model already
+accepted it, and the speedup replay path had used it to make the session seed
+explicit. The fix is a narrow pass-through in `DuplexView.prepare()` and
+`PyTorchBackend.duplex_prepare()`; it does not add backend mirroring or change
+FC behavior. The failed task was not retried after the fix yet.
