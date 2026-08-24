@@ -201,6 +201,13 @@ def configure_demo_environment(args: Any) -> None:
     os.environ["O5_BACKBONE_DIR"] = str(args.backbone_dir)
     os.environ["O5_EXPERTS_IMPLEMENTATION"] = args.experts_implementation
     os.environ["O5_LLM_CACHE"] = str(args.llm_cache)
+    # Keep the Demo deployment on the same pinned FLA kernels as Canonical.
+    # core.deploy reads these controls before constructing the model; recording
+    # them only in the replay manifest is insufficient because autotuning can
+    # otherwise choose a different reduction/tiling on the Demo path.
+    os.environ["O5_FLA_FUSED_NORM_CONFIG"] = args.fla_fused_norm_config
+    os.environ["O5_FLA_L2NORM_CONFIG"] = args.fla_l2norm_config
+    os.environ["O5_FLA_CHUNK_OUTPUT_CONFIG"] = args.fla_chunk_output_config
     _set_flag("O5_LLM_GRAPH", args.llm_graph)
     _set_flag("O5_TTS_GRAPH", args.tts_graph)
     _set_flag("O5_VOCODER_GRAPH", args.vocoder_graph)
