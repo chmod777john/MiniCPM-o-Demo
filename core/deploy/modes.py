@@ -174,12 +174,18 @@ def _enable_engine(model, *, tp: bool, cfg: Dict[str, Any]):
         if c is not None and hasattr(c, "_attn_implementation"):
             c._attn_implementation = "eager"
     os.environ["O5_VISION_BATCH"] = "1" if batch_vision else "0"
-    os.environ["O5_LLM_CACHE"] = str(cfg.get("llm_cache_len", 8192))
+    configured_cache = cfg.get("llm_cache_len")
+    cache_len = int(
+        os.environ.get("O5_LLM_CACHE")
+        or configured_cache
+        or (32768 if tp else 8192)
+    )
+    os.environ["O5_LLM_CACHE"] = str(cache_len)
     vocoder_graph_enabled = _enable_vocoder_bucket(model) if vocoder_graph else False
     eng = {"experts": experts_impl, "tts_fast": tts_fast, "lmhead": lmhead, "tts_graph": tts_graph,
            "vocoder_graph": vocoder_graph_enabled,
            "fuse_vision_audio": fuse_vision_audio, "batch_vision_feed": batch_vision,
-           "llm_graph": llm_graph, "llm_cache": cfg.get("llm_cache_len", 8192)}
+           "llm_graph": llm_graph, "llm_cache": cache_len}
     if tp:
         eng["tp"] = 2; eng["token_broadcast"] = False
     return eng
