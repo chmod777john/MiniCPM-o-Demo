@@ -543,6 +543,7 @@ class PyTorchBackend:
             return
         duplex_view = self.processor.set_duplex_mode()
         duplex_view.cleanup()
+        self._cleanup_llm_runtime()
         gc.collect()
         torch.cuda.empty_cache()
         logger.info(f"[GPU {self.gpu_id}] Duplex cleanup done, GPU memory released")
@@ -706,9 +707,18 @@ class PyTorchBackend:
         if self.processor is None:
             return
         self.processor.set_fc_duplex_mode().cleanup()
+        self._cleanup_llm_runtime()
         gc.collect()
         torch.cuda.empty_cache()
         logger.info(f"[GPU {self.gpu_id}] FC duplex cleanup done, GPU memory released")
+
+    def _cleanup_llm_runtime(self) -> None:
+        """Synchronize allocator cleanup for TP2's rank-local LLM state."""
+        model = getattr(self.processor, "model", None)
+        llm = getattr(model, "llm", None)
+        cleanup = getattr(llm, "cleanup", None)
+        if callable(cleanup):
+            cleanup()
 
     def shutdown(self) -> None:
         """PyTorch backend currently has no external process to shut down."""

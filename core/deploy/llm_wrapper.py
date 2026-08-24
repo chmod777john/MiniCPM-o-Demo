@@ -12,6 +12,7 @@ import inspect
 import logging
 import os
 import threading
+import gc
 from typing import Any
 
 import torch
@@ -117,6 +118,19 @@ class DistributedTPLLM(torch.nn.Module):
         if self.sync_calls and self.is_driver:
             self._broadcast_object(("__shutdown__", None))
 
+    def cleanup(self) -> None:
+        """Release rank-local LLM allocator state after a session reset."""
+        if self.sync_calls and self.is_driver:
+            with self._call_lock:
+                self._broadcast_object(("cleanup", None))
+        self._cleanup_local()
+
+    def _cleanup_local(self) -> None:
+        self._worker_past_key_values = None
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
     def worker_loop(self) -> None:
         assert self.sync_calls and not self.is_driver, "worker_loop() is worker-rank only"
         logger.info("[tp2-llm] rank=%s entering LLM worker_loop", self.rank)
@@ -128,6 +142,9 @@ class DistributedTPLLM(torch.nn.Module):
             if method == "__shutdown__":
                 return
             if method == "noop":
+                continue
+            if method == "cleanup":
+                self._cleanup_local()
                 continue
             args, kwargs = self._materialize_payload(payload)
             result = self._run_local(method, args, kwargs)

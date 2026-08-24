@@ -21,6 +21,7 @@ omni context), just replayed. Position/mask are updated in-place before each rep
 current tensor values).
 """
 import os
+import gc
 
 import torch
 from transformers.cache_utils import StaticCache
@@ -98,6 +99,11 @@ class LLMGraphRunner:
             if method in {"graph_shutdown", "__shutdown__"}:
                 return
             if method in {"graph_noop", "noop"}:
+                continue
+            if method == "cleanup":
+                gc.collect()
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
                 continue
             if method in {"forward", "model", "generate"}:
                 args, kwargs = self.distributed._materialize_payload(payload)
