@@ -36,6 +36,7 @@ from core.fc_duplex.system_input import (
     FcSystemContentInput,
 )
 from core.schemas.streaming import StreamingChunk, StreamingRequest, StreamingResponse
+from core.sampling import tts_argmax_scope
 
 logger = logging.getLogger("pytorch_backend")
 
@@ -488,16 +489,6 @@ class PyTorchBackend:
     def seed_runtime(self, seed: int) -> None:
         self._seed_process(seed)
 
-    @staticmethod
-    def _argmax_multinomial(input_tensor: torch.Tensor, num_samples: int, replacement: bool = False, *, generator=None, out=None):
-        if num_samples != 1:
-            raise RuntimeError("O5_TTS_ARGMAX only supports num_samples=1")
-        result = torch.argmax(input_tensor, dim=-1, keepdim=True)
-        if out is not None:
-            out.copy_(result)
-            return out
-        return result
-
     def _run_duplex_generate(self, force_listen: bool) -> DuplexGenerateResult:
         duplex_view = self.processor.set_duplex_mode()
         return duplex_view.generate(force_listen=force_listen)
@@ -538,12 +529,8 @@ class PyTorchBackend:
         if os.environ.get("O5_TTS_ARGMAX", "0").lower() not in {"1", "true", "yes", "on"}:
             return self._run_duplex_generate(force_listen)
 
-        original_multinomial = torch.multinomial
-        torch.multinomial = self._argmax_multinomial
-        try:
+        with tts_argmax_scope(True):
             return self._run_duplex_generate(force_listen)
-        finally:
-            torch.multinomial = original_multinomial
 
     def duplex_finalize(self) -> None:
         duplex_view = self.processor.set_duplex_mode()

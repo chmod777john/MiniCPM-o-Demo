@@ -21,6 +21,8 @@ from typing import Any, Iterable, Mapping, Optional
 import numpy as np
 import torch
 
+from core.sampling import argmax_multinomial, mark_sampling_aware, tts_argmax_enabled
+
 
 TRACE_SCHEMA = "o5.session-trace.v1"
 _TENSOR_POINTER = "@trace-tensor/"
@@ -741,13 +743,22 @@ class DuplexTraceController:
                         f"TTS codebook mismatch: reference={selected.shape[0]} actual={input_tensor.shape[0]}"
                     )
             else:
-                selected = trace._original_multinomial(
-                    input_tensor,
-                    num_samples,
-                    replacement=replacement,
-                    generator=generator,
-                    out=out,
-                )
+                if tts_argmax_enabled():
+                    selected = argmax_multinomial(
+                        input_tensor,
+                        num_samples,
+                        replacement=replacement,
+                        generator=generator,
+                        out=out,
+                    )
+                else:
+                    selected = trace._original_multinomial(
+                        input_tensor,
+                        num_samples,
+                        replacement=replacement,
+                        generator=generator,
+                        out=out,
+                    )
             trace._active_tts_step += 1
             if out is not None and trace._force_tts_samples:
                 out.copy_(selected)
@@ -764,7 +775,7 @@ class DuplexTraceController:
             return selected
 
         if self._original_multinomial is not None:
-            torch.multinomial = traced_multinomial
+            torch.multinomial = mark_sampling_aware(traced_multinomial)
 
         def traced_generate(tts_self, *args, **kwargs):
             forced = trace.forcing.tts_tokens

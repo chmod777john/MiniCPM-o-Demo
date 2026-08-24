@@ -18,6 +18,7 @@ from core.tracing import (
     ReplayReference,
     SessionBundleWriter,
 )
+from core.sampling import tts_argmax_scope
 from py_backend.server import BackendProtocolSession, BackendServerState
 from core.processors.pytorch_backend import PyTorchBackend
 from core.processors.unified import DuplexView
@@ -247,6 +248,21 @@ def test_replay_mode_captures_tts_hidden_and_raw_logits():
     assert forwards[0]["logits"]["shape"] == [1, 2, 8]
     assert torch.is_tensor(forwards[0]["hidden"]["_tensor"])
     assert torch.is_tensor(forwards[0]["logits"]["_tensor"])
+
+
+def test_tts_argmax_scope_preserves_trace_sampling(monkeypatch):
+    monkeypatch.setenv("O5_TTS_ARGMAX", "1")
+    duplex = _FakeDuplex(favored_llm_token=5, favored_tts_token=3, condition_bias=1.5)
+    controller = DuplexTraceController(capture_mode="replay").install(duplex)
+    try:
+        with tts_argmax_scope(True):
+            _result, events = _run(controller, duplex)
+    finally:
+        controller.uninstall()
+
+    samples = [event for event in events if event["kind"] == "tts.sample"]
+    assert [event["selected_token_ids"] for event in samples] == [[3, 3], [3, 3], [0, 0]]
+    assert all(event["teacher_forced"] is False for event in samples)
 
 
 def test_incomplete_bundle_manifest(tmp_path: Path):

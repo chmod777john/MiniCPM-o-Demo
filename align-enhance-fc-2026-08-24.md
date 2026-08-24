@@ -100,3 +100,39 @@ accepted it, and the speedup replay path had used it to make the session seed
 explicit. The fix is a narrow pass-through in `DuplexView.prepare()` and
 `PyTorchBackend.duplex_prepare()`; it does not add backend mirroring or change
 FC behavior. The failed task was not retried after the fix yet.
+
+## Deterministic TTS sampling correction
+
+The first fixed-FLA comparison exposed an experiment-control bug before it
+exposed an FC or TP2 numerical difference. The replay command exported
+`O5_TTS_ARGMAX=1`, but the two targets did not consume that setting at the same
+layer:
+
+- Demo `PyTorchBackend.duplex_generate()` temporarily replaced the global
+  `torch.multinomial` with argmax.
+- Canonical had no backend wrapper and therefore continued to use seeded
+  `torch.multinomial`.
+- When `DuplexTraceController` was installed, the Demo backend replacement
+  also bypassed the trace wrapper, so its TTS sample events were incomplete.
+
+This explained the observed first TTS divergence: LLM selected tokens matched,
+but Canonical selected acoustic content while Demo could select EOS under
+argmax. It was not evidence that the FC wrapper had already changed the LLM
+path.
+
+The correction is in the shared `core/sampling.py` utility. Backend generation
+enters `tts_argmax_scope()`, while the common trace controller consults the same
+scope/environment and records the argmax decision. The scope is aware of an
+installed trace wrapper, so backend generation cannot replace it and silently
+lose trace events. The old behavior remains for untraced API generation.
+
+Validation:
+
+- `python -m py_compile` passed for the changed modules.
+- With the project `.venv-accel`, `tests/test_session_trace_replay.py` passed:
+  **17 passed**.
+- The new regression test verifies that a traced TTS run under the backend
+  argmax scope records all three sample calls, including the EOS call.
+
+The fixed-FLA Canonical/Demo replay pair must be rerun with this correction
+before any TP2 or acceleration conclusion is considered valid.
