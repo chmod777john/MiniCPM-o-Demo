@@ -356,3 +356,36 @@ Regression coverage in `tests/test_session_trace_replay.py` forces
 The next run is a narrow TP2 + LLM-graph replay with TTS graph disabled. A
 successful run will establish that graph command synchronization is restored
 before enabling the remaining TTS optimizations.
+
+## TP2 LLM graph after replay fix (task 780833, 2026-08-24)
+
+The narrow run used the new commit `07016e9` on two A100s in `deploy`:
+
+- `llm_graph=1`, `tts_graph=0`, `tts_fast=1`, `lmhead=1`;
+- `experts_implementation=batched_mm`;
+- `vocoder_graph=0`, `fuse_vision_audio=1`, `batch_vision_feed=1`;
+- eager attention, fixed FLA (`32x8`, `16x8`, `128x128x8`), deterministic replay;
+- `--forcing all`, 8 units, same canonical reference and input session.
+
+The task captured the LLM graph on both ranks, entered rank 1's graph worker
+loop, and completed all 8 units without a collective timeout. The generated
+text was `好的，没问题。`.
+
+Comparison artifact:
+`/user/weihongliang/o5_align_enhance_fc_exp_20260824/demo-tp2-llmgraph-only-fix/comparison.json`
+
+The comparison had 213/213 paired events:
+
+- accepted LLM tokens: `8/8` equal;
+- LLM decode selections and local argmax: `17/17` equal;
+- TTS chunks: `3/3` equal;
+- TTS sampled tokens: `45/45` equal;
+- Token2Wav input IDs and ranges: all equal;
+- LLM hidden/logits: numerically different, but all 17 decode argmax decisions
+  remained equal (`cosine_mean=0.9975` for decode logits);
+- TTS hidden/logits/probabilities: bitwise equal because their conditions and
+  sampled tokens were forced from the same reference;
+- audio shape and duration: equal; PCM differed only in the known downstream
+  vocoder execution path.
+
+This isolates the previous failure to the removed driver-only replay collective.
