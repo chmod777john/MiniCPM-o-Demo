@@ -96,6 +96,7 @@ done
   --normalize-tools \
   --tool-response-schedule gt \
   --final-max-wait "${FINAL_MAX_WAIT:-300}" \
+  --use-case-ref-audio \
   --generate-audio
 
 latest_session="$(find "${TRACE_DIR}" -mindepth 1 -maxdepth 1 -type d -name 'sess_*' -printf '%T@ %p\n' | sort -n | tail -1 | cut -d' ' -f2-)"
