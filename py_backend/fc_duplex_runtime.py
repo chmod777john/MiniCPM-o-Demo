@@ -664,6 +664,13 @@ class FcDuplexSessionRuntime:
             unit_index=unit_index,
             resume=resume_status,
         )
+        # FC runs on the detached unit queue, so it does not pass through the
+        # legacy backend handler that normally drains model trace events. Drain
+        # here after the public unit boundary to persist the exact unit trace
+        # without exposing internal tensors on the wire.
+        drain_trace_events = getattr(self.backend, "drain_trace_events", None)
+        if drain_trace_events is not None:
+            await asyncio.to_thread(drain_trace_events, input_id)
         if hasattr(self.backend, "set_trace_unit_id"):
             await asyncio.to_thread(self.backend.set_trace_unit_id, None)
 

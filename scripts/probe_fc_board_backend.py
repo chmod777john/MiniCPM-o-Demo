@@ -19,6 +19,8 @@ import json
 import re
 import ssl
 import sys
+import urllib.error
+import urllib.request
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlsplit, urlunsplit
@@ -357,6 +359,7 @@ async def run_probe(args: argparse.Namespace) -> Dict[str, Any]:
     if target_url.startswith("wss://"):
         ssl_ctx = ssl._create_unverified_context() if args.insecure else ssl.create_default_context()
 
+    session_id: Optional[str] = None
     async with websockets.connect(target_url, max_size=128 * 1024 * 1024, ping_interval=None, ssl=ssl_ctx) as ws:
         config = {
             "sample_rate": prepared["sample_rate"],
@@ -392,7 +395,9 @@ async def run_probe(args: argparse.Namespace) -> Dict[str, Any]:
             },
         }
         await ws.send(json.dumps(init_payload, ensure_ascii=False))
-        events.append(json.loads(await ws.recv()))
+        created = json.loads(await ws.recv())
+        events.append(created)
+        session_id = str(created.get("session_id") or "") or None
 
         pending_auto_results: List[Dict[str, Any]] = []
 
@@ -490,9 +495,19 @@ async def run_probe(args: argparse.Namespace) -> Dict[str, Any]:
                 break
             await handle_event(json.loads(raw))
 
-        await ws.send(json.dumps({"type": "session.close", "reason": "probe_done"}))
-        with contextlib.suppress(Exception):
-            events.append(json.loads(await asyncio.wait_for(ws.recv(), timeout=5)))
+        # The backend WebSocket protocol intentionally does not accept
+        # session.close. Close through its HTTP control endpoint so the
+        # server can flush the model trace and perform rank-local cleanup.
+        if session_id:
+            close_url = args.backend.rstrip("/") + f"/sessions/{session_id}/close"
+            request = urllib.request.Request(
+                close_url,
+                data=json.dumps({"reason": "probe_done"}).encode("utf-8"),
+                headers={"content-type": "application/json"},
+                method="POST",
+            )
+            with contextlib.suppress(urllib.error.URLError, OSError):
+                await asyncio.to_thread(urllib.request.urlopen, request, timeout=10)
 
     spoken_text = "".join(
         str(event.get("delta") or event.get("text") or "")
