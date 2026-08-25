@@ -354,9 +354,6 @@ async def run_probe(args: argparse.Namespace) -> Dict[str, Any]:
             "unit_sec": prepared["unit_sec"],
             "decode_mode": args.decode_mode,
             "max_spoken_tokens": args.max_spoken_tokens,
-            "non_spoken_budget_per_unit": args.non_spoken_budget,
-            "non_spoken_budgets_while_listening": prepared["budgets_listening"],
-            "non_spoken_budgets_while_speaking": prepared["budgets_speaking"],
             "non_spoken_scheduling": "quality",
         }
         init_payload = {
