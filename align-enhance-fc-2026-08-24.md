@@ -389,3 +389,26 @@ The comparison had 213/213 paired events:
   vocoder execution path.
 
 This isolates the previous failure to the removed driver-only replay collective.
+
+## TP2 full acceleration without vocoder graph (task 780864, 2026-08-24)
+
+The next run enabled `tts_graph=1` on top of the successful LLM-graph
+configuration, while keeping `vocoder_graph=0`. It again used two A100s in
+`deploy`, commit `169e36d`, fixed FLA, eager attention, `batched_mm`, and
+deterministic `--forcing all` replay.
+
+The task captured both LLM and TTS CUDA graphs and completed all 8 units. The
+comparison remained structurally complete at 213/213 events:
+
+- accepted LLM tokens: `8/8` equal;
+- LLM decode selections and local argmax: `17/17` equal;
+- TTS sampled tokens: `45/45` equal;
+- Token2Wav input IDs and ranges: all equal;
+- TTS graph hidden/logits: `20/45` bitwise equal, but all 45 logits argmax
+  decisions equal; one probability-vector argmax differed numerically;
+- generated audio shape/duration: equal, with the same known PCM-level
+  vocoder-state differences.
+
+The forcing result means this run proves graph execution and replay lifecycle,
+not free-running TTS equivalence. The next experiment enables `vocoder_graph`
+as the only remaining acceleration switch before a no-forcing comparison.
