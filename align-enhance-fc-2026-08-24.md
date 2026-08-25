@@ -437,3 +437,23 @@ Artifact:
 This does not establish that `tts_graph` caused both reversals: TP2 hidden
 drift alone can move a close TTS probability boundary. The paired free run
 with `tts_graph=0` is required to separate those causes.
+
+## TP2 LLM graph free run with TTS graph disabled (task 780971, 2026-08-24)
+
+The paired run kept `llm_graph=1`, `batched_mm`, `tts_fast=1`, and
+`vocoder_graph=1`, but changed only `tts_graph` to `0`. It also completed all
+8 units without synchronization errors.
+
+Compared with Canonical, the same LLM path still had 17/17 decode decisions
+equal. TTS behavior was materially worse than the graph-enabled free run:
+
+- TTS sample decisions: `27/45` equal;
+- TTS logits local argmax: `26/45` equal, with `19` reversals;
+- only `1/3` TTS chunks were bitwise equal;
+- the generated TTS/audio trajectory diverged before the final spoken unit.
+
+This is a useful ablation result, not a new code failure: on this workload,
+the TTS graph is the more reproducible execution path. The graph-enabled run
+had `44/45` TTS sample decisions and 2 logits reversals. The remaining work is
+therefore to retain TTS graph in the production acceleration profile and
+validate the FC-specific replay path separately.
