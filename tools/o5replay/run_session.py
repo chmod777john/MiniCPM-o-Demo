@@ -184,6 +184,19 @@ def _runtime_environment(device: str) -> dict[str, Any]:
     return info
 
 
+def _configure_deterministic_replay(enabled: bool) -> None:
+    """Apply deterministic CUDA controls before constructing a runtime."""
+    if not enabled:
+        return
+    os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
+    torch.backends.cuda.matmul.allow_tf32 = False
+    torch.backends.cudnn.allow_tf32 = False
+    torch.backends.cudnn.deterministic = True
+    if hasattr(torch, "set_float32_matmul_precision"):
+        torch.set_float32_matmul_precision("highest")
+    torch.use_deterministic_algorithms(True)
+
+
 def _is_tp2_worker(args: argparse.Namespace) -> bool:
     return args.target == "demo-tp2" and int(os.environ.get("RANK", "0")) != 0
 
@@ -193,6 +206,13 @@ def run(args: argparse.Namespace) -> int:
     os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
     os.environ.setdefault("HF_HUB_OFFLINE", "1")
     os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+    deterministic = (
+        bool(args.deterministic_replay)
+        if args.deterministic_replay is not None
+        else os.environ.get("O5_DETERMINISTIC_REPLAY", "0").lower()
+        in {"1", "true", "yes", "on"}
+    )
+    _configure_deterministic_replay(deterministic)
     os.environ["O5_LAYER_TRACE"] = "1" if args.capture_layers else "0"
 
     session = RecordedSession(Path(args.session_dir))
@@ -264,6 +284,7 @@ def run(args: argparse.Namespace) -> int:
                 "preserve_float_buffers": os.environ.get(
                     "O5_PRESERVE_FLOAT_BUFFERS", "1"
                 ).lower() not in {"0", "false", "no", "off"},
+                "deterministic_replay": deterministic,
             },
             "sampling": sampling,
             "fla": {
@@ -379,6 +400,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--reference-session")
     parser.add_argument("--forcing", default="none", help="none, all, or comma-separated llm,tts-condition,tts-token,vocoder")
     parser.add_argument("--capture-mode", choices=("tokens", "replay"), default="replay")
+    parser.add_argument(
+        "--deterministic-replay",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="disable TF32 and require deterministic PyTorch/CUDA kernels",
+    )
     parser.add_argument("--capture-layers", action="store_true")
     parser.add_argument("--max-units", type=int, default=0)
     parser.add_argument("--session-id")
