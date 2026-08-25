@@ -12,6 +12,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import numpy as np
+import pytest
 import torch
 
 from core.processors.unified import FcDuplexView, UnifiedProcessor
@@ -250,6 +251,55 @@ def test_processor_startup_warm_can_be_disabled_for_cold_equivalence_probe(
     processor._warm_fc_token2wav_if_configured()
 
     assert calls == []
+
+
+def test_processor_startup_warm_resolves_project_relative_reference_audio(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    """FC schema receives an absolute path even when service config is relative."""
+
+    import soundfile as sf
+
+    ref_path = tmp_path / "assets" / "ref.wav"
+    ref_path.parent.mkdir()
+    sf.write(ref_path, np.zeros(16_000, dtype=np.float32), 16_000)
+    calls: list[tuple[object, str | None, bool | None]] = []
+    processor = UnifiedProcessor.__new__(UnifiedProcessor)
+    processor._is_initialized = False
+    processor.fc_model_family = "o5"
+    processor.preload_both_tts = True
+    processor.ref_audio_path = "assets/ref.wav"
+    processor.model = SimpleNamespace(
+        fc_duplex=SimpleNamespace(
+            warm_prepare=lambda *, system_content, tts_prompt_audio_path, generate_audio: calls.append(
+                (system_content, tts_prompt_audio_path, generate_audio)
+            )
+        )
+    )
+    monkeypatch.chdir(tmp_path)
+
+    processor._warm_fc_token2wav_if_configured()
+
+    assert calls[0][1] == str(ref_path)
+
+
+def test_processor_startup_warm_rejects_unreadable_explicit_reference_audio(
+    tmp_path: Path,
+) -> None:
+    """Audio-enabled FC startup must fail clearly instead of constructing a bad schema input."""
+
+    processor = UnifiedProcessor.__new__(UnifiedProcessor)
+    processor._is_initialized = False
+    processor.fc_model_family = "o5"
+    processor.preload_both_tts = True
+    processor.ref_audio_path = str(tmp_path / "missing.wav")
+    processor.model = SimpleNamespace(
+        fc_duplex=SimpleNamespace(warm_prepare=lambda **_: None)
+    )
+
+    with pytest.raises(RuntimeError, match="readable reference audio file"):
+        processor._warm_fc_token2wav_if_configured()
 
 
 def test_o5_trace_dump_preserves_raw_tokens_without_session_close_error(

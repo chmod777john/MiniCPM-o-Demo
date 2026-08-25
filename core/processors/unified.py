@@ -3161,7 +3161,22 @@ class UnifiedProcessor(BaseProcessor):
             raise RuntimeError(
                 "O5 FC capability lacks warm_prepare; cannot declare Backend ready"
             )
-        audio_input = FcAudioPathInput(file_path=self.ref_audio_path)
+        # The general service config historically accepts a project-relative path,
+        # while the FC schema deliberately accepts only an absolute server path.
+        # Resolve the former at the boundary so startup warmup and session-init
+        # use the same canonical path.
+        ref_audio_path = Path(self.ref_audio_path).expanduser()
+        if not ref_audio_path.is_absolute():
+            ref_audio_path = (Path.cwd() / ref_audio_path).resolve()
+        if not ref_audio_path.is_file():
+            raise RuntimeError(
+                "O5 FC startup warmup requires a readable reference audio file: "
+                f"configured={self.ref_audio_path!r}, resolved={str(ref_audio_path)!r}. "
+                "Set REF_AUDIO_PATH/--ref-audio-path or disable "
+                "FC_DUPLEX_STARTUP_WARM=0 for token-only runs."
+            )
+
+        audio_input = FcAudioPathInput(file_path=str(ref_audio_path))
         system_content = materialize_o5_system_content(
             FcSystemContentInput(
                 segments=[FcSystemAudioInput(audio=audio_input)],
@@ -3176,7 +3191,7 @@ class UnifiedProcessor(BaseProcessor):
         logger.info(
             "O5 FC full prepare path warmed before ready in %.1fs: %s",
             time.time() - start,
-            self.ref_audio_path,
+            str(ref_audio_path),
         )
 
     def _release_resources(self) -> None:

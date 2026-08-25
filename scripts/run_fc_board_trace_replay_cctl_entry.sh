@@ -74,6 +74,11 @@ export O5_TTS_ARGMAX="${O5_TTS_ARGMAX:-1}"
 export O5_SESSION_TRACE_MODE=replay
 export O5_TOKEN_TRACE_DIR="${TRACE_DIR}"
 export O5_REPLAY_FORCING="${O5_REPLAY_FORCING:-none}"
+# Token-only FC replay does not execute Token2Wav.  Avoid paying for, or
+# validating, the optional prompt-specific startup warmup in that mode.
+if [[ "${GENERATE_AUDIO}" == "0" ]]; then
+  export FC_DUPLEX_STARTUP_WARM=0
+fi
 if [[ -n "${REFERENCE_SESSION}" ]]; then
   export O5_REPLAY_REFERENCE="${REFERENCE_SESSION}"
 fi
