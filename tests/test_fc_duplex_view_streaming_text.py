@@ -318,8 +318,8 @@ def test_spoken_repeated_speak_across_units_reuses_turn_stream() -> None:
     assert view.resume_boundary_status() == {"status": "available"}
 
 
-def test_spoken_listen_before_turn_eos_is_runtime_error() -> None:
-    """Active spoken turn 尚未 turn_eos 时出现 listen 属于协议错误。"""
+def test_spoken_listen_after_slot_eos_closes_the_pending_turn() -> None:
+    """Slot EOS 后的 listen 结束当前 spoken turn，而不是误报协议错误。"""
 
     model = _FakeFcModel()
     tokenizer = model.fc_duplex.protocol_tokenizer
@@ -330,6 +330,34 @@ def test_spoken_listen_before_turn_eos_is_runtime_error() -> None:
         {
             "is_speaking": True,
             "spoken_ids": [speak, *tokenizer.encode_ordinary("继续"), slot_eos],
+        },
+        {
+            "is_listen": True,
+            "spoken_ids": [listen],
+        },
+    ]
+    view = FcDuplexView(O45FcDuplexModelAdapter(model))  # type: ignore[arg-type]
+    view.prepare(FcDuplexPrepareRequest(system=FcSystemContentInput()))
+    view.streaming_spoken_generate(FcSpokenGenerateRequest())
+
+    second = view.streaming_spoken_generate(FcSpokenGenerateRequest())
+
+    assert _step_kinds(second) == ["protocol"]
+    assert second.is_listen is True
+    assert view.resume_boundary_status() == {"status": "available"}
+
+
+def test_spoken_listen_without_slot_or_turn_eos_is_runtime_error() -> None:
+    """没有 slot/turn 边界时，active spoken turn 不能直接切到 listen。"""
+
+    model = _FakeFcModel()
+    tokenizer = model.fc_duplex.protocol_tokenizer
+    speak = tokenizer.token_to_id("<|speak|>")
+    listen = tokenizer.token_to_id("<|listen|>")
+    model.spoken_results = [
+        {
+            "is_speaking": True,
+            "spoken_ids": [speak, *tokenizer.encode_ordinary("继续")],
         },
         {
             "is_listen": True,

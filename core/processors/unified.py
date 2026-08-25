@@ -1436,6 +1436,9 @@ class _FcTextStreamState:
     pending_token_count: int = 0
     pending_token_ids: List[int] = field(default_factory=list)
     emitted_parts: List[str] = field(default_factory=list)
+    # A slot EOS is not enough to decide whether the spoken turn continues:
+    # the next Unit may open another ``speak`` slot on the same stream.
+    pending_slot_boundary: bool = False
 
 
 class FcDuplexView:
@@ -1675,6 +1678,8 @@ class FcDuplexView:
             stream_kind = start_keys[track].get(semantic_key)
             if stream_kind is not None:
                 if stream is not None:
+                    if track == "spoken" and stream.pending_slot_boundary:
+                        stream.pending_slot_boundary = False
                     if track != "spoken" or stream.kind != stream_kind:
                         raise RuntimeError(
                             f"FC {track} stream opened before previous stream closed: "
@@ -1695,10 +1700,20 @@ class FcDuplexView:
                         self._non_spoken_aggregate_kind = stream_kind
                     setattr(self, stream_attr, stream)
             if semantic_key == "listen" and self._spoken_text_stream is not None:
-                raise RuntimeError(
-                    "listen before spoken_turn_eos: "
-                    f"active_stream={self._spoken_text_stream.stream_id}"
-                )
+                spoken_stream = self._spoken_text_stream
+                if spoken_stream.pending_slot_boundary:
+                    warning = self._terminate_text_stream(
+                        track="spoken",
+                        reason="listen_after_slot_boundary",
+                    )
+                    if warning is not None:
+                        warnings.append(warning)
+                    stream = None
+                else:
+                    raise RuntimeError(
+                        "listen before spoken_turn_eos: "
+                        f"active_stream={spoken_stream.stream_id}"
+                    )
             stream_id = (
                 stream.stream_id
                 if stream is not None
@@ -1727,6 +1742,16 @@ class FcDuplexView:
                 if warning is not None:
                     warnings.append(warning)
                 stream = None
+            elif track == "spoken" and semantic_key in {
+                "spoken_slot_eos",
+                "tts_pad",
+            }:
+                if stream is None or stream.kind != "spoken":
+                    raise RuntimeError(
+                        f"FC spoken slot boundary without matching stream: "
+                        f"boundary={semantic_key}, active={getattr(stream, 'kind', None)}"
+                    )
+                stream.pending_slot_boundary = True
             if (
                 track == "non_spoken"
                 and semantic_key

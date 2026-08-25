@@ -301,6 +301,7 @@ def build_fc_duplex_resume_plan(
     maximum_stream_sequence = 0
     active_spoken_stream_id: str | None = None
     pending_spoken_slot_eos_stream_id: str | None = None
+    pending_spoken_slot_boundary_stream_id: str | None = None
     active_non_spoken_stream: tuple[str, str] | None = None
     pending_non_spoken_continuation_kind: str | None = None
     target_checkpoint: dict[str, Any] | None = None
@@ -635,15 +636,25 @@ def build_fc_duplex_resume_plan(
                                 "incomplete_event_history",
                                 "spoken continuation 改变了 stream_id",
                             )
+                        if pending_spoken_slot_boundary_stream_id == stream_id:
+                            pending_spoken_slot_boundary_stream_id = None
                     elif semantic_key == "listen":
-                        if (
-                            active_spoken_stream_id is not None
-                            or pending_spoken_slot_eos_stream_id is not None
-                        ):
+                        if pending_spoken_slot_eos_stream_id is not None:
                             raise _resume_error(
                                 "incomplete_event_history",
                                 "active spoken turn 在 turn_eos 前出现 listen",
                             )
+                        if active_spoken_stream_id is not None:
+                            if (
+                                pending_spoken_slot_boundary_stream_id
+                                != active_spoken_stream_id
+                            ):
+                                raise _resume_error(
+                                    "incomplete_event_history",
+                                    "active spoken turn 在 turn_eos 前出现 listen",
+                                )
+                            active_spoken_stream_id = None
+                            pending_spoken_slot_boundary_stream_id = None
                     elif semantic_key in {"spoken_slot_eos", "tts_pad"}:
                         if semantic_key == "spoken_slot_eos" and (
                             pending_spoken_slot_eos_stream_id == stream_id
@@ -654,6 +665,8 @@ def build_fc_duplex_resume_plan(
                                 "incomplete_event_history",
                                 f"{semantic_key} 没有匹配的 active spoken stream",
                             )
+                        else:
+                            pending_spoken_slot_boundary_stream_id = stream_id
                     elif semantic_key == "spoken_turn_eos":
                         if active_spoken_stream_id != stream_id:
                             raise _resume_error(
@@ -661,6 +674,7 @@ def build_fc_duplex_resume_plan(
                                 "spoken_turn_eos 没有匹配的 active stream",
                             )
                         active_spoken_stream_id = None
+                        pending_spoken_slot_boundary_stream_id = None
                         pending_spoken_slot_eos_stream_id = stream_id
                 else:
                     opener_kind = {
@@ -835,6 +849,7 @@ def build_fc_duplex_resume_plan(
     if (
         active_spoken_stream_id is not None
         or pending_spoken_slot_eos_stream_id is not None
+        or pending_spoken_slot_boundary_stream_id is not None
         or active_non_spoken_stream is not None
         or pending_non_spoken_continuation_kind is not None
     ):
@@ -1021,6 +1036,7 @@ def _build_fc_duplex_semantic_v2_resume_plan(
     active_tool_call_id: str | None = None
     tool_parts: list[str] = []
     spoken_turn_active = False
+    spoken_slot_boundary_pending = False
     spoken_parts: list[str] = []
     spoken_started_units: set[int] = set()
     history_unsafe = False
@@ -1358,6 +1374,7 @@ def _build_fc_duplex_semantic_v2_resume_plan(
                 )
                 spoken_started_units.add(unit_index)
                 spoken_turn_active = True
+                spoken_slot_boundary_pending = False
             if event.get("steps") is not None:
                 consume_text_steps(
                     unit_index=unit_index,
@@ -1371,17 +1388,21 @@ def _build_fc_duplex_semantic_v2_resume_plan(
             unit_index = require_active_unit(event)
             reason = str(event.get("reason") or "")
             if reason == "listen":
-                if spoken_turn_active:
+                if spoken_turn_active and not spoken_slot_boundary_pending:
                     raise _resume_error(
                         "incomplete_event_history",
                         "listen before spoken turn eos",
                     )
+                spoken_turn_active = False
+                spoken_slot_boundary_pending = False
                 append_token(
                     unit_index=unit_index,
                     track="spoken",
                     token_id=registry.get(O5SpecialTokenKey.LISTEN).token_id,
                 )
             elif reason == "tts_pad":
+                if spoken_turn_active:
+                    spoken_slot_boundary_pending = True
                 append_token(
                     unit_index=unit_index,
                     track="spoken",
@@ -1400,6 +1421,7 @@ def _build_fc_duplex_semantic_v2_resume_plan(
                     track="spoken",
                     token_id=registry.get(O5SpecialTokenKey.SPOKEN_SLOT_EOS).token_id,
                 )
+                spoken_slot_boundary_pending = True
             elif reason == "turn_eos":
                 if not spoken_turn_active:
                     raise _resume_error(
@@ -1422,6 +1444,7 @@ def _build_fc_duplex_semantic_v2_resume_plan(
                     token_id=registry.get(O5SpecialTokenKey.SPOKEN_SLOT_EOS).token_id,
                 )
                 spoken_turn_active = False
+                spoken_slot_boundary_pending = False
                 spoken_parts = []
                 pending_slots.pop("spoken", None)
             else:
@@ -1503,6 +1526,7 @@ def _build_fc_duplex_semantic_v2_resume_plan(
         active_think
         or active_tool_call_id is not None
         or spoken_turn_active
+        or spoken_slot_boundary_pending
         or pending_valid_tool_calls
         or pending_tool_started
         or pending_tool_error
