@@ -31,6 +31,12 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from core.processors.unified import FcDuplexView
+from core.fc_duplex.system_input import (
+    FcAudioPathInput,
+    FcSystemAudioInput,
+    FcSystemContentInput,
+    FcSystemTextInput,
+)
 from core.schemas.fc_duplex import FcDuplexConfig
 
 
@@ -104,6 +110,33 @@ def extract_ref_audio_path(structure: Dict[str, Any], data_root: Path) -> Option
         if path is not None and path.exists():
             return str(path)
     return None
+
+
+def build_v3_system_content(
+    structure: Dict[str, Any],
+    data_root: Path,
+    tools: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """Project the train-data system block into Semantic Realtime v3 wire data."""
+
+    segments: List[FcSystemTextInput | FcSystemAudioInput] = []
+    for raw_segment in structure.get("system", {}).get("segments", []) or []:
+        kind = raw_segment.get("kind")
+        if kind == "text":
+            segments.append(FcSystemTextInput(text=str(raw_segment.get("text", ""))))
+            continue
+        if kind != "audio":
+            raise ValueError(f"unsupported system segment kind: {kind!r}")
+        file_path = (raw_segment.get("audio") or {}).get("file_path")
+        resolved = resolve_media_path(data_root, file_path)
+        if resolved is None or not resolved.is_file():
+            raise FileNotFoundError(f"system reference audio is not readable: {resolved}")
+        segments.append(
+            FcSystemAudioInput(
+                audio=FcAudioPathInput(file_path=str(resolved.resolve(strict=True)))
+            )
+        )
+    return FcSystemContentInput(segments=segments, tools=tools).model_dump(mode="json")
 
 
 def extract_train_tool_call_ids(structure: Dict[str, Any]) -> List[str]:
@@ -205,13 +238,16 @@ def prepare_case(case_path: Path, *, normalize_tools: bool) -> Dict[str, Any]:
     budgets_listening, budgets_speaking = FcDuplexView._build_non_spoken_budget_lists_from_arrangement(arrangement)
     unit_sec = float(getattr(arrangement.unit_policy, "unit_sec", config.unit_sec))
     sample_rate = int(config.sample_rate)
+    tools = extract_tools(structure, normalize=normalize_tools)
+    ref_audio_path = extract_ref_audio_path(structure, data_root)
     return {
         "case": str(case_path),
         "data_root": str(data_root),
         "structure": structure,
         "system_prompt": extract_system_prompt(structure),
-        "tools": extract_tools(structure, normalize=normalize_tools),
-        "ref_audio_path": extract_ref_audio_path(structure, data_root),
+        "tools": tools,
+        "system": build_v3_system_content(structure, data_root, tools),
+        "ref_audio_path": ref_audio_path,
         "unit_sec": unit_sec,
         "sample_rate": sample_rate,
         "unit_chunks": [np.asarray(chunk, dtype=np.float32).reshape(-1) for chunk in unit_chunks],
@@ -328,11 +364,20 @@ async def run_probe(args: argparse.Namespace) -> Dict[str, Any]:
             "payload": {
                 "mode": "full_duplex",
                 "fc_duplex": True,
-                "system_prompt": prepared["system_prompt"],
-                "tools": prepared["tools"],
+                "protocol_version": "3",
+                "tokenizer_target": "o5",
+                "system": prepared["system"],
                 "generate_audio": bool(args.generate_audio),
-                "ref_audio_path": prepared["ref_audio_path"] if args.use_case_ref_audio else None,
-                "prompt_wav_path": prepared["ref_audio_path"] if args.use_case_ref_audio else None,
+                "tts_prompt_audio": (
+                    {"source": "path", "file_path": prepared["ref_audio_path"]}
+                    if args.generate_audio and args.use_case_ref_audio
+                    else None
+                ),
+                "unit_policy": prepared["structure"].get("unit_policy") or {
+                    "unit_sec": prepared["unit_sec"],
+                    "non_spoken_budgets_while_listening": prepared["budgets_listening"],
+                    "non_spoken_budgets_while_speaking": prepared["budgets_speaking"],
+                },
                 "config": config,
             },
         }
