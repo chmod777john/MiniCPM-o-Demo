@@ -13,6 +13,7 @@ OUT_DIR="${OUT_DIR:-/user/weihongliang/fc_align_enhance_fc_runs/${RUN_ID}}"
 TRACE_DIR="${TRACE_DIR:-${OUT_DIR}/trace_sessions}"
 REFERENCE_SESSION="${REFERENCE_SESSION:-}"
 REF_AUDIO_PATH="${REF_AUDIO_PATH:-}"
+GENERATE_AUDIO="${GENERATE_AUDIO:-1}"
 
 if [[ "${MODE}" != "single_eager" && "${MODE}" != "tp2" ]]; then
   echo "unsupported MODE=${MODE}; expected single_eager or tp2" >&2
@@ -23,7 +24,7 @@ mkdir -p "${OUT_DIR}" "${TRACE_DIR}" "${OUT_DIR}/service_logs"
 cd "${PROJECT_DIR}"
 export PROJECT_DIR VENV_DIR MODEL_PATH PT_PATH BACKBONE_DIR
 
-if [[ -z "${REF_AUDIO_PATH}" ]]; then
+if [[ "${GENERATE_AUDIO}" == "1" && -z "${REF_AUDIO_PATH}" ]]; then
   REF_AUDIO_PATH="$(${VENV_DIR}/bin/python - "${CASE_PATH}" <<'PY'
 import json
 import sys
@@ -49,7 +50,7 @@ else:
 PY
 )"
 fi
-if [[ ! -f "${REF_AUDIO_PATH}" ]]; then
+if [[ "${GENERATE_AUDIO}" == "1" && ! -f "${REF_AUDIO_PATH}" ]]; then
   echo "[fc-trace] reference audio is not readable: ${REF_AUDIO_PATH}" >&2
   exit 1
 fi
@@ -122,16 +123,26 @@ until curl -sf "http://127.0.0.1:${BACKEND_PORT}/health" >/dev/null 2>&1; do
   sleep 5
 done
 
+probe_args=(
+  --backend "http://127.0.0.1:${BACKEND_PORT}"
+  --path /backend
+  --case "${CASE_PATH}"
+  --out "${OUT_DIR}/probe.json"
+  --normalize-tools
+  --tool-response-schedule gt
+  --final-max-wait "${FINAL_MAX_WAIT:-300}"
+)
+if [[ "${GENERATE_AUDIO}" == "1" ]]; then
+  probe_args+=(--generate-audio)
+  if [[ -n "${REF_AUDIO_PATH}" ]]; then
+    probe_args+=(--ref-audio-path "${REF_AUDIO_PATH}")
+  else
+    probe_args+=(--use-case-ref-audio)
+  fi
+fi
+
 "${VENV_DIR}/bin/python" scripts/probe_fc_board_backend.py \
-  --backend "http://127.0.0.1:${BACKEND_PORT}" \
-  --path /backend \
-  --case "${CASE_PATH}" \
-  --out "${OUT_DIR}/probe.json" \
-  --normalize-tools \
-  --tool-response-schedule gt \
-  --final-max-wait "${FINAL_MAX_WAIT:-300}" \
-  --use-case-ref-audio \
-  --generate-audio
+  "${probe_args[@]}"
 
 latest_session="$(find "${TRACE_DIR}" -mindepth 1 -maxdepth 1 -type d -name 'sess_*' -printf '%T@ %p\n' | sort -n | tail -1 | cut -d' ' -f2-)"
 if [[ -n "${latest_session}" ]]; then

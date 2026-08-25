@@ -375,8 +375,12 @@ async def run_probe(args: argparse.Namespace) -> Dict[str, Any]:
                 "system": prepared["system"],
                 "generate_audio": bool(args.generate_audio),
                 "tts_prompt_audio": (
-                    {"source": "path", "file_path": prepared["ref_audio_path"]}
-                    if args.generate_audio and args.use_case_ref_audio
+                    {
+                        "source": "path",
+                        "file_path": args.ref_audio_path or prepared["ref_audio_path"],
+                    }
+                    if args.generate_audio
+                    and (args.ref_audio_path or prepared["ref_audio_path"])
                     else None
                 ),
                 "unit_policy": prepared["structure"].get("unit_policy") or {
@@ -523,6 +527,7 @@ async def run_probe(args: argparse.Namespace) -> Dict[str, Any]:
             "auto_delay_units": args.auto_delay_units,
             "generate_audio": args.generate_audio,
             "use_case_ref_audio": args.use_case_ref_audio,
+            "ref_audio_path": args.ref_audio_path or prepared["ref_audio_path"],
         },
     }
     return {"summary": summary, "events": events}
@@ -547,6 +552,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--final-max-wait", type=float, default=180.0)
     parser.add_argument("--generate-audio", action="store_true")
     parser.add_argument("--use-case-ref-audio", action="store_true")
+    parser.add_argument(
+        "--ref-audio-path",
+        help="Explicit TTS reference WAV; useful for cases without a system audio segment.",
+    )
     parser.add_argument("--dry-run", action="store_true")
     return parser.parse_args()
 
