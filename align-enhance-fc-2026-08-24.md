@@ -495,3 +495,29 @@ an API transport/parser failure. The O5 adapter intentionally keeps
 checkpoint defect and invalidate token/replay alignment. The next FC run uses
 the available Chenjinpeng FC-CE checkpoint to separate checkpoint behavior
 from the integrated runtime.
+
+## FC token-only startup warmup fix (2026-08-25)
+
+The first Chenjinpeng `000747` token-only tasks (`781300`, `781304`) were
+started from commit `951179d`. They reached the service launcher but failed
+before the probe because the generic service config supplied the relative
+default path `assets/ref_audio/ref_minicpm_signature.wav` to
+`FcAudioPathInput`, whose schema requires an absolute server-readable path.
+The token-only request itself did not need Token2Wav at all.
+
+Commit `04db2cb fix(fc): make token2wav startup warmup path-safe` addresses
+both sides of this boundary:
+
+- startup warmup resolves project-relative reference audio to an absolute path
+  and checks that it is a readable file before constructing the FC schema;
+- an audio-enabled run still fails early with the configured and resolved
+  paths when the reference file is invalid;
+- `run_fc_board_trace_replay_cctl_entry.sh` exports
+  `FC_DUPLEX_STARTUP_WARM=0` for `GENERATE_AUDIO=0`, so token-only replay does
+  not pay for or validate an unnecessary Token2Wav warmup;
+- focused FC runtime tests cover disabled warmup, relative-path resolution,
+  invalid audio failure, cache reuse, and protocol boundaries: `9 passed`.
+
+The two old tasks are intentionally not treated as valid results because they
+run commit `951179d`; they must be replaced by tasks from `04db2cb` before
+comparing FC output.
