@@ -286,6 +286,15 @@ async def drain_until_unit_done(ws: Any, handle_event: Any, *, unit_index: int, 
         raw = await asyncio.wait_for(ws.recv(), timeout=remaining)
         event = json.loads(raw)
         await handle_event(event)
+        if event.get("type") in {"error", "session.closed"}:
+            raise RuntimeError(
+                f"backend terminated while waiting for unit {unit_index}: {event}"
+            )
+        if (
+            event.get("type") == "response.unit.committed"
+            and int(event.get("unit_index", -1)) == unit_index
+        ):
+            return
         debug = event.get("debug") if event.get("type") == "response.debug" else None
         if isinstance(debug, dict) and debug.get("unit_index") == unit_index:
             return
