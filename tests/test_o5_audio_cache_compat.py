@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import torch
+from transformers import PretrainedConfig
 from transformers.cache_utils import DynamicCache, EncoderDecoderCache
 
 from modeling.o5.modeling_minicpmo import _audio_cache_length
+from tools.o5replay.loaders import _patch_canonical_attention_config
 
 
 def _dynamic_cache(length: int) -> DynamicCache:
@@ -23,3 +25,10 @@ def test_audio_cache_length_accepts_empty_and_encoder_decoder_cache():
 def test_audio_cache_length_keeps_legacy_tuple_compatibility():
     cache = ((torch.zeros(1, 2, 5, 4), torch.zeros(1, 2, 5, 4)),)
     assert _audio_cache_length(cache) == 5
+
+
+def test_canonical_attention_patch_exposes_private_field_to_constructor_copy():
+    config = PretrainedConfig()
+    _patch_canonical_attention_config(config, "eager")
+    assert config._attn_implementation == "eager"
+    assert config.to_dict()["_attn_implementation"] == "eager"

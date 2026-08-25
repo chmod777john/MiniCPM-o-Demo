@@ -39,6 +39,26 @@ def _cast_floating_parameters(module: torch.nn.Module, dtype: torch.dtype) -> No
             parameter.data = parameter.data.to(dtype=dtype)
 
 
+def _patch_canonical_attention_config(config: Any, implementation: str) -> None:
+    """Make the requested attention implementation visible to old canonical code.
+
+    The canonical constructor copies only ``config.to_dict()`` into its
+    independently-created Qwen config. Transformers omits private fields from
+    that dictionary, while the Qwen config exposes only the private field. A
+    per-instance ``to_dict`` wrapper preserves the canonical source tree and
+    makes this replay control explicit.
+    """
+    config._attn_implementation = implementation
+    original_to_dict = config.to_dict
+
+    def to_dict_with_attention(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        values = original_to_dict(*args, **kwargs)
+        values["_attn_implementation"] = implementation
+        return values
+
+    config.to_dict = to_dict_with_attention
+
+
 @dataclass
 class RuntimeAdapter:
     implementation: str
@@ -146,12 +166,7 @@ def load_canonical(args: Any, sampling: dict[str, Any]) -> RuntimeAdapter:
     processor_cls = importlib.import_module(f"{package_name}.processing_minicpmo").MiniCPMOProcessor
 
     config = config_cls.from_pretrained(root, local_files_only=True)
-    config._attn_implementation = args.attn_implementation
-    # MiniCPMO creates the Qwen text config independently from the outer
-    # multimodal config. The private Transformers field is omitted by
-    # ``to_dict()``, so expose the requested value through the public field
-    # copied by the canonical model constructor as well.
-    config.attn_implementation = args.attn_implementation
+    _patch_canonical_attention_config(config, args.attn_implementation)
     config._name_or_path = str(root)
     config.name_or_path = str(root)
     with init_empty_weights():
