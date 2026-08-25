@@ -4237,11 +4237,14 @@ class MiniCPMWhisperEncoderLayer(nn.Module):
             attention_mask=attention_mask,
             layer_head_mask=layer_head_mask,
             output_attentions=output_attentions,
-            past_key_value=past_key_values,
+            past_key_values=past_key_values,
         )
         hidden_states = attn_outputs[0]
         attn_weights = attn_outputs[1] if output_attentions and len(attn_outputs) > 1 else None
-        past_key_values = attn_outputs[-1] if use_cache and len(attn_outputs) > (2 if output_attentions else 1) else None
+        # Modern WhisperAttention updates EncoderDecoderCache in place and
+        # returns only (hidden_states, attention_weights). Do not treat the
+        # attention-weight tensor as a legacy cache tuple.
+        next_cache = past_key_values if use_cache else None
         hidden_states = nn.functional.dropout(hidden_states, p=self.dropout, training=self.training)
         hidden_states = residual + hidden_states
 
@@ -4265,7 +4268,7 @@ class MiniCPMWhisperEncoderLayer(nn.Module):
             outputs += (attn_weights,)
 
         if use_cache:
-            outputs += (past_key_values,)
+            outputs += (next_cache,)
 
         return outputs
 
