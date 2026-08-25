@@ -835,3 +835,57 @@ enabled at every stage, those reversals do not alter this run's TTS tokens or
 Token2Wav inputs. The next FC experiment should use the same case and setting
 with either no forcing or only LLM forcing to measure actual trajectory
 reversals; `vocoder_graph` remains outside this conclusion.
+
+## FC TP2 full acceleration with LLM forcing (task 783590, 2026-08-25)
+
+Task `783590` repeats the same short board case and acceleration profile, but
+changes the forcing policy to `O5_REPLAY_FORCING=llm`. The canonical/all-off
+LLM token trajectory is fixed; TTS autoregression, Token2Wav, and vocoder are
+free to run. This is the useful FC comparison for actual TTS trajectory
+reversals. The task used commit `c3d4983` (the report commit after the
+trace-flush fix), the `deploy` pool, two A100s, the reference `.venv-accel`,
+the same FC checkpoint/backbone/model path, and the same seed/greedy/32K
+cache configuration as task `783453`.
+
+Artifacts:
+
+- output: `/user/weihongliang/fc_align_enhance_fc_runs/fc-715753-tp2-fullaccel-llmforce-6755d5d-corrected-20260825`;
+- trace: `/user/weihongliang/fc_align_enhance_fc_runs/fc-715753-tp2-fullaccel-llmforce-6755d5d-corrected-20260825/trace_sessions/sess_940485583c84`;
+- comparison: `/user/weihongliang/fc_align_enhance_fc_runs/fc-715753-fc-alloff-vs-tp2-fullaccel-llmforce-6755d5d.json`.
+
+The task completed all `46/46` units. The candidate and all-off reference
+again have identical trace structure: `1405` events and `2664` tensor
+sidecars. Results:
+
+- LLM accepted tokens: `184/184` equal;
+- selected LLM tokens: `207/207` equal;
+- LLM local argmax: `206/207` equal, one unused local-argmax reversal at
+  `unit_013`, decode ordinal `11`;
+- TTS condition source token IDs and end-of-turn flags: `7/7` equal;
+- TTS forward-logit argmax: `178/182` equal, `4` reversals;
+- TTS sampled token IDs: `179/182` equal, `3` actual reversals;
+- TTS chunks: `5/7` token lists equal; the differing chunks are `unit_012`
+  and `unit_014`;
+- Token2Wav input token lists: `5/8` equal, with differences only caused by
+  those three TTS token substitutions; all eight input/committed/lookahead
+  and output ranges remain equal;
+- TTS condition cosine mean: `0.9999987`;
+- TTS forward-logit cosine mean: `0.999507`, total variation mean `0.02682`;
+- LLM decode-logit cosine mean: `0.996331`, total variation mean `0.01277`;
+- vocoder graph remained disabled, as required.
+
+The three actual TTS substitutions are:
+
+```text
+unit_012, TTS step 13: 1645 -> 1564
+unit_012, TTS step 14: 5650 -> 5651
+unit_014, TTS step 24: 4431 -> 4432
+```
+
+This is a small but real free-TTS divergence, not an artifact of the
+all-forced replay. It confirms that FC TP2 plus the selected acceleration
+profile preserves the LLM trajectory and produces only `3/182` TTS token
+reversals on this short reference case. The next scope is to test whether
+the same rate holds on another FC case and to separate the individual TTS
+graph/fast/batched-MM contributions only if this combined result is not
+sufficient for acceptance.
