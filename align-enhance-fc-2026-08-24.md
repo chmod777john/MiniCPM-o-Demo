@@ -218,3 +218,141 @@ the reserved 8-GPU SSH host is unreachable by SSH timeout. No GPU task or
 other user's process was changed. Once either approved resource path is
 available, the controlled single-eager run is the first required experiment;
 TP2 and acceleration runs remain downstream of that baseline.
+
+## Same-GPU demo repeat (2026-08-25)
+
+The corrected single-eager path was run twice in one process on the same GPU
+(`deploy` task `780344`). Both runs used the same input bundle, checkpoint,
+backbone, eager attention, eager experts, fixed FLA settings, and deterministic
+CUDA controls. Both completed all 8 units and returned the same text:
+`好的，没问题。`
+
+The replay comparison is:
+
+- 210/210 trace events paired;
+- all accepted LLM chunks and 16/16 LLM decode decisions equal;
+- all TTS sample decisions equal (44/44);
+- all TTS conditions, TTS chunks, and Token2Wav ranges equal;
+- all 8 per-unit PCM files and the combined audio file bitwise equal.
+
+This rules out ordinary run-to-run nondeterminism in the current demo path for
+this controlled case. The earlier canonical comparison was invalid because its
+reference bundle had no FLA overrides while the demo bundle used
+`32x8/16x8/128x128x8`; a matching canonical run was submitted as task `780365`.
+
+## Same-GPU canonical vs demo (2026-08-25)
+
+The corrected comparison was rerun sequentially on one A100 in deploy task
+`780462`: canonical first, then `demo-single`, with the same checkpoint,
+backbone, input bundle, fixed FLA settings, eager attention/experts, and all
+graph/fast/lmhead/batching accelerations disabled. The command used the shared
+`.venv-accel` Python executable and explicitly invoked `run_session.py` through
+Python.
+
+Artifacts:
+
+- Canonical:
+  `/user/weihongliang/o5_align_enhance_fc_exp_20260824/canonical-fixedfla-samegpu-c`
+- Demo:
+  `/user/weihongliang/o5_align_enhance_fc_exp_20260824/demo-single-fixedfla-samegpu-c`
+- Comparison:
+  `/user/weihongliang/o5_align_enhance_fc_exp_20260824/canonical-vs-demo-samegpu-c.json`
+
+The model-side result is fully aligned:
+
+- 213/213 trace events paired.
+- LLM accepted tokens: 8/8 equal.
+- LLM decode selected and local-argmax tokens: 17/17 equal.
+- LLM feed embeddings, hidden states, and logits: 86/86 entries bitwise equal.
+- LLM decode logits: 17/17 bitwise equal, with zero argmax reversals.
+- TTS chunks, conditions, hidden/logits, probabilities, and selected samples:
+  all entries equal (45/45 TTS samples).
+- Token2Wav input token IDs and committed/lookahead/output ranges: all equal.
+
+The only remaining difference is inside Token2Wav/vocoder execution:
+
+- `vocoder.state.rand_noise`: 1/1 tensor differs.
+- Token2Wav output PCM: 0/2 bitwise equal.
+- Per-unit audio: the first four listen units and final listen unit are
+  bitwise equal; the two spoken units differ, while their TTS tokens and
+  Token2Wav input ranges remain equal.
+- Combined audio has the same shape and duration but different PCM hashes.
+
+Therefore this experiment establishes that the current FC merge, in the
+single-card all-off path, is aligned with canonical through TTS token sampling
+and the complete Token2Wav input contract. The audio mismatch is a downstream
+vocoder random-noise initialization/consumption issue, not an LLM, TTS, TP2,
+or FC token-planning divergence. It must be isolated separately before using
+PCM equality as the acceptance criterion for later TP2/acceleration runs.
+
+## TP2 all-off replay (2026-08-25)
+
+The first valid TP2 replay was task `780602`. An earlier task used the
+`torchrun` shim from an old environment and was excluded; `780602` invoked
+`python -m torch.distributed.run` through the same `.venv-accel` environment
+used by the Canonical control. Its manifest records:
+
+- Demo commit: `329f44e1` (`align-enhance-fc`)
+- mode: `tp2`, two A100 ranks, `experts_implementation=eager`
+- attention: `eager`
+- LLM/TTS/vocoder graph, TTS fast, lmhead, vision fusion and vision batching:
+  all disabled
+- fixed FLA: `32x8`, `16x8`, `128x128x8`
+- deterministic CUDA controls enabled, greedy decode, seed `0`
+
+The comparison against
+`canonical-fixedfla-samegpu-c` is
+`/user/weihongliang/o5_align_enhance_fc_exp_20260824/canonical-vs-demo-tp2-alloff-fixedfla-accel.json`.
+Both bundles use the same input session, checkpoint, backbone and fixed-FLA
+settings. The result is not bitwise aligned:
+
+- LLM accepted chunks: `6/8` token-id lists equal.
+- LLM decode decisions: `10/15` equal; `5` local-argmax reversals.
+- The first accepted-token divergence is `unit_000004`.
+- LLM feed hidden/logits differ before that discrete divergence; feed embeddings
+  are identical for the common early calls and then differ when the previous
+  TP2 trajectory has diverged.
+- TTS samples: `1/42` equal among the common trace positions.
+- The TP2 run produced 8 units while Canonical produced 8 source units but the
+  event alignment reached only 7 common audio units after the trajectory split;
+  combined audio shapes were different (`167040` vs `185280` samples).
+
+This is the same class of TP2 eager numerical drift documented in the original
+speedup-tp2 work: the TP2 LLM hidden state differs from single-card eager even
+with all graph/fast switches off, and TTS autoregression amplifies that small
+continuous difference into token and unit-boundary changes. It is therefore not
+evidence of an FC merge regression. The result also confirms that the current
+FC branch has not yet reached strict Canonical/TP2 token alignment; the
+teacher-forced experiments below are needed to separate forward-distribution
+drift from downstream TTS effects.
+
+## TP2 full-acceleration replay deadlock root cause (2026-08-24)
+
+The first full-acceleration TP2 teacher-forced run was stopped after rank 1
+reported an NCCL `BROADCAST` timeout. The failure was in the replay harness,
+not in the checkpoint, scheduler, or graph capture:
+
+- `tools/o5replay/run_session.py` installs `DuplexTraceController` only on
+  rank 0; rank 1 enters the model-provided worker loop and does not execute
+  the high-level decoder sampling hooks.
+- `core/tracing/session_trace.py` nevertheless called
+  `torch.distributed.broadcast(selected)` from the rank-0-only forced LLM
+  decode hook.
+- Rank 1 therefore waited for the next graph/LLM command while rank 0 entered
+  an extra NCCL collective. This shifted the collective sequence and eventually
+  produced the observed `BROADCAST` timeout.
+
+The selected token does not need a separate collective. It is converted into
+the next decoder embedding on the driver, and that embedding is already
+broadcast by `DistributedTPLLM` in eager TP2 or by `LLMGraphRunner` in graph
+TP2. The extra broadcast was removed while retaining the `tp_driver` argument
+for call-site compatibility.
+
+Regression coverage in `tests/test_session_trace_replay.py` forces
+`tp_driver=True` and fails if the replay hook invokes any distributed
+`broadcast`; the focused test set passes in the shared `.venv-accel`:
+`2 passed, 18 deselected`.
+
+The next run is a narrow TP2 + LLM-graph replay with TTS graph disabled. A
+successful run will establish that graph command synchronization is restored
+before enabling the remaining TTS optimizations.

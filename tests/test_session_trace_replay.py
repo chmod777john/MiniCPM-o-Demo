@@ -243,6 +243,35 @@ def test_record_bundle_and_force_replay(tmp_path: Path):
     candidate_controller.uninstall()
 
 
+def test_tp2_driver_replay_does_not_add_rank_local_collective(monkeypatch):
+    reference = ReplayReference([{
+        "kind": "llm.decode",
+        "input_id": "unit-0",
+        "selected_token_id": 5,
+    }])
+
+    def unexpected_collective(*args, **kwargs):
+        raise AssertionError("driver-only replay must not issue a distributed collective")
+
+    monkeypatch.setattr(torch.distributed, "is_available", lambda: True)
+    monkeypatch.setattr(torch.distributed, "is_initialized", lambda: True)
+    monkeypatch.setattr(torch.distributed, "broadcast", unexpected_collective)
+
+    duplex = _FakeDuplex(favored_llm_token=9, favored_tts_token=6, condition_bias=8.0)
+    controller = DuplexTraceController(
+        capture_mode="replay",
+        reference=reference,
+        forcing=ForcingPolicy.parse("llm"),
+        tp_driver=True,
+    ).install(duplex)
+    try:
+        result, _events = _run(controller, duplex)
+    finally:
+        controller.uninstall()
+
+    assert result["text"] == "token-5"
+
+
 def test_session_manifest_keeps_deployment_settings(tmp_path: Path):
     bundle = tmp_path / "manifest"
     writer = SessionBundleWriter(

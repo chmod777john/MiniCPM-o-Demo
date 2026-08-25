@@ -602,8 +602,12 @@ class DuplexTraceController:
                     device=logits.device,
                     dtype=torch.long,
                 )
-                if trace.tp_driver and torch.distributed.is_available() and torch.distributed.is_initialized():
-                    torch.distributed.broadcast(selected, src=0)
+                # Replay hooks are installed only on the TP driver.  The worker
+                # rank stays inside the LLM/graph worker loop and therefore must
+                # not be made to participate in a driver-only sampling call.
+                # The selected token reaches the worker through the next
+                # decoder.feed embedding broadcast, which is already part of
+                # both the eager TP2 and graph TP2 contracts.
             else:
                 selected = original_decode(logits, *args, **kwargs)
             if trace._inside_llm_chunk:
