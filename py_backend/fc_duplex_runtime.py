@@ -1753,6 +1753,23 @@ def _validate_policy_budget_matches_scalar(
         )
 
 
+def _validate_unit_policy_execution_capacity(policy: O5UnitPolicy) -> None:
+    """Validate policy capacity across the SDK 0.0.5 and 0.0.5a1 APIs.
+
+    The FC runtime contract targets SDK 0.0.5, while the inference venv used
+    for the O5 FC checkpoint currently carries 0.0.5a1.  The latter performs
+    the schema checks through ``validate_unit_policy`` but does not expose the
+    newer ``validate_execution_capacity`` method.  Keep the newer check when
+    available and use the SDK's existing validator as the compatibility path.
+    """
+
+    validator = getattr(policy, "validate_execution_capacity", None)
+    if validator is None:
+        validator = getattr(policy, "validate_unit_policy", None)
+    if validator is not None:
+        validator()
+
+
 def _resolve_unit_policy(
     *,
     params: Dict[str, Any],
@@ -1898,7 +1915,7 @@ def _resolve_unit_policy(
         source_name="Checkpoint Profile",
     )
     try:
-        policy.validate_execution_capacity()
+        _validate_unit_policy_execution_capacity(policy)
     except ValueError as exc:
         raise RuntimeError(f"invalid fc_duplex unit_policy capacity: {exc}") from exc
     return policy
