@@ -42,9 +42,12 @@ export O5_DETERMINISTIC_REPLAY
 export O5_SESSION_SEED
 export O5_TTS_ARGMAX
 export O5_TOKEN_TRACE_DIR
-export TORCHRUN="${VENV_DIR}/bin/torchrun"
+# The old venv torchrun shim can resolve a different torch installation.  Leave
+# TORCHRUN unset so launch_tp2.sh uses this exact venv's distributed module.
+unset TORCHRUN
 
 PYTHON="${VENV_DIR}/bin/python"
+export PYTHON
 BACKEND_URL="http://${BACKEND_HOST}:${BACKEND_PORT}"
 WORKER_ENDPOINT="${WORKER_HOST}:${WORKER_PORT}"
 GATEWAY_REGISTRY_URL="http://127.0.0.1:${GATEWAY_INTERNAL_PORT}/internal/workers/${WORKER_ID}"
