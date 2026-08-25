@@ -169,10 +169,27 @@ def load_canonical(args: Any, sampling: dict[str, Any]) -> RuntimeAdapter:
     _patch_canonical_attention_config(config, args.attn_implementation)
     config._name_or_path = str(root)
     config.name_or_path = str(root)
+    # Reference checkpoints can carry O5 protocol tokens that are newer than
+    # the canonical code directory's base config.  Match the Demo loader's
+    # checkpoint-driven vocabulary sizing before constructing meta weights.
+    state = torch.load(args.ckpt_path, map_location="cpu", weights_only=True, mmap=True)
+    state_dict = _unwrap_state_dict(state)
+    embed_key = "llm.model.embed_tokens.weight"
+    checkpoint_embeddings = state_dict.get(embed_key)
+    if checkpoint_embeddings is not None:
+        checkpoint_vocab_size = int(checkpoint_embeddings.shape[0])
+        configured_vocab_size = int(getattr(config, "vocab_size", checkpoint_vocab_size))
+        if checkpoint_vocab_size != configured_vocab_size:
+            config.vocab_size = checkpoint_vocab_size
+            print(
+                "canonical checkpoint/config vocabulary mismatch: "
+                f"checkpoint={checkpoint_vocab_size}, config={configured_vocab_size}; "
+                "using checkpoint vocabulary",
+                flush=True,
+            )
     with init_empty_weights():
         model = modeling.MiniCPMO(config)
-    state = torch.load(args.ckpt_path, map_location="cpu", weights_only=True, mmap=True)
-    info = model.load_state_dict(_unwrap_state_dict(state), strict=False, assign=True)
+    info = model.load_state_dict(state_dict, strict=False, assign=True)
     del state
     _cast_floating_parameters(model, torch.bfloat16)
     model.eval().to(args.device)
