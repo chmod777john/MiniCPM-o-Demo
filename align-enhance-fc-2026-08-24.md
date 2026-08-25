@@ -457,3 +457,41 @@ the TTS graph is the more reproducible execution path. The graph-enabled run
 had `44/45` TTS sample decisions and 2 logits reversals. The remaining work is
 therefore to retain TTS graph in the production acceleration profile and
 validate the FC-specific replay path separately.
+
+## FC Board API v3 probe hardening (2026-08-25)
+
+The first FC Board trace attempt exposed a sequence of test-harness contract
+issues before model execution. They were fixed as separate commits:
+
+- `bffb5b8 fix(fc): pass case reference audio to backend`: derive the case's
+  absolute `HTRef06.wav` path and pass it to both single-card and TP2 backend
+  launchers, so FC Token2Wav warmup does not consume the relative config
+  fallback.
+- `cb33082 fix(fc-probe): send semantic v3 board init`: project the case's
+  ordered system text/audio segments and tools into the required Semantic
+  Realtime v3 payload, including `protocol_version="3"` and
+  `tts_prompt_audio`.
+- `ff2e8a8 fix(fc-probe): make unit policy authoritative`: remove the legacy
+  scalar budget from the v3 request when the case provides a complete
+  `unit_policy`.
+- `a8c1d93 fix(fc-probe): wait for committed unit events`: advance the probe
+  using the mandatory `response.unit.committed` event rather than optional
+  `response.debug` events.
+
+With these fixes, task `781170` loaded the model, warmed the FC path, accepted
+the v3 session, and entered actual generation. It then failed at the model's
+first non-spoken generation step:
+
+```text
+FC non_spoken ordinary token arrived before stream opener: 220
+```
+
+The checkpoint used there was `/user/weihongliang/o5_weights/iter_0001500_o5_with_tts.pt`.
+The same failure class is documented by inherited commits `84e9a31` and
+`ef7c33e`: an FC checkpoint can emit an ordinary token before `<think>`,
+`<tool_call>`, or `<no_action>`, which is a model protocol failure rather than
+an API transport/parser failure. The O5 adapter intentionally keeps
+`drops_unclassified_non_spoken_tokens=False`; relaxing that would hide a
+checkpoint defect and invalidate token/replay alignment. The next FC run uses
+the available Chenjinpeng FC-CE checkpoint to separate checkpoint behavior
+from the integrated runtime.
