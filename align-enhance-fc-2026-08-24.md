@@ -565,3 +565,273 @@ direct `listen` rejection, while retaining the existing cross-Unit
 `975a36e` and the Chenjinpeng `000747` token-only case; the previous tasks
 `781300` and `781304` remain invalid because they ran the pre-warmup-fix
 commit.
+
+## FC checkpoint all-off replay (task 781690, 2026-08-25)
+
+The corrected FC Board replay was run with the official FC model-path assets,
+the Chenjinpeng iter-500 checkpoint, and the materialized `000747` case:
+
+- model path: `/user/weihongliang/fc_align_enhance_fc_modelpaths/official-o5-fc-with-local-assets`
+- checkpoint: `/user/chenjinpeng/training/o5-duplex-fc-ce/inference/iter_0000500_seed0/iter_0000500_o5.pt`
+- mode: `single_eager`, one A100, `sdpa`, greedy, seed `0`, TTS argmax
+- all deployment acceleration flags disabled, token-only FC replay
+- code: `81a9aafa9ce6dd927065dbae077a6e87fc20ae69`
+- artifact: `/user/weihongliang/fc_align_enhance_fc_runs/fc-000747-official-modelpath-alloff-20260825-r10`
+
+The service loaded successfully and entered real FC generation. It reached
+Unit 3, then the checkpoint emitted ordinary token `98258` before a valid FC
+stream opener. The FC runtime correctly rejected it with:
+
+```text
+FC non_spoken ordinary token arrived before stream opener: 98258
+```
+
+This is the same checkpoint/protocol failure class previously seen with the
+other FC checkpoint, and it occurs with one-card all-off inference. It is
+therefore not evidence that TP2, LLM Graph, batched MM, or TTS acceleration
+caused this failure. The all-off run did not produce a completed FC trace, so
+it cannot be used as a completed token-alignment baseline for this case.
+
+## FC full-acceleration TP2 replay (task 781708, 2026-08-25)
+
+The same case, model path, checkpoint, deterministic settings, and token-only
+probe were then started with two A100s and every deployment optimization
+enabled:
+
+```text
+mode=tp2, O5_LLM_CACHE=32768
+experts=batched_mm
+llm_graph=1, tts_graph=1, vocoder_graph=1, tts_fast=1
+lmhead=1, fuse_vision_audio=1, vision_batch=1
+```
+
+Both ranks loaded and captured the LLM and vocoder graphs successfully. The
+first FC request then failed before producing a unit because `batched_mm`
+prefill attempted to allocate `15.26 GiB` while each A100 had only about
+`6.0 GiB` free (`~73.1 GiB` already in use). The task was `781708`; artifact:
+
+`/user/weihongliang/fc_align_enhance_fc_runs/fc-000747-tp2-fullaccel-20260825-r1`
+
+This is a capacity failure of the requested 32K StaticCache plus all graph
+and batched-MoE resources for this FC load shape. It is independent of the
+`98258` protocol failure observed by the one-card all-off run. A reduced-cache
+full-acceleration run is needed to test the FC runtime and replay behavior
+without changing the model or acceleration flags; that run is diagnostic only
+and does not establish 32K serving capacity.
+
+## FC replay SDK compatibility failure (tasks 781977, 2026-08-25)
+
+The first attempt to rerun the FC replay with the checkpoint's documented
+inference environment was task `781977`. It failed before model loading because
+the launcher still used the stale default model path
+`/user/weihongliang/MiniCP-o-4_6`, which does not exist in the deployment image.
+That was a launcher configuration error, not a model or runtime result.
+
+The corrected attempts used:
+
+- code: `a2fdbb9` on branch `align-enhance-fc`
+- SDK/runtime: `/user/chenjinpeng/.venvs/o5-fc-infer` (`minicpm-o5-sdk==0.0.5a1`)
+- model path: `/user/weihongliang/fc_align_enhance_fc_modelpaths/official-o5-fc-with-local-assets`
+- checkpoint: `/user/chenjinpeng/training/o5-duplex-fc-ce/inference/iter_0000500_seed0/iter_0000500_o5.pt`
+- O5 TP2 backbone: `/user/weihongliang/o5_backbones/job616069_iter0000500_hf`
+
+Both corrected tasks loaded the model and reached the first FC websocket
+request, but both then closed with:
+
+```text
+'O5UnitPolicy' object has no attribute 'validate_execution_capacity'
+```
+
+This is an FC runtime/SDK API mismatch. The semantic-v2 runtime introduced in
+`c08aeea` called a method from the newer SDK contract, while the documented
+Chenjinpeng venv's `0.0.5a1` exposes `validate_unit_policy()` instead. It is
+independent of TP2 and acceleration: it reproduced in both all-off task
+`782011` (single card) and all-acceleration task `782016` (two cards).
+
+The runtime compatibility fix is commit `a89708f`:
+
+- prefer `validate_execution_capacity()` when the installed SDK provides it;
+- fall back to the existing `validate_unit_policy()` validator on SDK `0.0.5a1`;
+- do not modify the shared SDK venv or the policy schema.
+
+## Reference-runtime SDK alignment (task 782213, 2026-08-25)
+
+The reference throughput task `715753` uses the shared project runtime:
+
+- Python: `/user/weihongliang/MiniCPM-o-Demo-wt-o5-inference-refactor-2026-06-30/.venv-accel/bin/python`
+- `minicpm-o5-sdk==0.0.5`
+- `torch==2.8.0+cu126`
+- `transformers==5.5.4`
+
+The installed environment was verified directly. It exposes both
+`O5UnitPolicy.validate_execution_capacity()` and
+`MiniCPMO5Tokenizer.is_ordinary_token_id()`. The previous FC replay attempts
+used `/user/chenjinpeng/.venvs/o5-fc-infer` with SDK `0.0.5a1`, so they were not
+runtime-comparable to task `715753`.
+
+Task `782213` reran the same FC all-off replay at commit `a89708f` with the
+reference `.venv-accel`, `single_eager`, SDPA, all acceleration flags disabled,
+and the same checkpoint/model-path/case/reference as the preceding attempts.
+The model loaded successfully and neither of the old SDK compatibility errors
+occurred. The run then stopped during replay forcing with:
+
+```text
+RuntimeError: reference exhausted: kind=llm.decode input_id=unit_000 index=2
+```
+
+The reference contains two `llm.decode` events for `unit_000`, while this
+runtime requested three. Its manifest reports 62 units and 327 LLM decode
+events. This is a reference/case scheduling mismatch and is not an SDK-load or
+model-capacity result; task `782213` must not be used as an all-off alignment
+verdict until the canonical reference is regenerated from the same execution
+contract.
+
+Validation before rerun: `34 passed` across FC runtime and checkpoint tests,
+Python compilation and `git diff --check` passed. The two failed tasks produced
+no alignment trace and are not evidence about FC or acceleration numerical
+alignment. They must be rerun at commit `a89708f`.
+
+## No-FC full acceleration with LLM teacher forcing (task 782343, 2026-08-25)
+
+This is the first valid no-FC acceleration gate after the single-card control
+and the TP2 all-off drift run. It used the reference task's model assets and
+runtime:
+
+- code: `a89708f` on branch `align-enhance-fc`;
+- pool: `deploy`, two A100 ranks, target `demo-tp2`;
+- Python: `/user/weihongliang/MiniCPM-o-Demo-wt-o5-inference-refactor-2026-06-30/.venv-accel/bin/python`;
+- SDK: `minicpm-o5-sdk==0.0.5`, PyTorch `2.8.0+cu126`;
+- checkpoint: `/user/weihongliang/o5_weights/chenmoye_minicpm_5o_moe_omni_long_context_sft_stage2_sft2_8k_audio_online_process_on_online_audio_process_v2_iter_100.pt`;
+- backbone: `/user/weihongliang/o5_weights/o5_backbone_hf_chenmoye_minicpm_5o_moe_omni_long_context_sft_stage2_sft2_8k_audio_online_process_on_online_audio_process_v2_iter_100`;
+- input: `/user/weihongliang/o5_replay_strategy_hd_input_8u_20260822_canonical_hd`;
+- canonical reference: `/user/weihongliang/o5_align_enhance_fc_exp_20260824/canonical-fixedfla-samegpu-c`.
+
+Acceleration settings were enabled for TP2, LLM Graph, TTS Graph, TTS fast,
+LM head, vision fusion, vision batching, and `batched_mm`. `vocoder_graph` was
+explicitly disabled. Attention was eager; FLA remained fixed at `32x8`,
+`16x8`, and `128x128x8`; cache length was 32768; seed was `0`; decoding was
+greedy and deterministic. The replay used `--forcing llm`: LLM decisions came
+from the canonical reference, while TTS autoregression remained free. This
+isolates TTS sensitivity from the already-known TP2 LLM continuous drift.
+
+Artifact:
+
+`/user/weihongliang/o5_align_enhance_fc_exp_20260824/demo-tp2-fullaccel-no-vocoder-llmforce-a89708f-ref715753`
+
+Comparison:
+
+`/user/weihongliang/o5_align_enhance_fc_exp_20260824/canonical-vs-demo-tp2-fullaccel-no-vocoder-llmforce.json`
+
+The run completed all 8 source units and produced 221 trace events. The
+canonical and demo traces share 213 events because the accelerated run has
+eight extra events after the TTS trajectory diverges. Results:
+
+- LLM accepted token lists: `8/8` equal.
+- LLM selected tokens and local argmax decisions: `17/17` equal.
+- LLM logits are numerically different, as expected for TP2 plus accelerated
+  execution, but have zero decode argmax reversals.
+- TTS conditions are close but not bitwise equal (`cosine_mean=0.999987`).
+- TTS forward-logit argmax: `43/45` equal, `2` reversals.
+- TTS sampled token IDs: `44/45` equal.
+- The first sampled-token divergence is `unit_000006`, TTS step `14`:
+  canonical selected `6561`, while TP2 selected `5838`.
+- The divergence adds four TTS tokens to that chunk, changing its Token2Wav
+  input range from `[25,45]` to `[25,49]` and its output from `23040` to
+  `26880` samples.
+- Six of seven common per-unit WAV files are shape-compatible; five are
+  bitwise equal. The combined duration changes from `167040` to `170880`
+  samples because of the extra TTS tokens.
+
+This passes the intended practical no-FC gate for the current workload: all
+LLM decisions remain aligned and the full acceleration profile without
+`vocoder_graph` has only two TTS argmax reversals out of 45 positions. It does
+not claim bitwise TTS or PCM equality. The remaining TTS difference is a
+near-boundary numerical sensitivity of the TP2/graph path, and is the correct
+baseline to carry into the FC comparison. `vocoder_graph` remains excluded
+from this conclusion as requested.
+
+## FC short-board all-off record (task 783188, 2026-08-25)
+
+To establish an FC-side reference with the same short case used by reference
+job `715753`, task `783188` ran this branch at commit `07ab0b7` with:
+
+- case: `/user/weihongliang/o5_fc_short_case_715753/case.json`;
+- model path: `/user/weihongliang/MiniCPM-o-4_6`;
+- checkpoint: `/user/sunweiyue/checkpoints/model_tunnel_moe_deploy/family_001_730-sft2-agent-duplex/treatment_004_vision12-agent6-tau3-ui2-mvp1-steps4000-decay2000/runs/job_672317/checkpoints/iter_0004000/model.pt`;
+- TP2 backbone: `/user/sunweiyue/checkpoints/model_tunnel_moe_deploy/family_001_730-sft2-agent-duplex/treatment_004_vision12-agent6-tau3-ui2-mvp1-steps4000-decay2000/runs/job_672317/checkpoints/iter_0004000/backbone`;
+- runtime: `/user/weihongliang/MiniCPM-o-Demo-wt-o5-inference-refactor-2026-06-30/.venv-accel/bin/python`;
+- one A100, `single_eager`, SDPA, greedy/seed 0/TTS argmax, all deployment
+  acceleration flags disabled, 32K cache;
+- artifact: `/user/weihongliang/fc_align_enhance_fc_runs/fc-715753-alloff-record-07ab0b7-20260825`;
+- trace: `/user/weihongliang/fc_align_enhance_fc_runs/fc-715753-alloff-record-07ab0b7-20260825/trace_sessions/sess_5cb7855e559a`.
+
+The service loaded successfully and completed all `46/46` units with `235`
+API trace events. It did not emit the case's expected
+`display_object_on_board` tool call, so the ground-truth tool response was not
+sent. This is not a service failure, but this artifact is not a complete
+tool-call behavior reference. It remains a valid deterministic all-off FC
+trace for the generated path before any tool-call branch; the difference
+between this result and the existing TP2 free run, which did emit a tool-call
+span, is itself recorded as a discrete behavior difference rather than being
+attributed to runtime failure.
+
+## FC TP2 full acceleration replay (task 783244, 2026-08-25)
+
+Task `783244` was submitted in `deploy` with the same short case, checkpoint,
+backbone, model path, runtime, seed, and 32K cache. It enables TP2,
+`batched_mm`, LLM Graph, TTS Graph, TTS fast, LM head, vision/audio fusion,
+and vision batching; `vocoder_graph` is explicitly disabled. The replay uses
+the all-off trace above with `O5_REPLAY_FORCING=all`, so the comparison is
+teacher-forced at every trace stage while still executing the accelerated
+model's forward path.
+
+## FC TP2 full acceleration replay, complete trace (task 783453, 2026-08-25)
+
+Task `783453` is the valid replacement for the earlier incomplete FC replay
+task `783244`. It ran commit `6755d5d` (`fix(fc): flush model traces at
+protocol unit boundaries`) in the `deploy` pool with the same 46-unit short
+board case and FC checkpoint as the all-off record. The runtime and assets
+were:
+
+- case: `/user/weihongliang/o5_fc_short_case_715753/case.json`;
+- model path: `/user/weihongliang/MiniCPM-o-4_6`;
+- checkpoint: `/user/sunweiyue/checkpoints/model_tunnel_moe_deploy/family_001_730-sft2-agent-duplex/treatment_004_vision12-agent6-tau3-ui2-mvp1-steps4000-decay2000/runs/job_672317/checkpoints/iter_0004000/model.pt`;
+- TP2 backbone: `/user/sunweiyue/checkpoints/model_tunnel_moe_deploy/family_001_730-sft2-agent-duplex/treatment_004_vision12-agent6-tau3-ui2-mvp1-steps4000-decay2000/runs/job_672317/checkpoints/iter_0004000/backbone`;
+- Python: `/user/weihongliang/MiniCPM-o-Demo-wt-o5-inference-refactor-2026-06-30/.venv-accel/bin/python`;
+- deployment: `tp2`, 32K LLM cache, seed `0`, greedy/TTS argmax;
+- acceleration: TP2, `batched_mm`, LLM Graph, TTS Graph, TTS fast, LM head,
+  vision/audio fusion, and vision batching enabled; `vocoder_graph` disabled;
+- forcing: `O5_REPLAY_FORCING=all`.
+
+Both sides completed the full trace with identical event structure:
+
+- all-off trace: `/user/weihongliang/fc_align_enhance_fc_runs/fc-715753-alloff-record-6755d5d-20260825/trace_sessions/sess_ec255bc2e4c6`;
+- TP2 trace: `/user/weihongliang/fc_align_enhance_fc_runs/fc-715753-tp2-fullaccel-forceall-6755d5d-20260825/trace_sessions/sess_986dbc8d0b03`;
+- comparison: `/user/weihongliang/fc_align_enhance_fc_runs/fc-715753-fc-alloff-vs-tp2-fullaccel-forceall-compare-6755d5d.json`.
+
+Each trace contains `1405` events and `2664` tensor sidecars; both manifests
+have `completed=true`. The alignment results are:
+
+- LLM accepted tokens: `184/184` equal;
+- selected LLM tokens under forcing: `207/207` equal;
+- TTS condition input IDs: `7/7` equal;
+- TTS sampled token IDs under forcing: `182/182` equal;
+- Token2Wav input IDs and all input/output ranges: `8/8` equal;
+- free local LLM argmax: `204/207` equal, `3` reversals;
+- free TTS forward-logit argmax: `181/182` equal, `1` reversal;
+- TTS conditions are numerically close but not bitwise equal
+  (`cosine_mean=0.9999988`);
+- TTS forward logits are also close (`cosine_mean=0.9999815`,
+  `tv_mean=0.00867`) but not bitwise equal;
+- LLM decode logits show the larger TP2/accelerated numerical drift
+  (`cosine_mean=0.99646`, `tv_mean=0.01110`), while the forced token path
+  remains identical.
+
+This confirms that FC can be teacher-forced and compared stage by stage on
+the current short board case. It does **not** claim free-running FC output is
+bitwise identical: the accelerated path changes continuous hidden/logit
+values and has a small number of local argmax reversals. Because forcing is
+enabled at every stage, those reversals do not alter this run's TTS tokens or
+Token2Wav inputs. The next FC experiment should use the same case and setting
+with either no forcing or only LLM forcing to measure actual trajectory
+reversals; `vocoder_graph` remains outside this conclusion.
