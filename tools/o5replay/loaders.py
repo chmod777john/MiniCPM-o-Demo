@@ -147,6 +147,11 @@ def load_canonical(args: Any, sampling: dict[str, Any]) -> RuntimeAdapter:
 
     config = config_cls.from_pretrained(root, local_files_only=True)
     config._attn_implementation = args.attn_implementation
+    # MiniCPMO creates the Qwen text config independently from the outer
+    # multimodal config. The private Transformers field is omitted by
+    # ``to_dict()``, so expose the requested value through the public field
+    # copied by the canonical model constructor as well.
+    config.attn_implementation = args.attn_implementation
     config._name_or_path = str(root)
     config.name_or_path = str(root)
     with init_empty_weights():

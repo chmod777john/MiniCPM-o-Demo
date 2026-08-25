@@ -146,6 +146,48 @@ def _dc_set_key(cache, i, tensor):
 
 def _dc_set_value(cache, i, tensor):
     cache.layers[i].values = tensor
+
+
+def _audio_cache_length(cache) -> int:
+    """Return the Whisper self-attention cache length across cache formats.
+
+    Recent Transformers returns an ``EncoderDecoderCache`` wrapping a
+    ``DynamicCache``. Older versions returned a legacy tuple. An allocated but
+    empty cache is equivalent to no history for this streaming path.
+    """
+    if cache is None:
+        return 0
+
+    if isinstance(cache, EncoderDecoderCache):
+        cache = cache.self_attention_cache
+
+    if isinstance(cache, DynamicCache):
+        if hasattr(cache, "layers"):
+            return int(_dc_seq_len(cache))
+        try:
+            return int(cache.get_seq_length())
+        except (AttributeError, IndexError, TypeError):
+            key_cache = getattr(cache, "key_cache", None)
+            if key_cache:
+                return int(key_cache[0].shape[-2])
+            return 0
+
+    if isinstance(cache, (tuple, list)):
+        if not cache:
+            return 0
+        first_layer = cache[0]
+        if isinstance(first_layer, (tuple, list)) and first_layer:
+            return int(first_layer[0].shape[-2])
+
+    get_seq_length = getattr(cache, "get_seq_length", None)
+    if callable(get_seq_length):
+        try:
+            return int(get_seq_length())
+        except (AttributeError, IndexError, TypeError):
+            return 0
+    return 0
+
+
 # === end compatibility helpers ===
 from transformers.generation.logits_process import TopKLogitsWarper
 from transformers.generation.logits_process import TopPLogitsWarper
@@ -701,7 +743,7 @@ class MiniCPMO(MiniCPMOPreTrainedModel):
 
             # whisper's past_key_values management (core)
             if self.audio_past_key_values is not None:
-                cache_length = self.audio_past_key_values[0][0].shape[2]
+                cache_length = _audio_cache_length(self.audio_past_key_values)
                 apm_max_len = self.apm.embed_positions.weight.shape[0]
                 if cache_length + max_seq_len >= apm_max_len:
                     logger.warning(
@@ -721,7 +763,7 @@ class MiniCPMO(MiniCPMOPreTrainedModel):
                 current_seq_len = current_seq_len - prefix_to_remove - suffix_to_remove
             # calculate history length (if there is KV cache)
             if self.audio_past_key_values is not None:
-                past_len = self.audio_past_key_values[0][0].shape[2]  # get history sequence length
+                past_len = _audio_cache_length(self.audio_past_key_values)
                 total_seq_len = past_len + current_seq_len
             else:
                 past_len = 0
