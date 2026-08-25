@@ -561,6 +561,8 @@ class FcDuplexSessionRuntime:
 
         unit_t0 = time.perf_counter()
         input_id = payload.get("input_id")
+        if hasattr(self.backend, "set_trace_unit_id"):
+            await asyncio.to_thread(self.backend.set_trace_unit_id, input_id)
         self._response_id = self._response_id or str(payload.get("response_id") or f"resp_{uuid.uuid4().hex[:12]}")
         audio_base64 = _extract_audio_base64(payload)
         self._next_input_event.clear()
@@ -662,6 +664,8 @@ class FcDuplexSessionRuntime:
             unit_index=unit_index,
             resume=resume_status,
         )
+        if hasattr(self.backend, "set_trace_unit_id"):
+            await asyncio.to_thread(self.backend.set_trace_unit_id, None)
 
     async def close(self) -> None:
         self._closed = True
