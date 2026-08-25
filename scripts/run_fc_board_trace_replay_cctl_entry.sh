@@ -12,6 +12,7 @@ RUN_ID="${RUN_ID:-fc-board-trace-${MODE}-$(date +%Y%m%d_%H%M%S)}"
 OUT_DIR="${OUT_DIR:-/user/weihongliang/fc_align_enhance_fc_runs/${RUN_ID}}"
 TRACE_DIR="${TRACE_DIR:-${OUT_DIR}/trace_sessions}"
 REFERENCE_SESSION="${REFERENCE_SESSION:-}"
+REF_AUDIO_PATH="${REF_AUDIO_PATH:-}"
 
 if [[ "${MODE}" != "single_eager" && "${MODE}" != "tp2" ]]; then
   echo "unsupported MODE=${MODE}; expected single_eager or tp2" >&2
@@ -21,6 +22,38 @@ fi
 mkdir -p "${OUT_DIR}" "${TRACE_DIR}" "${OUT_DIR}/service_logs"
 cd "${PROJECT_DIR}"
 export PROJECT_DIR VENV_DIR MODEL_PATH PT_PATH BACKBONE_DIR
+
+if [[ -z "${REF_AUDIO_PATH}" ]]; then
+  REF_AUDIO_PATH="$(${VENV_DIR}/bin/python - "${CASE_PATH}" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+case_path = Path(sys.argv[1]).expanduser()
+data = json.loads(case_path.read_text(encoding="utf-8"))
+for segment in data.get("system", {}).get("segments", []) or []:
+    if segment.get("kind") != "audio":
+        continue
+    file_path = (segment.get("audio") or {}).get("file_path")
+    if not file_path:
+        continue
+    candidate = Path(file_path)
+    if not candidate.is_absolute():
+        candidate = case_path.parent / candidate
+    candidate = candidate.resolve()
+    if candidate.is_file():
+        print(candidate)
+        break
+else:
+    raise SystemExit("no readable system reference audio found in CASE_PATH")
+PY
+)"
+fi
+if [[ ! -f "${REF_AUDIO_PATH}" ]]; then
+  echo "[fc-trace] reference audio is not readable: ${REF_AUDIO_PATH}" >&2
+  exit 1
+fi
+export REF_AUDIO_PATH
 export PYTHONPATH="${PROJECT_DIR}:${PYTHONPATH:-}"
 export TRANSFORMERS_OFFLINE=1 HF_HUB_OFFLINE=1 TOKENIZERS_PARALLELISM=false
 export O5_DEPLOY_MODE="${MODE}"
@@ -57,6 +90,7 @@ echo "[fc-trace] repo=${PROJECT_DIR}"
 echo "[fc-trace] commit=$(git rev-parse HEAD) branch=$(git branch --show-current)"
 echo "[fc-trace] python=${VENV_DIR}/bin/python mode=${MODE}"
 echo "[fc-trace] model=${MODEL_PATH} pt=${PT_PATH} backbone=${BACKBONE_DIR}"
+echo "[fc-trace] ref_audio=${REF_AUDIO_PATH}"
 echo "[fc-trace] case=${CASE_PATH} out=${OUT_DIR} trace=${TRACE_DIR}"
 echo "[fc-trace] flags experts=${O5_EXPERTS_IMPLEMENTATION} llm_graph=${O5_LLM_GRAPH} tts_graph=${O5_TTS_GRAPH} vocoder_graph=${O5_VOCODER_GRAPH} tts_fast=${O5_TTS_FAST} lmhead=${O5_LMHEAD} vision_batch=${O5_VISION_BATCH} forcing=${O5_REPLAY_FORCING}"
 

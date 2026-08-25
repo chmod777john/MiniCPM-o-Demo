@@ -29,6 +29,7 @@ CHECKPOINT_PROFILE_ID="${CHECKPOINT_PROFILE_ID:-unprofiled}"
 O5_DETERMINISTIC_REPLAY="${O5_DETERMINISTIC_REPLAY:-0}"
 O5_SESSION_SEED="${O5_SESSION_SEED:-0}"
 O5_TTS_ARGMAX="${O5_TTS_ARGMAX:-0}"
+REF_AUDIO_PATH="${REF_AUDIO_PATH:-}"
 
 mkdir -p "${LOG_DIR}"
 cd "${PROJECT_DIR}"
@@ -83,6 +84,7 @@ wait_http() {
 echo "[tp2-start] project=${PROJECT_DIR}"
 echo "[tp2-start] model=${MODEL_PATH}"
 echo "[tp2-start] pt=${PT_PATH}"
+echo "[tp2-start] ref_audio=${REF_AUDIO_PATH:-<model-default>}"
 echo "[tp2-start] token_trace_dir=${O5_TOKEN_TRACE_DIR}"
 echo "[tp2-start] backbone=${BACKBONE_DIR} llm_cache=${O5_LLM_CACHE} spmd_heartbeat=${O5_SPMD_HEARTBEAT_INTERVAL}"
 if [ "${GATEWAY_HTTPS}" = "1" ]; then
@@ -103,9 +105,18 @@ echo "[tp2-start] deterministic_replay=${O5_DETERMINISTIC_REPLAY} session_seed=$
 gateway_pid=$!
 wait_http "http://127.0.0.1:${GATEWAY_INTERNAL_PORT}/health" 120 "gateway-internal"
 
+backend_args=(
+    --host "${BACKEND_HOST}"
+    --port "${BACKEND_PORT}"
+    --model-path "${MODEL_PATH}"
+    --pt-path "${PT_PATH}"
+)
+if [ -n "${REF_AUDIO_PATH}" ]; then
+    backend_args+=(--ref-audio-path "${REF_AUDIO_PATH}")
+fi
+
 "${PROJECT_DIR}/core/deploy/launch_tp2.sh" \
-    --host "${BACKEND_HOST}" --port "${BACKEND_PORT}" \
-    --model-path "${MODEL_PATH}" --pt-path "${PT_PATH}" \
+    "${backend_args[@]}" \
     > "${LOG_DIR}/backend_tp2.log" 2>&1 &
 backend_pid=$!
 wait_http "${BACKEND_URL}/health" 1200 "backend-tp2"

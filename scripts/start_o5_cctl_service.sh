@@ -14,6 +14,7 @@ GATEWAY_HOST="${GATEWAY_HOST:-0.0.0.0}"
 GATEWAY_PORT="${GATEWAY_PORT:-8009}"
 GATEWAY_INTERNAL_PORT="${GATEWAY_INTERNAL_PORT:-8010}"
 GPU_ID="${GPU_ID:-0}"
+REF_AUDIO_PATH="${REF_AUDIO_PATH:-}"
 FC_MODEL_FAMILY="${FC_MODEL_FAMILY:-o5}"
 CHECKPOINT_PROFILE_ID="${CHECKPOINT_PROFILE_ID:-unprofiled}"
 
@@ -86,6 +87,7 @@ wait_http() {
 echo "[start] project=${PROJECT_DIR}"
 echo "[start] model=${MODEL_PATH}"
 echo "[start] pt=${PT_PATH}"
+echo "[start] ref_audio=${REF_AUDIO_PATH:-<model-default>}"
 echo "[start] token_trace_dir=${O5_TOKEN_TRACE_DIR}"
 echo "[start] gateway=https://${GATEWAY_HOST}:${GATEWAY_PORT} internal=:${GATEWAY_INTERNAL_PORT}"
 echo "[start] backend=${BACKEND_URL} worker=${WORKER_ENDPOINT}"
@@ -101,12 +103,19 @@ echo "[start] backend=${BACKEND_URL} worker=${WORKER_ENDPOINT}"
 gateway_pid=$!
 wait_http "http://127.0.0.1:${GATEWAY_INTERNAL_PORT}/health" 120 "gateway-internal"
 
+backend_args=(
+    --host "${BACKEND_HOST}"
+    --port "${BACKEND_PORT}"
+    --model-path "${MODEL_PATH}"
+    --pt-path "${PT_PATH}"
+    --gpu-id "${GPU_ID}"
+)
+if [ -n "${REF_AUDIO_PATH}" ]; then
+    backend_args+=(--ref-audio-path "${REF_AUDIO_PATH}")
+fi
+
 "${PYTHON}" -m py_backend.server \
-    --host "${BACKEND_HOST}" \
-    --port "${BACKEND_PORT}" \
-    --model-path "${MODEL_PATH}" \
-    --pt-path "${PT_PATH}" \
-    --gpu-id "${GPU_ID}" \
+    "${backend_args[@]}" \
     > "${LOG_DIR}/backend.log" 2>&1 &
 backend_pid=$!
 wait_http "${BACKEND_URL}/health" 900 "backend"
