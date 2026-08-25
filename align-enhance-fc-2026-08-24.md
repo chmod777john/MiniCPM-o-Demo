@@ -412,3 +412,28 @@ comparison remained structurally complete at 213/213 events:
 The forcing result means this run proves graph execution and replay lifecycle,
 not free-running TTS equivalence. The next experiment enables `vocoder_graph`
 as the only remaining acceleration switch before a no-forcing comparison.
+
+## TP2 all-acceleration free run (task 780921, 2026-08-24)
+
+The complete configuration (`llm_graph=1`, `tts_graph=1`, `tts_fast=1`,
+`lmhead=1`, `batched_mm`, vision fusion/batching, and `vocoder_graph=1`) was
+then run with `--forcing none` for 8 units on two A100s. It completed normally
+and produced the same text `好的，没问题。`.
+
+Against the Canonical reference:
+
+- all 17 LLM decode decisions and all 8 accepted LLM token lists matched;
+- LLM hidden/logits still showed the expected TP2 continuous drift;
+- TTS conditions were numerically different, as expected from the TP2 LLM
+  hidden state;
+- TTS sample decisions matched `44/45`; TTS logits had 2 local-argmax
+  reversals out of 45;
+- the first discrete divergence was therefore in the TTS autoregressive loop,
+  followed by a different final TTS chunk and audio length.
+
+Artifact:
+`/user/weihongliang/o5_align_enhance_fc_exp_20260824/demo-tp2-fullaccel-free/comparison.json`
+
+This does not establish that `tts_graph` caused both reversals: TP2 hidden
+drift alone can move a close TTS probability boundary. The paired free run
+with `tts_graph=0` is required to separate those causes.
