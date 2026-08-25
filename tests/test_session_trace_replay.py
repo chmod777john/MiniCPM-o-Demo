@@ -243,6 +243,31 @@ def test_record_bundle_and_force_replay(tmp_path: Path):
     candidate_controller.uninstall()
 
 
+def test_session_manifest_keeps_deployment_settings(tmp_path: Path):
+    bundle = tmp_path / "manifest"
+    writer = SessionBundleWriter(
+        bundle,
+        source_implementation="demo-single",
+        manifest_extra={
+            "deployment": {
+                "mode": "single_eager",
+                "experts_implementation": "eager",
+                "llm_graph": False,
+                "llm_cache": 32768,
+            }
+        },
+    )
+    writer.close()
+
+    manifest = json.loads((bundle / "trace_manifest.json").read_text())
+    assert manifest["deployment"] == {
+        "mode": "single_eager",
+        "experts_implementation": "eager",
+        "llm_graph": False,
+        "llm_cache": 32768,
+    }
+
+
 def test_replay_mode_captures_tts_hidden_and_raw_logits():
     torch.manual_seed(0)
     duplex = _FakeDuplex(favored_llm_token=5, favored_tts_token=3, condition_bias=1.5)

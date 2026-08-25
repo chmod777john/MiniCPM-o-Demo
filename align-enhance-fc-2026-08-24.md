@@ -177,3 +177,44 @@ implementation so this class of experiment-control error is visible.
 The corrected single-eager replay is pending. No TP2 or acceleration result
 will be treated as a baseline until this run is compared with the stable
 Canonical reference again.
+
+## Experiment-control audit (2026-08-25)
+
+The existing replay artifacts were compared locally with the repository's
+`tools/o5replay/compare.py` without starting another model process.
+
+- The two current `demo-single` layer-trace runs are self-consistent:
+  `demo-single-fixedfla-layer-trace-1u` and its repeat have 13/13 paired
+  events, all recorded LLM tensors bitwise equal, identical selected tokens,
+  and identical 24 kHz audio SHA256. This rules out ordinary repeat
+  nondeterminism caused solely by the layer hooks.
+- Comparing the current layer-trace demo against the current Canonical
+  reference shows equal feed embeddings but different hidden/logits from the
+  first feed. This is a path difference, not an input-session mismatch.
+- The current no-acceleration candidate
+  `demo-single-noaccel-fixedfla-sdpa-attn-fix` has 299/320 common events:
+  all 8 accepted LLM chunks and 24/24 LLM decode decisions match, while its
+  TTS sample decisions do not match the Canonical reference (79 compared
+  events, 0 equal). Its first four completed audio units were identical only
+  because the TTS path had not diverged yet; the candidate then produced a
+  different unit count/audio length.
+- The older precision matrix contains a genuinely aligned single-card
+  all-off run (`demo-single-current-local-alloff-free-8u`): 93/93 LLM feed
+  hidden tensors, 24/24 decode decisions, and 75/75 TTS samples matched the
+  Canonical reference. That artifact predates this FC worktree's latest
+  loader/config changes and has no complete deployment manifest, so it is a
+  reference for the target behavior, not proof that the current command is
+  equivalent.
+
+The controlled next run must therefore explicitly set and record:
+`single_eager`, `experts_implementation=eager`, `attn_implementation=auto`
+(which resolves to SDPA in the shared environment), all graph/fast/batched
+flags off, float-buffer preservation on, and the fixed FLA settings. The replay
+manifest now records these deployment settings and the CUDA runtime facts so
+the result cannot be misclassified from a directory name alone.
+
+At this point the cctl API is still returning HTTP 503 for pool queries, and
+the reserved 8-GPU SSH host is unreachable by SSH timeout. No GPU task or
+other user's process was changed. Once either approved resource path is
+available, the controlled single-eager run is the first required experiment;
+TP2 and acceleration runs remain downstream of that baseline.

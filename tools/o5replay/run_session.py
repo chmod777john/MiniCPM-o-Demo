@@ -244,6 +244,27 @@ def run(args: argparse.Namespace) -> int:
             "model_path": str(Path(args.model_path).resolve()),
             "backbone_dir": str(Path(args.backbone_dir).resolve()),
             "runtime_environment": runtime_environment,
+            # Keep the actual deployment knobs beside the tensors.  A replay
+            # directory must be self-describing: "noaccel" in a folder name
+            # is not enough to distinguish eager experts from batched-MM or a
+            # graph-disabled single-opt build.
+            "deployment": {
+                "mode": "canonical" if args.target == "canonical" else (
+                    "tp2" if args.target == "demo-tp2" else args.demo_single_mode
+                ),
+                "experts_implementation": args.experts_implementation,
+                "llm_cache": args.llm_cache,
+                "llm_graph": args.llm_graph,
+                "tts_graph": args.tts_graph,
+                "vocoder_graph": args.vocoder_graph,
+                "tts_fast": args.tts_fast,
+                "lmhead": args.lmhead,
+                "fuse_vision_audio": args.fuse_vision_audio,
+                "batch_vision_feed": args.batch_vision_feed,
+                "preserve_float_buffers": os.environ.get(
+                    "O5_PRESERVE_FLOAT_BUFFERS", "1"
+                ).lower() not in {"0", "false", "no", "off"},
+            },
             "sampling": sampling,
             "fla": {
                 "fused_norm": args.fla_fused_norm_config,
