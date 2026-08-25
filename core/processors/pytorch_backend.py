@@ -201,6 +201,7 @@ class PyTorchBackend:
         if model is None or duplex is None:
             logger.warning("O5_TOKEN_TRACE_PATH set but duplex model is unavailable")
             return
+        fc_duplex = getattr(model, "fc_duplex", None)
 
         from core.tracing import (
             DuplexTraceController,
@@ -224,7 +225,7 @@ class PyTorchBackend:
             forcing=forcing,
             tp_driver=self.spmd_is_driver,
             capture_layers=os.environ.get("O5_CAPTURE_LAYERS", "0").lower() in {"1", "true", "yes", "on"},
-        ).install(duplex)
+        ).install(duplex, fc_duplex=fc_duplex)
         target = self._token_trace_path if self._token_trace_path is not None else f"{self._token_trace_dir}/<session>"
         logger.info(
             "[GPU %s] Session trace enabled: target=%s mode=%s forcing=%s reference=%s",

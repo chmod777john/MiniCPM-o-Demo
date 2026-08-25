@@ -147,6 +147,43 @@ class _FakeDuplex:
         }
 
 
+class _FakeFcCapability:
+    """Minimal FC capability: a separate decoder and direct ``_sample`` call."""
+
+    def __init__(self, *, favored_llm_token: int, decoder: _FakeDecoder):
+        self.decoder = decoder
+        self.favored_llm_token = favored_llm_token
+
+    def _sample(self, logits, mode):
+        del mode
+        return int(torch.argmax(logits[0]).item())
+
+    def _tts_condition(self, results):
+        return torch.zeros((1, len(results) + 1, 4), dtype=torch.float32)
+
+    def _spoken_audio(self, *args, **kwargs):
+        del args, kwargs
+        return {}
+
+    def streaming_spoken_generate(self, max_tokens=24, decode_mode="greedy"):
+        del max_tokens
+        logits = torch.zeros((1, 16), dtype=torch.float32)
+        logits[:, self.favored_llm_token] = 10
+        token_id = self._sample(logits, decode_mode)
+        self.decoder.feed(torch.full((1, 16), float(token_id)), return_logits=True)
+        return {
+            "spoken_ids": [token_id],
+            "spoken_text": f"token-{token_id}",
+            "text": f"token-{token_id}",
+            "is_listen": False,
+            "spoken_turn_eos": False,
+        }
+
+    def streaming_non_spoken_generate(self, max_tokens=1, decode_mode="greedy", close_reason=None):
+        del max_tokens, decode_mode, close_reason
+        return {"token_ids": [], "text": ""}
+
+
 def _run(controller: DuplexTraceController, duplex: _FakeDuplex, input_id: str = "unit-0"):
     controller.set_session("session-1")
     session_events = controller.drain()
@@ -270,6 +307,35 @@ def test_tp2_driver_replay_does_not_add_rank_local_collective(monkeypatch):
         controller.uninstall()
 
     assert result["text"] == "token-5"
+
+
+def test_fc_capability_replay_patches_direct_sample_and_decoder_feed():
+    reference = ReplayReference([{
+        "kind": "llm.decode",
+        "input_id": "unit-0",
+        "selected_token_id": 7,
+    }])
+    duplex = _FakeDuplex(favored_llm_token=5, favored_tts_token=3, condition_bias=1.5)
+    fc = _FakeFcCapability(favored_llm_token=9, decoder=_FakeDecoder())
+    controller = DuplexTraceController(
+        capture_mode="replay",
+        reference=reference,
+        forcing=ForcingPolicy.parse("llm"),
+    ).install(duplex, fc_duplex=fc)
+    try:
+        controller.set_session("session-1")
+        controller.set_unit("unit-0", 0)
+        result = fc.streaming_spoken_generate()
+        events = controller.drain("unit-0")
+    finally:
+        controller.uninstall()
+
+    assert result["spoken_ids"] == [7]
+    assert [event["selected_token_id"] for event in events if event["kind"] == "llm.decode"] == [7]
+    assert [event["token_ids"] for event in events if event["kind"] == "llm.accepted"] == [[7]]
+    feed_events = [event for event in events if event["kind"] == "llm.feed"]
+    assert len(feed_events) == 1
+    assert feed_events[0]["hidden"]["shape"] == [1, 1, 16]
 
 
 def test_session_manifest_keeps_deployment_settings(tmp_path: Path):

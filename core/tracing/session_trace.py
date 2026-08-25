@@ -449,6 +449,7 @@ class DuplexTraceController:
         self._vocoder_forced = False
         self._t2w_token_pos = 0
         self._t2w_sample_pos = 0
+        self._active_token2wav_owner: Any = None
         self._installed = False
         self._layer_modules: list[Any] = []
         self._layer_hooks: list[Any] = []
@@ -545,7 +546,7 @@ class DuplexTraceController:
             f"layer trace incomplete: expected={len(self._layer_modules)} available={available}"
         )
 
-    def install(self, duplex: Any) -> "DuplexTraceController":
+    def install(self, duplex: Any, *, fc_duplex: Any = None) -> "DuplexTraceController":
         if self._installed:
             raise RuntimeError("trace controller is already installed")
         self._installed = True
@@ -555,7 +556,191 @@ class DuplexTraceController:
         self._install_tts(duplex)
         self._install_token2wav(duplex)
         self._capture_or_force_vocoder(duplex)
+        if fc_duplex is not None:
+            self._install_fc(fc_duplex)
         return self
+
+    def _install_fc(self, fc_duplex: Any) -> None:
+        """Patch the O5 FC capability's separate LLM/condition boundary.
+
+        FC owns a second ``StreamDecoder`` and samples through ``_sample``
+        directly, so the normal Duplex hooks cannot observe or force this
+        path. TTS and Token2Wav remain shared model modules and are already
+        installed by ``_install_tts``/``_install_token2wav`` above.
+        """
+
+        self._install_fc_llm(fc_duplex)
+        self._install_fc_condition(fc_duplex)
+        self._install_fc_token2wav_owner(fc_duplex)
+
+    def _install_fc_llm(self, fc_duplex: Any) -> None:
+        decoder = fc_duplex.decoder
+        detailed = self.capture_mode == "replay"
+        original_feed = self._save_original(decoder, "feed") if detailed else None
+        original_sample = self._save_original(fc_duplex, "_sample")
+        original_spoken = self._save_original(fc_duplex, "streaming_spoken_generate")
+        original_non_spoken = self._save_original(
+            fc_duplex, "streaming_non_spoken_generate"
+        )
+        trace = self
+
+        def traced_feed(decoder_self, embeds, return_logits=False):
+            cache_before = (
+                int(decoder_self.get_cache_length())
+                if hasattr(decoder_self, "get_cache_length")
+                else None
+            )
+            trace._layer_outputs.clear()
+            result = original_feed(embeds, return_logits=True)
+            if result is None:
+                raise RuntimeError("FC decoder.feed(return_logits=True) returned no result")
+            logits, hidden = result
+            event: dict[str, Any] = {
+                "requested_return_logits": bool(return_logits),
+                "cache_before": cache_before,
+                "cache_after": (
+                    int(decoder_self.get_cache_length())
+                    if hasattr(decoder_self, "get_cache_length")
+                    else None
+                ),
+                "embeds": _tensor_meta(embeds, keep_value=True),
+                "hidden": _tensor_meta(hidden, keep_value=True),
+                "logits": _tensor_meta(logits, keep_value=True),
+            }
+            if trace.capture_layers:
+                layers, source = trace._consume_layer_outputs(decoder_self)
+                event["layer_source"] = source
+                event["layers"] = [_tensor_meta(layer, keep_value=True) for layer in layers]
+            trace._emit("llm.feed", **event)
+            return (logits, hidden) if return_logits else None
+
+        def traced_sample(fc_self, logits, mode):
+            forced = trace.forcing.llm_tokens
+            local_argmax = int(logits.detach().reshape(-1).argmax().item())
+            if forced:
+                if trace.reference is None:
+                    raise RuntimeError("LLM forcing requested without a replay reference")
+                selected = int(trace.reference.next_llm_token(trace.input_id))
+            else:
+                selected = int(original_sample(logits, mode))
+            if trace._inside_llm_chunk:
+                trace._active_llm_sample_ids.append(selected)
+            if detailed:
+                trace._emit(
+                    "llm.decode",
+                    selected_token_id=selected,
+                    local_argmax_token_id=local_argmax,
+                    teacher_forced=forced,
+                    logits=_tensor_meta(logits, keep_value=True),
+                )
+            return selected
+
+        def run_generation(original, *, spoken: bool, owner, args, kwargs):
+            trace._active_llm_sample_ids = []
+            trace._inside_llm_chunk = True
+            try:
+                result = original(*args, **kwargs)
+            finally:
+                trace._inside_llm_chunk = False
+            if spoken:
+                token_ids = list(result.get("spoken_ids") or [])
+                text = str(result.get("text") or "")
+                is_listen = bool(result.get("is_listen", False))
+                end_of_turn = bool(result.get("spoken_turn_eos", False))
+            else:
+                token_ids = list(result.get("token_ids") or [])
+                text = str(result.get("text") or "")
+                is_listen = False
+                end_of_turn = False
+            fields: dict[str, Any] = {
+                "token_ids": [int(item) for item in token_ids],
+                "sampled_token_ids": list(trace._active_llm_sample_ids),
+                "is_listen": is_listen,
+                "end_of_turn": end_of_turn,
+            }
+            if detailed:
+                fields["text"] = text
+            trace._emit("llm.accepted", **fields)
+            if end_of_turn:
+                trace.turn_id += 1
+            return result
+
+        def traced_spoken(owner, *args, **kwargs):
+            return run_generation(
+                original_spoken,
+                spoken=True,
+                owner=owner,
+                args=args,
+                kwargs=kwargs,
+            )
+
+        def traced_non_spoken(owner, *args, **kwargs):
+            return run_generation(
+                original_non_spoken,
+                spoken=False,
+                owner=owner,
+                args=args,
+                kwargs=kwargs,
+            )
+
+        if original_feed is not None:
+            decoder.feed = types.MethodType(traced_feed, decoder)
+        fc_duplex._sample = types.MethodType(traced_sample, fc_duplex)
+        fc_duplex.streaming_spoken_generate = types.MethodType(traced_spoken, fc_duplex)
+        fc_duplex.streaming_non_spoken_generate = types.MethodType(
+            traced_non_spoken, fc_duplex
+        )
+
+    def _install_fc_condition(self, fc_duplex: Any) -> None:
+        original_condition = self._save_original(fc_duplex, "_tts_condition")
+        trace = self
+
+        def traced_condition(fc_self, results):
+            actual = original_condition(results)
+            used = actual
+            source_ids = [int(item[0]) for item in results]
+            source_end_of_turn = [bool(item[2]) for item in results]
+            trace._pending_tts_source_ids = source_ids
+            trace._pending_tts_end_of_turn = source_end_of_turn
+            forced = trace.forcing.tts_condition
+            if forced:
+                if trace.reference is None:
+                    raise RuntimeError("TTS condition forcing requested without a replay reference")
+                used = trace.reference.next_condition(trace.input_id).to(
+                    device=actual.device,
+                    dtype=actual.dtype,
+                )
+                if used.shape != actual.shape:
+                    raise RuntimeError(
+                        "reference TTS condition shape mismatch: "
+                        f"reference={tuple(used.shape)} actual={tuple(actual.shape)}"
+                    )
+            if trace.capture_mode == "replay":
+                trace._emit(
+                    "tts.condition",
+                    llm_token_ids=source_ids,
+                    end_of_turn=source_end_of_turn,
+                    actual_condition=_tensor_meta(actual, keep_value=True),
+                    used_condition=_tensor_meta(used, keep_value=True),
+                    teacher_forced=forced,
+                )
+            return used
+
+        fc_duplex._tts_condition = types.MethodType(traced_condition, fc_duplex)
+
+    def _install_fc_token2wav_owner(self, fc_duplex: Any) -> None:
+        original_spoken_audio = self._save_original(fc_duplex, "_spoken_audio")
+        trace = self
+
+        def traced_spoken_audio(fc_self, *args, **kwargs):
+            previous = trace._active_token2wav_owner
+            trace._active_token2wav_owner = fc_self
+            try:
+                return original_spoken_audio(*args, **kwargs)
+            finally:
+                trace._active_token2wav_owner = previous
+
+        fc_duplex._spoken_audio = types.MethodType(traced_spoken_audio, fc_duplex)
 
     def _install_llm(self, duplex: Any) -> None:
         decoder = duplex.decoder
@@ -853,7 +1038,8 @@ class DuplexTraceController:
         def traced_stream(tokenizer_self, tokens, *args, **kwargs):
             token_ids = _flat_ints(tokens)
             last_chunk = bool(kwargs.get("last_chunk", False))
-            prelook = int(getattr(duplex, "pre_lookahead", 0) or 0)
+            owner = trace._active_token2wav_owner or duplex
+            prelook = int(getattr(owner, "pre_lookahead", 0) or 0)
             committed = len(token_ids) if last_chunk else max(0, len(token_ids) - prelook)
             token_start = trace._t2w_token_pos
             state_before = None
