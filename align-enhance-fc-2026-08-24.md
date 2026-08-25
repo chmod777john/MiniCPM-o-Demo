@@ -521,3 +521,47 @@ both sides of this boundary:
 The two old tasks are intentionally not treated as valid results because they
 run commit `951179d`; they must be replaced by tasks from `04db2cb` before
 comparing FC output.
+
+## FC spoken slot boundary fix (2026-08-25)
+
+The official Chenjinpeng `000747` trajectory showed a protocol pattern that
+the integrated FC View rejected:
+
+```text
+Unit N:   <speak> ordinary spoken tokens <spoken_slot_eos>
+Unit N+1: <listen>
+```
+
+The existing `FcDuplexView._decode_generation_steps()` kept the spoken text
+decoder alive after every `spoken_slot_eos` and treated any later `listen` as
+`listen before spoken_turn_eos`. That interpretation is too strict for the
+actual O5 FC checkpoint, where a slot boundary can be the end of the current
+spoken response if the next Unit listens, while repeated `speak` opens a
+continuation on the same stream. `tts_pad` has the same lazy-boundary behavior.
+
+Commit `975a36e fix(fc): accept listen after spoken slot boundary` fixes this
+without dropping cross-Unit BPE state:
+
+- `spoken_slot_eos` and `tts_pad` mark a pending slot boundary but do not
+  destroy the decoder immediately;
+- a following `speak` clears that marker and reuses the same stream;
+- a following `listen` closes the pending spoken stream before accepting the
+  listen token;
+- `listen` without either a pending slot boundary or `spoken_turn_eos` still
+  raises the protocol error;
+- both legacy and semantic-v2 stateless resume validators use the same state
+  transition.
+
+Verification on the shared accel venv:
+
+```text
+py_compile: passed
+focused FC tests: 54 passed
+```
+
+The regression tests cover both `spoken_slot_eos -> listen` acceptance and
+direct `listen` rejection, while retaining the existing cross-Unit
+`spoken_slot_eos -> speak` BPE test. The next cctl run must use commit
+`975a36e` and the Chenjinpeng `000747` token-only case; the previous tasks
+`781300` and `781304` remain invalid because they ran the pre-warmup-fix
+commit.
