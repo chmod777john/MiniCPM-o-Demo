@@ -117,6 +117,7 @@ import importlib
 import numpy as np
 import torch
 
+from o5_paths import resolve_artifacts
 from core.capabilities import ProcessorMode
 from core.fc_duplex.model_adapter import (
     FcDuplexModelAdapter,
