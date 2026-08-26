@@ -6,6 +6,7 @@ llm_cache_len (tp2/opt graph StaticCache width), duplex_config (optional overrid
 from __future__ import annotations
 import os
 import logging
+from pathlib import Path
 from typing import Any, Dict
 
 import torch
@@ -75,9 +76,38 @@ def _load_o5_processor(assets_dir: str):
 
     if not assets_dir:
         raise FileNotFoundError("O5 processor assets are required; set O5_ASSETS_DIR")
-    image_processor = MiniCPMVImageProcessor.from_pretrained(assets_dir)
-    audio_processor = MiniCPMAAudioProcessor.from_pretrained(assets_dir)
-    tokenizer = MiniCPMOTokenizerFast.from_pretrained(assets_dir)
+
+    # Token2Wav assets and HF processor metadata are intentionally separate:
+    # the published runtime asset directory contains ``token2wav/`` only.
+    processor_candidates = [
+        Path(assets_dir),
+        Path(os.environ["O5_PROCESSOR_DIR"])
+        if os.environ.get("O5_PROCESSOR_DIR")
+        else None,
+        Path(os.environ["MODEL_PATH"]) if os.environ.get("MODEL_PATH") else None,
+        Path("/user/weihongliang/MiniCPM-o-4_6"),
+    ]
+    processor_dir = next(
+        (
+            candidate
+            for candidate in processor_candidates
+            if candidate is not None
+            and (candidate / "preprocessor_config.json").is_file()
+            and (
+                (candidate / "tokenizer.json").is_file()
+                or (candidate / "tokenizer_config.json").is_file()
+            )
+        ),
+        None,
+    )
+    if processor_dir is None:
+        raise FileNotFoundError(
+            "O5 processor metadata is required; checked assets_dir, "
+            "O5_PROCESSOR_DIR, MODEL_PATH, and the shared model metadata path"
+        )
+    image_processor = MiniCPMVImageProcessor.from_pretrained(str(processor_dir))
+    audio_processor = MiniCPMAAudioProcessor.from_pretrained(str(processor_dir))
+    tokenizer = MiniCPMOTokenizerFast.from_pretrained(str(processor_dir))
     return MiniCPMOProcessor(
         image_processor=image_processor,
         audio_processor=audio_processor,
