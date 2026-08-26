@@ -39,6 +39,18 @@ The original FC and speedup worktrees are not modified by this worktree.
 - Focused FC tests: 52 passed in the existing accel venv. GPU alignment runs
   are still pending; use `agent-dev` first and `agent-train` only when needed.
 
+## Current integration state (2026-08-26)
+
+- Merge completed at `c22f9a8` (`merge(o5): integrate prefill replay history`).
+- The integrated O5 path consumes one complete safetensors bundle through
+  `weights_dir`; replay and deployment entries no longer need an independent
+  O5 `.pt` or backbone path.
+- New strategy/replay defaults use
+  `/user/weihongliang/MiniCPM-o-Demo-wt-o5-inference-refactor-2026-06-30/.venv-high-cu128`.
+  Existing historical accel-only scripts were left unchanged.
+- No tests were rerun for the venv switch. The effect of high-cu128 is reserved
+  for the planned precision teacher-forced/replay validation.
+
 ## Inherited worktree history
 
 # Worktree: o5-fc-dev
