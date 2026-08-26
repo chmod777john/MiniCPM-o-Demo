@@ -8,19 +8,23 @@ services:
     build:
       context: .
       dockerfile: docker/Dockerfile.worker-backend
-    image: minicpm-wb:dynamic-reg
-    container_name: minicpm-dynamic-reg-wb-0
+    image: minicpm-o5-full-worker:dynamic-reg
+    container_name: minicpm-o5-full-dynamic-wb-0
     environment:
       GPU_ID: "0"
       BACKEND_PORT: "22500"
       WORKER_PORT: "22400"
-      MODEL_PATH: /models/MiniCPM-o-4_5
+      WEIGHTS_DIR: /models/o5-full-bundle
+      ASSETS_DIR: /models/o5-assets
+      O5_DEPLOY_MODE: "${O5_DEPLOY_MODE:-single_eager}"
+      O5_ATTN_IMPLEMENTATION: "${O5_ATTN_IMPLEMENTATION:-sdpa}"
       GATEWAY_REGISTRY_URL: "http://gateway:8007/internal/workers"
       WORKER_ID: "worker-backend-0"
       WORKER_ENDPOINT: "worker-backend-0:22400"
       WORKER_GPU_GROUP: "gpu-${SMOKE_GPU_ID:-1}"
     volumes:
-      - ${MODEL_HOST_PATH:?set MODEL_HOST_PATH to the host model dir}:/models/MiniCPM-o-4_5:ro
+      - ${WEIGHTS_HOST_PATH:?set WEIGHTS_HOST_PATH to the host safetensors bundle}:/models/o5-full-bundle:ro
+      - ${ASSETS_HOST_PATH:?set ASSETS_HOST_PATH to the host runtime assets}:/models/o5-assets:ro
     deploy:
       resources:
         reservations:
@@ -43,8 +47,8 @@ services:
     build:
       context: .
       dockerfile: docker/Dockerfile.gateway
-    image: minicpm-gateway:dynamic-reg
-    container_name: minicpm-dynamic-reg-gateway
+    image: minicpm-o5-full-gateway:dynamic-reg
+    container_name: minicpm-o5-full-dynamic-gateway
     command:
       - "--host"
       - "0.0.0.0"

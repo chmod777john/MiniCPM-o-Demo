@@ -7,18 +7,22 @@
 # 代价见 README "一张 GPU 跑多个 Worker":N 份重复权重 + 同卡算力瓜分。
 #
 # 用法:
-#   MODEL_HOST_PATH=/path/to/MiniCPM-o-4_5 docker compose -f docker-compose.multi.yml up -d --build
+#   WEIGHTS_HOST_PATH=/path/to/o5-full-bundle \
+#   ASSETS_HOST_PATH=/path/to/o5-assets docker compose -f docker-compose.multi.yml up -d --build
 
 x-worker-backend: &worker-backend-base
   build:
     context: .
     dockerfile: docker/Dockerfile.worker-backend
-  image: minicpm-wb:dev
+  image: minicpm-o5-full-worker:dev
   environment:
     GPU_ID: "0"
     BACKEND_PORT: "22500"
     WORKER_PORT: "22400"
-    MODEL_PATH: /models/MiniCPM-o-4_5
+    WEIGHTS_DIR: /models/o5-full-bundle
+    ASSETS_DIR: /models/o5-assets
+    O5_DEPLOY_MODE: "${O5_DEPLOY_MODE:-single_eager}"
+    O5_ATTN_IMPLEMENTATION: "${O5_ATTN_IMPLEMENTATION:-sdpa}"
     GATEWAY_REGISTRY_URL: "http://gateway:8007/internal/workers"
   restart: unless-stopped
   healthcheck:
@@ -34,18 +38,20 @@ x-worker-backend: &worker-backend-base
 services:
   worker-backend-0a:
     <<: *worker-backend-base
-    container_name: minicpm-wb-0a
+    container_name: minicpm-o5-full-wb-0a
     environment:
       GPU_ID: "0"
       BACKEND_PORT: "22500"
       WORKER_PORT: "22400"
-      MODEL_PATH: /models/MiniCPM-o-4_5
+      WEIGHTS_DIR: /models/o5-full-bundle
+      ASSETS_DIR: /models/o5-assets
       GATEWAY_REGISTRY_URL: "http://gateway:8007/internal/workers"
       WORKER_ID: "worker-backend-0a"
       WORKER_ENDPOINT: "worker-backend-0a:22400"
       WORKER_GPU_GROUP: "gpu-0"
     volumes:
-      - ${MODEL_HOST_PATH:?set MODEL_HOST_PATH to the host model dir}:/models/MiniCPM-o-4_5:ro
+      - ${WEIGHTS_HOST_PATH:?set WEIGHTS_HOST_PATH to the host safetensors bundle}:/models/o5-full-bundle:ro
+      - ${ASSETS_HOST_PATH:?set ASSETS_HOST_PATH to the host runtime assets}:/models/o5-assets:ro
     deploy:
       resources:
         reservations:
@@ -54,18 +60,20 @@ services:
 
   worker-backend-0b:
     <<: *worker-backend-base
-    container_name: minicpm-wb-0b
+    container_name: minicpm-o5-full-wb-0b
     environment:
       GPU_ID: "0"
       BACKEND_PORT: "22500"
       WORKER_PORT: "22400"
-      MODEL_PATH: /models/MiniCPM-o-4_5
+      WEIGHTS_DIR: /models/o5-full-bundle
+      ASSETS_DIR: /models/o5-assets
       GATEWAY_REGISTRY_URL: "http://gateway:8007/internal/workers"
       WORKER_ID: "worker-backend-0b"
       WORKER_ENDPOINT: "worker-backend-0b:22400"
       WORKER_GPU_GROUP: "gpu-0"
     volumes:
-      - ${MODEL_HOST_PATH:?set MODEL_HOST_PATH to the host model dir}:/models/MiniCPM-o-4_5:ro
+      - ${WEIGHTS_HOST_PATH:?set WEIGHTS_HOST_PATH to the host safetensors bundle}:/models/o5-full-bundle:ro
+      - ${ASSETS_HOST_PATH:?set ASSETS_HOST_PATH to the host runtime assets}:/models/o5-assets:ro
     deploy:
       resources:
         reservations:
@@ -74,18 +82,20 @@ services:
 
   worker-backend-1a:
     <<: *worker-backend-base
-    container_name: minicpm-wb-1a
+    container_name: minicpm-o5-full-wb-1a
     environment:
       GPU_ID: "0"
       BACKEND_PORT: "22500"
       WORKER_PORT: "22400"
-      MODEL_PATH: /models/MiniCPM-o-4_5
+      WEIGHTS_DIR: /models/o5-full-bundle
+      ASSETS_DIR: /models/o5-assets
       GATEWAY_REGISTRY_URL: "http://gateway:8007/internal/workers"
       WORKER_ID: "worker-backend-1a"
       WORKER_ENDPOINT: "worker-backend-1a:22400"
       WORKER_GPU_GROUP: "gpu-1"
     volumes:
-      - ${MODEL_HOST_PATH:?set MODEL_HOST_PATH to the host model dir}:/models/MiniCPM-o-4_5:ro
+      - ${WEIGHTS_HOST_PATH:?set WEIGHTS_HOST_PATH to the host safetensors bundle}:/models/o5-full-bundle:ro
+      - ${ASSETS_HOST_PATH:?set ASSETS_HOST_PATH to the host runtime assets}:/models/o5-assets:ro
     deploy:
       resources:
         reservations:
@@ -94,18 +104,20 @@ services:
 
   worker-backend-1b:
     <<: *worker-backend-base
-    container_name: minicpm-wb-1b
+    container_name: minicpm-o5-full-wb-1b
     environment:
       GPU_ID: "0"
       BACKEND_PORT: "22500"
       WORKER_PORT: "22400"
-      MODEL_PATH: /models/MiniCPM-o-4_5
+      WEIGHTS_DIR: /models/o5-full-bundle
+      ASSETS_DIR: /models/o5-assets
       GATEWAY_REGISTRY_URL: "http://gateway:8007/internal/workers"
       WORKER_ID: "worker-backend-1b"
       WORKER_ENDPOINT: "worker-backend-1b:22400"
       WORKER_GPU_GROUP: "gpu-1"
     volumes:
-      - ${MODEL_HOST_PATH:?set MODEL_HOST_PATH to the host model dir}:/models/MiniCPM-o-4_5:ro
+      - ${WEIGHTS_HOST_PATH:?set WEIGHTS_HOST_PATH to the host safetensors bundle}:/models/o5-full-bundle:ro
+      - ${ASSETS_HOST_PATH:?set ASSETS_HOST_PATH to the host runtime assets}:/models/o5-assets:ro
     deploy:
       resources:
         reservations:
@@ -116,8 +128,8 @@ services:
     build:
       context: .
       dockerfile: docker/Dockerfile.gateway
-    image: minicpm-gateway:dev
-    container_name: minicpm-gateway
+    image: minicpm-o5-full-gateway:dev
+    container_name: minicpm-o5-full-gateway
     command:
       - "--host"
       - "0.0.0.0"

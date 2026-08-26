@@ -1,4 +1,7 @@
 .venv/
+.venv*
+.venv-high-cu128/
+.venv-high-cu128-vllm/
 __pycache__/
 .pytest_cache/
 .mypy_cache/

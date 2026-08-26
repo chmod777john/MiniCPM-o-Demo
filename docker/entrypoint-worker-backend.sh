@@ -10,7 +10,8 @@
 #（worker 一进转发模式就报 model_loaded=true，不反映模型状态）。
 #
 # 环境变量：
-#   MODEL_PATH        模型权重路径（容器内，通常是挂载点）。默认 /models/MiniCPM-o-4_5
+#   WEIGHTS_DIR       完整 safetensors bundle（容器内，通常是挂载点）。
+#   ASSETS_DIR        processor + Token2Wav runtime assets（容器内，通常是挂载点）。
 #   BACKEND_PORT      backend 协议端口。默认 22500
 #   WORKER_PORT       worker 转发端口（gateway 连这个）。默认 22400
 #   GPU_ID            backend --gpu-id（容器内通常 0，由 --gpus 决定看到哪张卡）。默认 0
@@ -21,7 +22,8 @@
 
 set -euo pipefail
 
-MODEL_PATH="${MODEL_PATH:-/models/MiniCPM-o-4_5}"
+WEIGHTS_DIR="${WEIGHTS_DIR:-${O5_WEIGHTS_DIR:-/models/o5-full-bundle}}"
+ASSETS_DIR="${ASSETS_DIR:-${O5_ASSETS_DIR:-/models/o5-assets}}"
 BACKEND_PORT="${BACKEND_PORT:-22500}"
 WORKER_PORT="${WORKER_PORT:-22400}"
 GPU_ID="${GPU_ID:-0}"
@@ -33,23 +35,33 @@ BACKEND_URL="http://127.0.0.1:${BACKEND_PORT}"
 
 cd /app
 
-# ---- config.json：项目要求存在（除 model_path 外字段走默认）----
+# ---- config.json：项目要求存在（artifact 路径由显式 CLI 参数传入）----
 # model_path 我们用命令行 --model-path 显式覆盖，但 config.json 仍需存在以提供其它默认值。
 if [ ! -f /app/config.json ]; then
     cp /app/config.example.json /app/config.json
     echo "[entrypoint] config.json 不存在，已从 config.example.json 生成"
 fi
 
-# ---- 校验模型挂载 ----
-if [ ! -d "$MODEL_PATH" ]; then
-    echo "[entrypoint] 错误：模型目录不存在：$MODEL_PATH" >&2
-    echo "[entrypoint] 请用 -v <宿主机权重>:$MODEL_PATH 挂载模型" >&2
+# ---- 校验运行时 artifact 挂载 ----
+if [ ! -d "$WEIGHTS_DIR" ]; then
+    echo "[entrypoint] 错误：完整 safetensors 目录不存在：$WEIGHTS_DIR" >&2
+    echo "[entrypoint] 请挂载宿主机 bundle 到 $WEIGHTS_DIR" >&2
+    exit 1
+fi
+if [ ! -f "$WEIGHTS_DIR/model.safetensors.index.json" ] || [ ! -f "$WEIGHTS_DIR/llm/config.json" ]; then
+    echo "[entrypoint] 错误：不是完整 O5 safetensors bundle：$WEIGHTS_DIR" >&2
+    exit 1
+fi
+if [ ! -d "$ASSETS_DIR" ] || [ ! -f "$ASSETS_DIR/preprocessor_config.json" ] || [ ! -d "$ASSETS_DIR/token2wav" ]; then
+    echo "[entrypoint] 错误：processor/Token2Wav assets 不完整：$ASSETS_DIR" >&2
+    echo "[entrypoint] 需要 preprocessor_config.json 和 token2wav/" >&2
     exit 1
 fi
 
 echo "=================================================="
 echo "  worker + backend bundle"
-echo "  MODEL_PATH   = $MODEL_PATH"
+echo "  WEIGHTS_DIR  = $WEIGHTS_DIR"
+echo "  ASSETS_DIR   = $ASSETS_DIR"
 echo "  backend      = 127.0.0.1:$BACKEND_PORT  (gpu-id=$GPU_ID)"
 echo "  worker       = 0.0.0.0:$WORKER_PORT  -> $BACKEND_URL"
 echo "=================================================="
@@ -73,7 +85,8 @@ echo "[entrypoint] 启动 py_backend.server ..."
 python -m py_backend.server \
     --host 0.0.0.0 --port "$BACKEND_PORT" \
     --gpu-id "$GPU_ID" \
-    --model-path "$MODEL_PATH" &
+    --weights-dir "$WEIGHTS_DIR" \
+    --assets-dir "$ASSETS_DIR" &
 backend_pid=$!
 
 # ---- 2. 等 backend 把模型加载好 ----

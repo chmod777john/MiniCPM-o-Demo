@@ -37,13 +37,11 @@ from fastapi.responses import HTMLResponse, FileResponse, StreamingResponse, Res
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from core.fc_duplex.system_input import (
+from gateway_modules.fc_wire import (
     FcAudioPathInput,
     FcSystemAudioInput,
     FcSystemContentInput,
     FcSystemTextInput,
-)
-from minicpm_o5_sdk import (
     OpenAIFunctionDefinition,
     OpenAIToolDefinition,
 )

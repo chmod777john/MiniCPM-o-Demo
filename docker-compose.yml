@@ -9,12 +9,13 @@
 #   - 容器内 GPU 永远是 0(GPU_ID=0):reservation 决定它看到宿主机哪张卡,容器内就叫 cuda:0。
 #   - worker 启动后向 gateway 内部端口动态注册，gateway 不再持有静态 worker 列表。
 #   - worker-backend 挂模型(只读)、不挂 data(纯净);gateway 挂 data(录制持久化)、不要 GPU。
-#   - 模型权重不进镜像,运行时挂载;路径由 MODEL_HOST_PATH 指定。
+#   - 模型权重和 Token2Wav assets 不进镜像,运行时挂载;路径由 *_HOST_PATH 指定。
 #
 # 增减 GPU = 增删 worker-backend-N service；worker 会自动注册到 gateway。
 #
 # 用法:
-#   MODEL_HOST_PATH=/root/xubokai/MiniCPM-o-4_5 docker compose up -d --build
+#   WEIGHTS_HOST_PATH=/path/to/o5-full-bundle \
+#   ASSETS_HOST_PATH=/path/to/o5-assets docker compose up -d --build
 #   docker compose logs -f gateway
 #   docker compose logs -f worker-backend-0
 
@@ -22,12 +23,15 @@ x-worker-backend: &worker-backend-base
   build:
     context: .
     dockerfile: docker/Dockerfile.worker-backend
-  image: minicpm-wb:dev
+  image: minicpm-o5-full-worker:dev
   environment:
     GPU_ID: "0"            # 容器内恒为 0(见上)
     BACKEND_PORT: "22500"
     WORKER_PORT: "22400"
-    MODEL_PATH: /models/MiniCPM-o-4_5
+    WEIGHTS_DIR: /models/o5-full-bundle
+    ASSETS_DIR: /models/o5-assets
+    O5_DEPLOY_MODE: "${O5_DEPLOY_MODE:-single_eager}"
+    O5_ATTN_IMPLEMENTATION: "${O5_ATTN_IMPLEMENTATION:-sdpa}"
     GATEWAY_REGISTRY_URL: "http://gateway:8007/internal/workers"
   restart: unless-stopped
   healthcheck:
@@ -44,18 +48,20 @@ x-worker-backend: &worker-backend-base
 services:
   worker-backend-0:
     <<: *worker-backend-base
-    container_name: minicpm-wb-0
+    container_name: minicpm-o5-full-wb-0
     environment:
       GPU_ID: "0"
       BACKEND_PORT: "22500"
       WORKER_PORT: "22400"
-      MODEL_PATH: /models/MiniCPM-o-4_5
+      WEIGHTS_DIR: /models/o5-full-bundle
+      ASSETS_DIR: /models/o5-assets
       GATEWAY_REGISTRY_URL: "http://gateway:8007/internal/workers"
       WORKER_ID: "worker-backend-0"
       WORKER_ENDPOINT: "worker-backend-0:22400"
       WORKER_GPU_GROUP: "gpu-0"
     volumes:
-      - ${MODEL_HOST_PATH:?set MODEL_HOST_PATH to the host model dir}:/models/MiniCPM-o-4_5:ro
+      - ${WEIGHTS_HOST_PATH:?set WEIGHTS_HOST_PATH to the host safetensors bundle}:/models/o5-full-bundle:ro
+      - ${ASSETS_HOST_PATH:?set ASSETS_HOST_PATH to the host runtime assets}:/models/o5-assets:ro
     deploy:
       resources:
         reservations:
@@ -66,18 +72,20 @@ services:
 
   worker-backend-1:
     <<: *worker-backend-base
-    container_name: minicpm-wb-1
+    container_name: minicpm-o5-full-wb-1
     environment:
       GPU_ID: "0"
       BACKEND_PORT: "22500"
       WORKER_PORT: "22400"
-      MODEL_PATH: /models/MiniCPM-o-4_5
+      WEIGHTS_DIR: /models/o5-full-bundle
+      ASSETS_DIR: /models/o5-assets
       GATEWAY_REGISTRY_URL: "http://gateway:8007/internal/workers"
       WORKER_ID: "worker-backend-1"
       WORKER_ENDPOINT: "worker-backend-1:22400"
       WORKER_GPU_GROUP: "gpu-1"
     volumes:
-      - ${MODEL_HOST_PATH:?set MODEL_HOST_PATH to the host model dir}:/models/MiniCPM-o-4_5:ro
+      - ${WEIGHTS_HOST_PATH:?set WEIGHTS_HOST_PATH to the host safetensors bundle}:/models/o5-full-bundle:ro
+      - ${ASSETS_HOST_PATH:?set ASSETS_HOST_PATH to the host runtime assets}:/models/o5-assets:ro
     deploy:
       resources:
         reservations:
@@ -90,8 +98,8 @@ services:
     build:
       context: .
       dockerfile: docker/Dockerfile.gateway
-    image: minicpm-gateway:dev
-    container_name: minicpm-gateway
+    image: minicpm-o5-full-gateway:dev
+    container_name: minicpm-o5-full-gateway
     # HTTPS:实时音视频页面(omni/audio_duplex)需要 https —— 浏览器仅在 https/localhost
     # 下提供 navigator.mediaDevices(麦克风)。证书从宿主机挂载(不进镜像),默认读 certs/cert.pem。
     # 纯文字 /turnbased 不需要麦克风,http 也能用;要降级 http 把下面 --https 段换成 ["--http"]。

@@ -11,6 +11,7 @@ from typing import Any, Dict
 
 import torch
 from o5_paths import DEFAULT_MODEL_PATH
+from core.processor_assets import load_o5_processor
 
 from .base import DeploymentMode, BuildResult
 from .fla_runtime import configure_chunk_output, configure_fused_norm, configure_l2norm
@@ -64,57 +65,6 @@ def _mk_config(cfg: Dict[str, Any]):
     return c
 
 
-def _load_o5_processor(assets_dir: str):
-    """只使用仓库内 O5 processor/tokenizer 代码加载外部资产。"""
-
-    from modeling.o5.processing_minicpmo import (
-        MiniCPMAAudioProcessor,
-        MiniCPMOProcessor,
-        MiniCPMVImageProcessor,
-    )
-    from modeling.o5.tokenization_minicpmo_fast import MiniCPMOTokenizerFast
-
-    if not assets_dir:
-        raise FileNotFoundError("O5 processor assets are required; set O5_ASSETS_DIR")
-
-    # Token2Wav assets and HF processor metadata are intentionally separate:
-    # the published runtime asset directory contains ``token2wav/`` only.
-    processor_candidates = [
-        Path(assets_dir),
-        Path(os.environ["O5_PROCESSOR_DIR"])
-        if os.environ.get("O5_PROCESSOR_DIR")
-        else None,
-        Path(os.environ["MODEL_PATH"]) if os.environ.get("MODEL_PATH") else None,
-        Path("/user/weihongliang/MiniCPM-o-4_6"),
-    ]
-    processor_dir = next(
-        (
-            candidate
-            for candidate in processor_candidates
-            if candidate is not None
-            and (candidate / "preprocessor_config.json").is_file()
-            and (
-                (candidate / "tokenizer.json").is_file()
-                or (candidate / "tokenizer_config.json").is_file()
-            )
-        ),
-        None,
-    )
-    if processor_dir is None:
-        raise FileNotFoundError(
-            "O5 processor metadata is required; checked assets_dir, "
-            "O5_PROCESSOR_DIR, MODEL_PATH, and the shared model metadata path"
-        )
-    image_processor = MiniCPMVImageProcessor.from_pretrained(str(processor_dir))
-    audio_processor = MiniCPMAAudioProcessor.from_pretrained(str(processor_dir))
-    tokenizer = MiniCPMOTokenizerFast.from_pretrained(str(processor_dir))
-    return MiniCPMOProcessor(
-        image_processor=image_processor,
-        audio_processor=audio_processor,
-        tokenizer=tokenizer,
-    )
-
-
 def _load_full(cfg: Dict[str, Any], device: str):
     """Single-card: build MiniCPMO from the complete safetensors bundle."""
     # "auto" leaves FLA's normal autotuning untouched. Fixed values are only
@@ -128,7 +78,7 @@ def _load_full(cfg: Dict[str, Any], device: str):
         model = MiniCPMO(_mk_config(cfg))
     load_safetensors_into(model, cfg["weights_dir"])
     _place_outer_model(model, device)
-    model.processor = _load_o5_processor(cfg["assets_dir"])
+    model.processor = load_o5_processor(cfg["assets_dir"])
     return model
 
 
@@ -185,7 +135,7 @@ def _surgery_tp(
         world_size=world_size,
         sync_calls=sync_llm_calls,
     )
-    model.processor = _load_o5_processor(cfg["assets_dir"])
+    model.processor = load_o5_processor(cfg["assets_dir"])
     return model
 
 

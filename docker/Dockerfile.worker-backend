@@ -17,6 +17,7 @@ FROM python:3.12-slim-bookworm
 ENV PYTHONUNBUFFERED=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PYTHONPATH=/app \
+    LD_LIBRARY_PATH=/usr/local/lib/python3.12/site-packages/nvidia/npp/lib:/usr/local/cuda/lib64:/usr/local/nvidia/lib64:/usr/local/nvidia/lib \
     TORCHINDUCTOR_CACHE_DIR=/app/torch_compile_cache
 
 # ---- 系统依赖（很少变，放最上层）----
@@ -27,26 +28,21 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         ffmpeg \
         libsndfile1 \
         curl \
+        gcc \
+        libc6-dev \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-# ---- ① torch 栈：单独一层、写死版本，极少变 → 缓存命中率最高 ----
-# 6.3G 大头（torch+nvidia+triton），用 BuildKit 缓存挂载，跨 build 复用已下载 wheel。
+# ---- ① high-cu128 runtime：完整依赖声明单独一层，requirements 变才重跑 ----
+# Torch 2.11 + cu128 是 grouped_mm / 当前 FLA runtime 使用的版本。
+# minicpmo-utils 只以 --no-deps 安装，避免其旧 metadata 把 transformers 降到 4.x。
+COPY requirements-high-cu128.txt .
 RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install \
-        --index-url https://download.pytorch.org/whl/cu128 \
-        torch==2.8.0 torchaudio==2.8.0
+    pip install --no-deps "minicpmo-utils==1.0.6" \
+    && pip install -r requirements-high-cu128.txt
 
-# ---- ② 其余轻依赖（~1G），requirements 变才重跑 ----
-COPY requirements.txt .
-RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install "minicpmo-utils[all]>=1.0.5" \
-    && grep -vE '^[[:space:]]*minicpmo-utils(\[all\])?>=' requirements.txt > /tmp/requirements-worker.txt \
-    && pip install -r /tmp/requirements-worker.txt \
-    && rm /tmp/requirements-worker.txt
-
-# ---- ③ 代码放最后：最常变，但只影响这一层；前两层全命中缓存 ----
+# ---- ② 代码放最后：最常变，但只影响这一层；依赖层可复用 ----
 COPY . .
 
 RUN chmod +x docker/entrypoint-worker-backend.sh \

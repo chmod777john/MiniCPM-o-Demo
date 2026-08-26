@@ -1,0 +1,58 @@
+# High-version runtime for the FC + TP2 full-bundle deployment.
+# Keep this environment separate from requirements.txt (the validated cu126
+# demo environment). Install it inside a project-local venv.
+
+--extra-index-url https://download.pytorch.org/whl/cu128
+
+# Core ML: grouped_mm and the current Qwen3.5-MoE runtime.
+setuptools<82
+torch==2.11.0+cu128
+torchvision==0.26.0+cu128
+torchaudio==2.11.0+cu128
+torchcodec==0.11.1+cu128
+nvidia-npp-cu12==12.4.1.87
+transformers==5.13.0
+accelerate>=1.14.0
+safetensors>=0.8.0
+triton>=3.5.0
+
+# Qwen3.5-MoE runtime acceleration.
+flash-linear-attention>=0.5.0
+fla-core>=0.5.0
+
+# MiniCPM-o / media runtime.
+pillow>=10.4.0
+decord==0.6.0
+moviepy>=2.1.2
+onnxruntime>=1.21.0
+onnx>=1.22.0
+HyperPyYAML>=1.2.3
+einops>=0.8.1
+
+# Web service.
+fastapi>=0.128.0
+uvicorn>=0.40.0
+httpx>=0.28.0
+websockets>=16.0
+python-multipart
+
+# Docs, audio and presets.
+markdown>=3.6
+Pygments>=2.18.0
+PyYAML>=6.0.3
+librosa>=0.10.2
+soxr>=1.1.0
+soundfile>=0.12.1
+edge-tts>=7.2.0
+
+# Data / schema / utilities.
+pydantic>=2.13.4
+numpy>=2.2.5
+tqdm>=4.67.0
+
+# Test support.
+pytest>=9.0.0
+pytest-asyncio>=1.3.0
+
+# FC protocol contract. This must match the training/evaluation SDK.
+minicpm-o5-sdk==0.0.5

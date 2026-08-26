@@ -132,6 +132,7 @@ from core.fc_duplex.system_input import (
     project_o5_system_content_input,
 )
 from core.processors.base import BaseProcessor, MiniCPMOProcessorMixin
+from core.processor_assets import load_o5_processor
 from core.schemas import (
     # Chat
     ChatRequest, ChatResponse,
@@ -2999,6 +3000,8 @@ class UnifiedProcessor(BaseProcessor):
 
         model_module = importlib.import_module("modeling.o5.modeling_minicpmo_unified")
         config_module = importlib.import_module("modeling.o5.configuration_minicpmo")
+        from transformers import AutoConfig
+
         MiniCPMO = model_module.MiniCPMO
         MiniCPMOConfig = config_module.MiniCPMOConfig
 
@@ -3037,6 +3040,11 @@ class UnifiedProcessor(BaseProcessor):
         # Unified initialization (supports all three modes)
         logger.info("Initializing unified mode...")
         init_start = time.time()
+
+        # Bind the runtime processor before init_unified builds DuplexCapability.
+        # Otherwise that capability falls back to the vendored model directory,
+        # which may not contain the tokenizer paired with this weight bundle.
+        self.model.processor = load_o5_processor(self.assets_dir)
 
         self.model.init_unified(
             preload_both_tts=self.preload_both_tts,
