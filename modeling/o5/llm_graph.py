@@ -27,6 +27,14 @@ import torch
 from transformers.cache_utils import StaticCache
 
 from .cache_limits import CacheLimitExceeded
+from .moe_runtime import (
+    decode_experts_impl,
+    hybrid_prefill_threshold,
+    is_hybrid_experts_impl,
+    prefill_experts_impl,
+    set_experts_impl,
+    temporary_experts_impl,
+)
 
 
 _NO_DIST_CALL = object()
@@ -57,6 +65,16 @@ class LLMGraphRunner:
         self._emb = self._pos = self._cpos = self._mask = self._hidden = None
         self._captured = False
         self._failed = False
+        self._trace_hybrid = os.environ.get("O5_MOE_HYBRID_TRACE", "0") == "1"
+        # Keep graph capture/decode on one fixed implementation. Hybrid mode
+        # switches only around the eager variable-length prefill call.
+        set_experts_impl(self.model, decode_experts_impl())
+        if is_hybrid_experts_impl():
+            print(
+                f"[llm_graph] hybrid MoE enabled: prefill >= {hybrid_prefill_threshold()} "
+                "tokens uses grouped_mm; decode uses batched_mm",
+                flush=True,
+            )
         self.trace_layers = os.environ.get("O5_LAYER_TRACE", "0") == "1"
         self._layer_outputs = None
         self._graph_layer_outputs = None
@@ -234,7 +252,7 @@ class LLMGraphRunner:
 
     def _capture(self, H):
         try:
-            with torch.inference_mode():
+            with torch.inference_mode(), temporary_experts_impl(self.model, decode_experts_impl()):
                 # prime: two eager fwds so the linear layers have has_previous_state=True and the
                 # full-attn cumulative_length>0, i.e. capture the steady-state decode op-graph.
                 self._pos.fill_(0); self._cpos.fill_(0)
@@ -289,6 +307,9 @@ class LLMGraphRunner:
         """Variable-length prefill via the non-graph StaticCache path. inputs_embeds: [1,L,H]."""
         with torch.inference_mode():
             L = inputs_embeds.shape[1]
+            experts_impl = prefill_experts_impl(L)
+            if self._trace_hybrid:
+                print(f"[llm_graph] prefill L={L} experts={experts_impl}", flush=True)
             if L > self.max_cache_len:
                 self._warn_overflow(L)
             end = start_pos + L
@@ -298,9 +319,10 @@ class LLMGraphRunner:
             mask2d = torch.zeros(1, self.max_cache_len, dtype=torch.long, device=self.device)
             mask2d[:, :start_pos + L] = 1
             self._begin_layer_trace()
-            h = self.model(inputs_embeds=inputs_embeds, position_ids=cpos.unsqueeze(0),
-                           cache_position=cpos, attention_mask=mask2d,
-                           past_key_values=self.cache, use_cache=True, return_dict=True)
+            with temporary_experts_impl(self.model, experts_impl):
+                h = self.model(inputs_embeds=inputs_embeds, position_ids=cpos.unsqueeze(0),
+                               cache_position=cpos, attention_mask=mask2d,
+                               past_key_values=self.cache, use_cache=True, return_dict=True)
             self._finish_layer_trace()
             h = h.last_hidden_state
             # mark all prefilled positions valid for the graph's additive mask

@@ -240,7 +240,7 @@ class DuplexConfig(BaseModel):
         description="Top-P 采样"
     )
     text_repetition_penalty: float = Field(
-        1.05, 
+        1.05,
         ge=1.0,
         description="文本重复惩罚"
     )
@@ -278,6 +278,16 @@ class DuplexConfig(BaseModel):
         1.05,
         ge=1.0,
         description="TTS 重复惩罚"
+    )
+
+    strategy_hd: bool = Field(
+        False,
+        description="按上一 unit 的 SPEAK/LISTEN 结果调度当前 unit 的高清切片"
+    )
+    strategy_hd_max_slice_nums: int = Field(
+        4,
+        ge=1,
+        description="策略高清在上一 unit SPEAK 后使用的切片数"
     )
     
     # 流参数
@@ -406,10 +416,10 @@ class DuplexPrefillRequest(BaseModel):
         None, 
         description="图像帧路径列表"
     )
-    max_slice_nums: int = Field(
-        1, 
+    max_slice_nums: Optional[int] = Field(
+        None,
         ge=1,
-        description="HD 图像切片数"
+        description="HD 图像切片数；策略高清开启时由 modeling 状态机决定"
     )
 
 

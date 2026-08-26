@@ -235,8 +235,12 @@ def _set_flag(name: str, enabled: bool) -> None:
 
 def configure_demo_environment(args: Any) -> None:
     os.environ["O5_DEPLOY_MODE"] = "tp2" if args.target == "demo-tp2" else args.demo_single_mode
-    os.environ["O5_BACKBONE_DIR"] = str(args.backbone_dir)
+    if args.weights_dir:
+        os.environ["O5_WEIGHTS_DIR"] = str(args.weights_dir)
+    if args.assets_dir:
+        os.environ["O5_ASSETS_DIR"] = str(args.assets_dir)
     os.environ["O5_EXPERTS_IMPLEMENTATION"] = args.experts_implementation
+    os.environ["O5_GROUPED_PREFILL_MIN_TOKENS"] = str(args.grouped_prefill_min_tokens)
     os.environ["O5_LLM_CACHE"] = str(args.llm_cache)
     # Keep the Demo deployment on the same pinned FLA kernels as Canonical.
     # core.deploy reads these controls before constructing the model; recording
@@ -252,6 +256,12 @@ def configure_demo_environment(args: Any) -> None:
     _set_flag("O5_LMHEAD", args.lmhead)
     _set_flag("O5_FUSE_VISION_AUDIO", args.fuse_vision_audio)
     _set_flag("O5_VISION_BATCH", args.batch_vision_feed)
+    # Keep the production/replay default enabled, while allowing ablations to
+    # select the legacy split feed path without editing this loader.
+    if args.unit_prefill_batch is not None:
+        _set_flag("O5_UNIT_PREFILL_BATCH", args.unit_prefill_batch)
+    else:
+        os.environ.setdefault("O5_UNIT_PREFILL_BATCH", "1")
     _set_flag("O5_LAYER_TRACE", args.capture_layers)
 
 
@@ -263,9 +273,8 @@ def load_demo(args: Any, sampling: dict[str, Any]) -> RuntimeAdapter:
     rank = int(os.environ.get("LOCAL_RANK", os.environ.get("RANK", "0")))
     backend = create_backend({
         "deployment_mode": mode,
-        "model_path": str(args.model_path),
-        "pt_path": str(args.ckpt_path),
-        "backbone_dir": str(args.backbone_dir),
+        "weights_dir": args.weights_dir,
+        "assets_dir": args.assets_dir,
         "gpu_id": rank,
         "chat_vocoder": "token2wav",
         "attn_implementation": args.attn_implementation,

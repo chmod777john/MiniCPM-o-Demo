@@ -37,8 +37,6 @@ def main() -> None:
             "PROJECT_DIR": str(project_dir),
             "FC_DEPLOYMENT_PROFILE": str(profile_path),
             "FC_MODEL_FAMILY": profile.model_family,
-            "MODEL_PATH": profile.model_path,
-            "PT_PATH": profile.pt_path,
             "WORKER_ID": (
                 environment.get("WORKER_ID")
                 or f"{profile.model_family}-{profile.profile_id}-worker"
@@ -54,9 +52,16 @@ def main() -> None:
         }
     )
     if isinstance(profile, O5FcDeploymentProfile):
-        environment["BACKBONE_DIR"] = profile.backbone_dir
+        # O5 consumes one complete safetensors bundle. Do not reintroduce the
+        # legacy independent model/checkpoint/backbone environment variables.
+        if profile.weights_dir is not None:
+            environment["WEIGHTS_DIR"] = profile.weights_dir
+        if profile.assets_dir is not None:
+            environment["ASSETS_DIR"] = profile.assets_dir
         entry = project_dir / "scripts" / "start_o5_tp2_cctl_service.sh"
     else:
+        environment["MODEL_PATH"] = profile.model_path
+        environment["PT_PATH"] = profile.pt_path
         entry = project_dir / "scripts" / "start_o5_cctl_service.sh"
 
     os.execvpe("bash", ["bash", str(entry)], environment)

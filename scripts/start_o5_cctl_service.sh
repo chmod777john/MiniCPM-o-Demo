@@ -2,8 +2,8 @@
 set -euo pipefail
 
 PROJECT_DIR="${PROJECT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
-MODEL_PATH="${MODEL_PATH:-}"
-PT_PATH="${PT_PATH:-}"
+WEIGHTS_DIR="${WEIGHTS_DIR:-${O5_WEIGHTS_DIR:-${PROJECT_DIR}/weights}}"
+ASSETS_DIR="${ASSETS_DIR:-${O5_ASSETS_DIR:-}}"
 VENV_DIR="${VENV_DIR:-${PROJECT_DIR}/.venv}"
 
 BACKEND_HOST="${BACKEND_HOST:-127.0.0.1}"
@@ -32,6 +32,8 @@ cd "${PROJECT_DIR}"
 export PYTHONPATH="${PROJECT_DIR}:${PYTHONPATH:-}"
 export TOKENIZERS_PARALLELISM="${TOKENIZERS_PARALLELISM:-false}"
 export O5_TOKEN_TRACE_DIR
+if [ -d "${WEIGHTS_DIR}" ]; then export O5_WEIGHTS_DIR="${WEIGHTS_DIR}"; fi
+if [ -d "${ASSETS_DIR}" ]; then export O5_ASSETS_DIR="${ASSETS_DIR}"; fi
 
 PYTHON="${VENV_DIR}/bin/python"
 BACKEND_URL="http://${BACKEND_HOST}:${BACKEND_PORT}"
@@ -42,15 +44,9 @@ if [ ! -x "${PYTHON}" ]; then
     echo "[start] missing python: ${PYTHON}" >&2
     exit 1
 fi
-if [ -z "${MODEL_PATH}" ] || [ ! -d "${MODEL_PATH}" ]; then
-    echo "[start] missing model dir: ${MODEL_PATH}" >&2
-    echo "[start] set MODEL_PATH=/path/to/model-code-and-tokenizer" >&2
-    exit 1
-fi
-if [ -z "${PT_PATH}" ] || [ ! -f "${PT_PATH}" ]; then
-    echo "[start] missing pt file: ${PT_PATH}" >&2
-    echo "[start] set PT_PATH=/path/to/checkpoint.pt" >&2
-    exit 1
+has_safetensors=0
+if [ -f "${WEIGHTS_DIR}/model.safetensors.index.json" ] && [ -f "${WEIGHTS_DIR}/llm/config.json" ]; then
+    has_safetensors=1
 fi
 
 backend_pid=""
@@ -85,8 +81,8 @@ wait_http() {
 }
 
 echo "[start] project=${PROJECT_DIR}"
-echo "[start] model=${MODEL_PATH}"
-echo "[start] pt=${PT_PATH}"
+echo "[start] weights=${WEIGHTS_DIR} safetensors=${has_safetensors}"
+echo "[start] assets=${ASSETS_DIR:-<auto>}"
 echo "[start] ref_audio=${REF_AUDIO_PATH:-<model-default>}"
 echo "[start] token_trace_dir=${O5_TOKEN_TRACE_DIR}"
 echo "[start] gateway=https://${GATEWAY_HOST}:${GATEWAY_PORT} internal=:${GATEWAY_INTERNAL_PORT}"
@@ -106,10 +102,12 @@ wait_http "http://127.0.0.1:${GATEWAY_INTERNAL_PORT}/health" 120 "gateway-intern
 backend_args=(
     --host "${BACKEND_HOST}"
     --port "${BACKEND_PORT}"
-    --model-path "${MODEL_PATH}"
-    --pt-path "${PT_PATH}"
+    --weights-dir "${WEIGHTS_DIR}"
     --gpu-id "${GPU_ID}"
 )
+if [ -n "${ASSETS_DIR}" ]; then
+    backend_args+=(--assets-dir "${ASSETS_DIR}")
+fi
 if [ -n "${REF_AUDIO_PATH}" ]; then
     backend_args+=(--ref-audio-path "${REF_AUDIO_PATH}")
 fi

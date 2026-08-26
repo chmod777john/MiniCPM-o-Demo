@@ -12,7 +12,7 @@
 |---|---|---|---|
 | 原始单卡(默认,行为不变) | `single_eager` | 现有起法不变 | 无 |
 | 单卡 + 推理优化(<1s) | `single_opt` | 现有起法不变 | 无 |
-| **双卡 TP(32K 上下文,更快)** | `tp2` | `bash core/deploy/launch_tp2.sh` | **先抽取骨干(§2)** |
+| **双卡 TP(32K 上下文,更快)** | `tp2` | `bash core/deploy/launch_tp2.sh` | 完整 safetensors bundle |
 
 改 `config.json`(或环境变量 `O5_DEPLOY_MODE`)即切换。
 
@@ -31,35 +31,36 @@ omni-speak(最紧场景):
 
 ---
 
-## 2. tp2 前置:抽取骨干(一次性,~65GB)
+## 2. 发布 artifact（推荐：一套完整 safetensors）
 
-TP 用 `from_pretrained(tp_plan="auto")` 边加载边分片,需要把 `.pt` 里的 `llm.*` 权重抽成 HF 格式:
+把旧 `.pt` 转成完整 bundle（包含 VPM/APM/TTS/LLM 等所有模型权重）：
 
 ```bash
-cd <demo_root>
-export PYTHONPATH=$PWD WORKTREE=$PWD
-export MODEL_PATH=/path/to/MiniCPM-o-4_6
-export PT_PATH=/path/to/omni_sft2_main_run_iter1200.pt
-export BACKBONE_DIR=/path/to/o5_backbone_hf     # 产出目录(~65GB)
-python tools/o5deploy/extract_backbone.py
+python tools/o5deploy/export_full_safetensors.py \
+  --pt-path /path/to/weights.pt \
+  --output-dir /path/to/o5_full_hf
 ```
-产出 `BACKBONE_DIR/`(config.json + sharded safetensors + index)。填进 `config.model.backbone_dir`。
 
----
+bundle 根目录保存 Demo 外层权重，`llm/config.json` 保存 TP2 使用的 Qwen
+配置；TP2 复用根目录的同一批 shard，不再额外复制一份 LLM backbone。
+运行时通过 `O5_WEIGHTS_DIR=/path/to/o5_full_hf` 指定即可。Token2Wav 的
+`assets/token2wav` 是运行时文件，不属于模型权重；可通过
+`O5_ASSETS_DIR=/path/to/assets` 指定包含 `token2wav/` 的目录。若 bundle 和
+assets 放在默认位置，则两个环境变量都可以省略，服务也不需要传
+`--model-path` 或 `--pt-path`。
 
 ## 3. 配置
 
 `config.json`(参考 `core/deploy/config.example.tp2.json`):
 ```json
 { "model": {
-    "model_path": "/path/to/MiniCPM-o-4_6",
-    "pt_path": "/path/to/weights.pt",
     "deployment_mode": "tp2",                 // single_eager | single_opt | tp2
-    "backbone_dir": "/path/to/o5_backbone_hf", // tp2 必填
-    "llm_cache_len": 32768                      // tp2 上下文上限(single_opt 默认 8192)
+    "llm_cache_len": 32768,                     // tp2 上下文上限(single_opt 默认 8192)
+    "weights_dir": null,                        // 可选；默认自动发现完整 bundle
+    "assets_dir": null                          // 可选；目录内应包含 token2wav/
 } }
 ```
-或用环境变量覆盖:`O5_DEPLOY_MODE=tp2 O5_BACKBONE_DIR=... O5_LLM_CACHE=32768`。
+或用环境变量覆盖:`O5_DEPLOY_MODE=tp2 O5_WEIGHTS_DIR=... O5_LLM_CACHE=32768`。
 
 ---
 
@@ -67,12 +68,12 @@ python tools/o5deploy/extract_backbone.py
 
 - **single_eager / single_opt(单进程,起法不变):**
   ```bash
-  python -m py_backend.server --model-path $MODEL_PATH --pt-path $PT_PATH --port 22500
+  python -m py_backend.server --port 22500
   ```
 - **tp2(双卡 SPMD,torchrun 2 进程):**
   ```bash
-  O5_BACKBONE_DIR=/path/to/o5_backbone_hf bash core/deploy/launch_tp2.sh \
-      --model-path $MODEL_PATH --pt-path $PT_PATH --port 22500
+  O5_WEIGHTS_DIR=/path/to/o5_full_hf O5_ASSETS_DIR=/path/to/assets \
+    bash core/deploy/launch_tp2.sh --port 22500
   ```
   rank0 起 HTTP(对外 `/backend` WebSocket),rank1 自动进模型提供的 `worker_loop`(不起 HTTP,只参与 LLM/graph TP 计算)。gateway / 客户端只连 rank0,**协议不变**。
 
@@ -90,7 +91,7 @@ python tools/o5deploy/extract_backbone.py
 
 ---
 
-## 6. 必读注意事项
+## 7. 必读注意事项
 
 - **双卡 = 单会话吃两张卡** → 固定卡数下并发会话减半。tp2 是为「单会话大上下文 + 低延迟」,不是提吞吐。追求吞吐用 single_opt + 多副本。
 - **数值等价**:所有优化/TP 是 argmax-preserving 浮点重排(决策逐 unit 一致,采样输出分布无差异)。换权重后建议重跑一次 teacher-forced 等价 gate。

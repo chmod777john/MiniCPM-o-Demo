@@ -387,7 +387,12 @@ class MiniCPMO(MiniCPMOPreTrainedModel):
         except Exception:
             has_flash_attn = False
 
-        if has_flash_attn:
+        requested_attn = getattr(self.config, "_attn_implementation", None)
+        if requested_attn in {"eager", "sdpa"}:
+            # An explicit deployment choice must apply to the vision tower as
+            # well; importability of flash-attn alone must not override it.
+            self.config.vision_config._attn_implementation = "eager"
+        elif has_flash_attn:
             self.config.vision_config._attn_implementation = "flash_attention_2"
         else:
             logger.warning("flash-attn is not available; vision tower falls back to eager attention.")
@@ -2852,6 +2857,10 @@ class MiniCPMODuplex:
         "basic_window_low_tokens": 6000,
         "context_previous_max_tokens": 500,
         "context_max_units": 24,
+        # Lag-one strategy-HD policy. While enabled, modeling owns the
+        # current slice count so stale client values cannot bypass it.
+        "strategy_hd": False,
+        "strategy_hd_max_slice_nums": 4,
     }
 
     @classmethod
@@ -2859,6 +2868,7 @@ class MiniCPMODuplex:
         cls,
         model: "MiniCPMO",
         device: Optional[str] = None,
+        tts_model_dir: Optional[str] = None,
         **kwargs,
     ) -> "MiniCPMODuplex":
         """Create MiniCPMODuplex from an existing MiniCPMO instance."""
@@ -2907,7 +2917,11 @@ class MiniCPMODuplex:
         # Initialize TTS (same as __init__)
         enable_float16 = get_param("enable_float16")
         n_timesteps = get_param("n_timesteps")
-        instance.model.init_tts(enable_float16=enable_float16, n_timesteps=n_timesteps)
+        instance.model.init_tts(
+            model_dir=tts_model_dir,
+            enable_float16=enable_float16,
+            n_timesteps=n_timesteps,
+        )
 
         instance.break_event = threading.Event()
         instance.session_stop_event = threading.Event()
@@ -2921,6 +2935,10 @@ class MiniCPMODuplex:
         instance.text_repetition_window_size = get_param("text_repetition_window_size")
         instance.listen_prob_scale = get_param("listen_prob_scale")
         instance.force_listen_count = get_param("force_listen_count")
+        instance.strategy_hd = bool(get_param("strategy_hd"))
+        instance.strategy_hd_max_slice_nums = int(get_param("strategy_hd_max_slice_nums") or 4)
+        if instance.strategy_hd_max_slice_nums < 1:
+            raise ValueError("strategy_hd_max_slice_nums must be >= 1")
 
         # TTS generation config
         tts_temp_value = get_param("tts_temperature")
@@ -3074,6 +3092,24 @@ class MiniCPMODuplex:
         self.prefill_schema_tokens = []
         self._current_unit_prefill_tokens = []
 
+        # Consumed by the next prefill and updated after the current generate.
+        self._next_strategy_max_slice_nums = 1
+
+    def _resolve_max_slice_nums(
+        self, max_slice_nums: Optional[Union[int, List[int]]]
+    ) -> Union[int, List[int]]:
+        """Resolve the current unit's slice count without advancing state."""
+        if self.strategy_hd:
+            return self._next_strategy_max_slice_nums
+        return 1 if max_slice_nums is None else max_slice_nums
+
+    def _update_strategy_after_generate(self, is_listen: bool) -> None:
+        """Select the slice count consumed by the following unit."""
+        if self.strategy_hd and not is_listen:
+            self._next_strategy_max_slice_nums = self.strategy_hd_max_slice_nums
+        else:
+            self._next_strategy_max_slice_nums = 1
+
     def prepare(
         self,
         prefix_system_prompt: Optional[str] = None,
@@ -3166,8 +3202,9 @@ class MiniCPMODuplex:
         audio_waveform: Optional[np.ndarray] = None,
         frame_list: Optional[list] = None,
         text_list: Optional[list] = None,
-        max_slice_nums: Union[int, List[int]] = 1,
+        max_slice_nums: Optional[Union[int, List[int]]] = None,
         batch_vision_feed: bool = False,
+        merge_unit_feed: Optional[bool] = None,
     ):
         """Streaming prefill - called once per second, processing audio/video data
 
@@ -3175,10 +3212,13 @@ class MiniCPMODuplex:
             audio_waveform: audio waveform data
             frame_list: image frame list
             text_list: text
-            max_slice_nums: maximum number of slices for HD image encoding (default 1, no slicing)
+            max_slice_nums: maximum number of slices for HD image encoding. When
+                           strategy_hd is enabled, modeling owns this value.
                            Can be an int (same for all images) or a list matching frame_list length
             batch_vision_feed: if True, batch all vision embeddings into a single feed call for better performance.
                               if False (default), feed each embedding individually (original behavior).
+            merge_unit_feed: if True, concatenate the complete unit prefill in the original order and
+                             execute one decoder.feed call. If None, read O5_UNIT_PREFILL_BATCH.
 
         Process:
             0. determine mode based on input: AUDIO / VISION / OMNI
@@ -3204,6 +3244,8 @@ class MiniCPMODuplex:
         cost_audio_process = 0.0
         cost_audio_embed = 0.0
         cost_audio_feed = 0.0
+        cost_unit_feed = 0.0
+        effective_max_slice_nums = None
 
         def _make_result(success, reasons=""):
             reason = reasons
@@ -3219,7 +3261,10 @@ class MiniCPMODuplex:
                 "cost_audio_process": cost_audio_process,
                 "cost_audio_embed": cost_audio_embed,
                 "cost_audio_feed": cost_audio_feed,
+                "cost_unit_feed": cost_unit_feed,
                 "cost_all": time.time() - start_time,
+                "effective_max_slice_nums": effective_max_slice_nums,
+                "strategy_hd_next_max_slice_nums": self._next_strategy_max_slice_nums,
             }
 
         if self.is_session_stop_set() or self.is_break_set():
@@ -3241,6 +3286,28 @@ class MiniCPMODuplex:
             return _make_result(False)
 
         self.pending_logits = None
+        effective_max_slice_nums = self._resolve_max_slice_nums(max_slice_nums)
+        if merge_unit_feed is None:
+            merge_unit_feed = os.environ.get("O5_UNIT_PREFILL_BATCH", "0").lower() in {
+                "1", "true", "yes", "on"
+            }
+        merge_unit_feed = bool(merge_unit_feed)
+
+        # A unit's multimodal prefix is logically one causal sequence. Keep the
+        # old staged path available, while allowing optimized deployments to
+        # submit the whole sequence to the LLM in one variable-length prefill.
+        unit_feed_parts = []
+        unit_feed_length = 0
+        pending_logits_position = None
+
+        def _queue_unit_feed(embeds):
+            nonlocal unit_feed_length
+            if embeds.dim() == 1:
+                embeds = embeds.unsqueeze(0)
+            start = unit_feed_length
+            unit_feed_parts.append(embeds)
+            unit_feed_length += embeds.shape[0]
+            return start, unit_feed_length
 
         # sliding window: record unit start position
         self.decoder.register_unit_start()
@@ -3249,7 +3316,11 @@ class MiniCPMODuplex:
         self._current_unit_prefill_tokens = []
 
         # Step 1: Feed <unit> token
-        self.decoder.feed(self.decoder.embed_token(self.unit_token_id))
+        unit_embed = self.decoder.embed_token(self.unit_token_id)
+        if merge_unit_feed:
+            _queue_unit_feed(unit_embed)
+        else:
+            self.decoder.feed(unit_embed)
         self._current_unit_prefill_tokens.append(self.unit_token_id)
 
         # Step 2: process image
@@ -3257,10 +3328,10 @@ class MiniCPMODuplex:
             t0 = time.time()
 
             # normalize max_slice_nums to a list matching frame_list length
-            if isinstance(max_slice_nums, int):
-                max_slice_nums_list = [max_slice_nums] * len(frame_list)
+            if isinstance(effective_max_slice_nums, int):
+                max_slice_nums_list = [effective_max_slice_nums] * len(frame_list)
             else:
-                max_slice_nums_list = list(max_slice_nums)
+                max_slice_nums_list = list(effective_max_slice_nums)
                 if len(max_slice_nums_list) != len(frame_list):
                     raise ValueError(
                         f"max_slice_nums list length ({len(max_slice_nums_list)}) "
@@ -3377,7 +3448,20 @@ class MiniCPMODuplex:
                     feed_operations[-1] = (feed_operations[-1][0], True, feed_operations[-1][2])
 
                 # execute feed operations
-                if batch_vision_feed and feed_operations:
+                if merge_unit_feed:
+                    for embed, _is_last, token_id in feed_operations:
+                        _queue_unit_feed(embed)
+                        if token_id is not None:
+                            self._current_unit_prefill_tokens.append(token_id)
+                        else:
+                            embed_dim = embed.shape[0] if len(embed.shape) > 1 else 1
+                            self._current_unit_prefill_tokens.append(("img", embed_dim))
+                    # In VISION mode the next token is decoded from the final
+                    # vision token. Audio/text, when present, may override this
+                    # boundary below to preserve the staged path semantics.
+                    if mode == "VISION":
+                        pending_logits_position = unit_feed_length - 1
+                elif batch_vision_feed and feed_operations:
                     # batch mode: concatenate all embeddings and feed at once
                     # this reduces LLM forward passes from N to 1
                     #
@@ -3481,7 +3565,11 @@ class MiniCPMODuplex:
             cost_audio_embed = time.time() - t0
 
             t0 = time.time()
-            self.pending_logits, _ = self.decoder.feed(audio_embeds, return_logits=True)
+            if merge_unit_feed:
+                _audio_start, audio_end = _queue_unit_feed(audio_embeds)
+                pending_logits_position = audio_end - 1
+            else:
+                self.pending_logits, _ = self.decoder.feed(audio_embeds, return_logits=True)
             cost_audio_feed = time.time() - t0
 
             # schema tracking: use tuple to mark audio embedding: ("audio", dim)
@@ -3513,7 +3601,11 @@ class MiniCPMODuplex:
                 text_embeds = self.decoder.embed_token(text_token_ids_tensor)
 
                 # feed to decoder
-                if mode == "TEXT":
+                if merge_unit_feed:
+                    _text_start, text_end = _queue_unit_feed(text_embeds)
+                    if mode == "TEXT":
+                        pending_logits_position = text_end - 1
+                elif mode == "TEXT":
                     # text-only mode: get logits from the last token
                     self.pending_logits, _ = self.decoder.feed(text_embeds, return_logits=True)
                 else:
@@ -3523,6 +3615,27 @@ class MiniCPMODuplex:
                 # schema tracking: record text token IDs
                 for token_id in text_token_ids:
                     self._current_unit_prefill_tokens.append(token_id)
+
+        if merge_unit_feed:
+            all_unit_embeds = torch.cat(unit_feed_parts, dim=0)
+            t0 = time.time()
+            if pending_logits_position is None:
+                self.decoder.feed(all_unit_embeds)
+            else:
+                self.pending_logits, _ = self.decoder.feed(
+                    all_unit_embeds,
+                    return_logits=True,
+                    logits_position=pending_logits_position,
+                )
+            cost_unit_feed = time.time() - t0
+            # Preserve the existing modality timing fields for callers that
+            # already consume them, while exposing the exact combined-feed cost.
+            if has_audio:
+                cost_audio_feed = cost_unit_feed
+            elif has_frames:
+                cost_vision_feed = cost_unit_feed
+            else:
+                cost_audio_feed = cost_unit_feed
 
         self.current_mode = mode
 
@@ -3551,6 +3664,7 @@ class MiniCPMODuplex:
         start_time = time.time()
 
         if self.is_session_stop_set() or self.is_break_set():
+            self._update_strategy_after_generate(is_listen=True)
             return {
                 "is_listen": True,
                 "text": "",
@@ -3568,6 +3682,7 @@ class MiniCPMODuplex:
 
         # check if there are pending logits to process
         if not hasattr(self, "pending_logits") or self.pending_logits is None:
+            self._update_strategy_after_generate(is_listen=True)
             return {
                 "is_listen": True,
                 "text": "",
@@ -3686,6 +3801,7 @@ class MiniCPMODuplex:
 
         if is_listen:
             self.total_hidden.append([])
+            self._update_strategy_after_generate(is_listen=True)
             return {
                 "is_listen": True,
                 "text": "",
@@ -3705,6 +3821,7 @@ class MiniCPMODuplex:
         text = generated_text  # reuse already calculated text
 
         if not self.generate_audio:
+            self._update_strategy_after_generate(is_listen=False)
             return {
                 "is_listen": False,
                 "text": text,
@@ -3775,6 +3892,7 @@ class MiniCPMODuplex:
             self._reset_token2wav_for_new_turn()
 
         end_time = time.time()
+        self._update_strategy_after_generate(is_listen=False)
 
         return {
             "is_listen": False,

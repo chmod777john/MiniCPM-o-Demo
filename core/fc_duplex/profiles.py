@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Annotated, Literal, Union
 
 from minicpm_o5_sdk import O5UnitPolicy
+from o5_paths import has_complete_bundle
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, field_validator
 
 
@@ -26,8 +27,20 @@ class _BaseFcDeploymentProfile(BaseModel):
         default="0.0.5",
         description="训练与推理共同使用的正式 MiniCPMO5 SDK 版本。",
     )
-    model_path: str = Field(min_length=1, description="模型 config/tokenizer/processor 资产目录。")
-    pt_path: str = Field(min_length=1, description="完整 O45/O5 PyTorch state_dict 文件。")
+    # O45 keeps these legacy model artifacts. O5 uses weights_dir instead and
+    # deliberately does not require a standalone code/checkpoint/backbone path.
+    model_path: str | None = Field(
+        default=None,
+        description="O45 legacy model/code asset directory; not used by O5.",
+    )
+    pt_path: str | None = Field(
+        default=None,
+        description="O45 legacy PyTorch checkpoint; not used by O5.",
+    )
+    assets_dir: str | None = Field(
+        default=None,
+        description="Shared processor and Token2Wav assets directory.",
+    )
     checkpoint_sha256: str | None = Field(
         default=None,
         description="完整 checkpoint 的可选 SHA256；正式部署应填写。",
@@ -46,7 +59,7 @@ class _BaseFcDeploymentProfile(BaseModel):
         description="模型已验证的 non-spoken 调度策略。",
     )
 
-    @field_validator("profile_id", "model_path", "pt_path")
+    @field_validator("profile_id", "model_path", "pt_path", "assets_dir")
     @classmethod
     def validate_non_blank(cls, value: str) -> str:
         """拒绝空白标识和路径。
@@ -58,6 +71,8 @@ class _BaseFcDeploymentProfile(BaseModel):
             原始非空字符串。
         """
 
+        if value is None:
+            return value
         if value != value.strip():
             raise ValueError("Profile 字符串字段不能包含首尾空白")
         return value
@@ -85,6 +100,8 @@ class O45FcDeploymentProfile(_BaseFcDeploymentProfile):
     """O45 单卡双工 FC 部署配置。"""
 
     model_family: Literal["o45"] = "o45"
+    model_path: str = Field(min_length=1, description="O45 model/code asset directory.")
+    pt_path: str = Field(min_length=1, description="O45 PyTorch checkpoint.")
     tokenizer_target: Literal["o45_fc"] = "o45_fc"
     required_model_rows: Literal[151772] = 151772
     modeling_package: Literal["modeling.o45"] = "modeling.o45"
@@ -99,9 +116,16 @@ class O5FcDeploymentProfile(_BaseFcDeploymentProfile):
     required_model_rows: Literal[248168] = 248168
     modeling_package: Literal["modeling.o5"] = "modeling.o5"
     deployment_mode: Literal["tp2"] = "tp2"
-    backbone_dir: str = Field(
-        min_length=1,
-        description="从同一个完整 PT 抽取的 HF sharded safetensors LLM backbone。",
+    weights_dir: str | None = Field(
+        default=None,
+        description=(
+            "完整 O5 safetensors bundle。正式 O5 部署使用此字段；为空时只保留"
+            " legacy profile 的可读性，backend 会拒绝启动。"
+        ),
+    )
+    backbone_dir: str | None = Field(
+        default=None,
+        description="Deprecated legacy TP2 backbone; not consumed by the integrated loader.",
     )
     backbone_manifest_sha256: str | None = Field(
         default=None,
@@ -113,9 +137,9 @@ class O5FcDeploymentProfile(_BaseFcDeploymentProfile):
     spmd_heartbeat_interval_sec: float = Field(default=30.0, gt=0)
     attn_implementation: Literal["auto", "flash_attention_2", "sdpa", "eager"] = "auto"
 
-    @field_validator("backbone_dir")
+    @field_validator("weights_dir", "backbone_dir")
     @classmethod
-    def validate_backbone_dir(cls, value: str) -> str:
+    def validate_artifact_dir(cls, value: str | None) -> str | None:
         """拒绝带首尾空白的 backbone 路径。
 
         参数:
@@ -125,8 +149,10 @@ class O5FcDeploymentProfile(_BaseFcDeploymentProfile):
             原始非空路径。
         """
 
+        if value is None:
+            return value
         if value != value.strip():
-            raise ValueError("backbone_dir 不能包含首尾空白")
+            raise ValueError("artifact path 不能包含首尾空白")
         return value
 
     @field_validator("backbone_manifest_sha256")
@@ -218,7 +244,15 @@ def apply_fc_deployment_profile_environment(
     if profile.case_folder is not None:
         os.environ["FC_BOARD_CASE_FOLDER"] = profile.case_folder
     if isinstance(profile, O5FcDeploymentProfile):
-        os.environ["O5_BACKBONE_DIR"] = profile.backbone_dir
+        # The integrated O5 loader consumes one complete bundle. Clear the old
+        # independent-backbone variable so a stale shell cannot change loading.
+        os.environ.pop("O5_BACKBONE_DIR", None)
+        os.environ.pop("O5_WEIGHTS_DIR", None)
+        if profile.weights_dir is not None:
+            os.environ["O5_WEIGHTS_DIR"] = profile.weights_dir
+        os.environ.pop("O5_ASSETS_DIR", None)
+        if profile.assets_dir is not None:
+            os.environ["O5_ASSETS_DIR"] = profile.assets_dir
         os.environ["O5_LLM_CACHE"] = str(profile.llm_cache)
         os.environ["O5_LLM_GRAPH"] = "1"
         os.environ["O5_SPMD_HEARTBEAT_INTERVAL"] = str(
@@ -259,12 +293,43 @@ def _validate_profile_paths(profile: FcDeploymentProfile) -> None:
         无返回值；所有路径存在即通过。
     """
 
-    model_path = Path(profile.model_path)
-    pt_path = Path(profile.pt_path)
-    if not model_path.is_dir():
-        raise FileNotFoundError(f"model_path 不存在或不是目录: {model_path}")
-    if not pt_path.is_file():
-        raise FileNotFoundError(f"pt_path 不存在或不是文件: {pt_path}")
+    if isinstance(profile, O45FcDeploymentProfile):
+        model_path = Path(profile.model_path)
+        pt_path = Path(profile.pt_path)
+        if not model_path.is_dir():
+            raise FileNotFoundError(f"model_path 不存在或不是目录: {model_path}")
+        if not pt_path.is_file():
+            raise FileNotFoundError(f"pt_path 不存在或不是文件: {pt_path}")
+    elif profile.weights_dir is not None:
+        weights_dir = Path(profile.weights_dir)
+        if not has_complete_bundle(weights_dir):
+            raise FileNotFoundError(
+                "O5 weights_dir is not a complete safetensors bundle: "
+                f"{weights_dir}"
+            )
+    else:
+        # Keep old profiles loadable for inspection and checkpoint validation,
+        # but never let them silently select a different default O5 bundle.
+        for name, value, kind in (
+            ("model_path", profile.model_path, "directory"),
+            ("pt_path", profile.pt_path, "file"),
+            ("backbone_dir", profile.backbone_dir, "directory"),
+        ):
+            if not value:
+                raise FileNotFoundError(
+                    "legacy O5 profile must provide model_path, pt_path and backbone_dir"
+                )
+            path = Path(value)
+            if (kind == "directory" and not path.is_dir()) or (
+                kind == "file" and not path.is_file()
+            ):
+                raise FileNotFoundError(
+                    f"{name} 不存在或类型错误: {path}"
+                )
+    if profile.assets_dir is not None and not Path(profile.assets_dir).is_dir():
+        raise FileNotFoundError(
+            f"assets_dir 不存在或不是目录: {profile.assets_dir}"
+        )
     if (
         profile.reference_audio_path is not None
         and not Path(profile.reference_audio_path).is_file()
@@ -276,21 +341,6 @@ def _validate_profile_paths(profile: FcDeploymentProfile) -> None:
         raise FileNotFoundError(
             f"case_folder 不存在或不是目录: {profile.case_folder}"
         )
-    if isinstance(profile, O5FcDeploymentProfile):
-        backbone_dir = Path(profile.backbone_dir)
-        if not backbone_dir.is_dir():
-            raise FileNotFoundError(
-                f"backbone_dir 不存在或不是目录: {backbone_dir}"
-            )
-        required_files = (
-            backbone_dir / "config.json",
-            backbone_dir / "model.safetensors.index.json",
-        )
-        missing = [str(path) for path in required_files if not path.is_file()]
-        if missing:
-            raise FileNotFoundError(
-                "O5 TP2 backbone 缺少必要 HF 文件: " + ", ".join(missing)
-            )
 
 
 def _validate_sdk_version(expected_version: str) -> None:

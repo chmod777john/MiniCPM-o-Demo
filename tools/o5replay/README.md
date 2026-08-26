@@ -9,6 +9,12 @@
 
 同一个输入 session 可以分别交给 Canonical、Demo 单卡和 Demo TP2 运行。各运行结果写入不同目录，因此可以并行比较。
 
+Demo 运行固定使用当前 checkout 的 `MiniCPMO45` 代码/config/tokenizer，并自动发现
+完整 safetensors bundle。发布/评测时不再传 `--model-path`、`--ckpt-path` 或
+`--backbone-dir`；需要切换 Demo 权重时只传 `--weights-dir`，需要切换运行时资源时
+只传 `--assets-dir`。Canonical 仍单独使用 `--canonical-root` 和 `--ckpt-path`，因为它
+是精度参考实现，不是 Demo 发布加载链路。
+
 ## 工具职责
 
 | 工具 | 作用 |
@@ -153,6 +159,7 @@ python tools/o5replay/run_session.py \
   --session-dir /path/to/input_session \
   --out-dir /path/to/demo_single_free \
   --target demo-single \
+  --weights-dir /path/to/o5_full_hf \
   --forcing none \
   --capture-mode replay \
   --max-units 8 \
@@ -169,6 +176,7 @@ torchrun --standalone --nproc_per_node=2 \
   --session-dir /path/to/input_session \
   --out-dir /path/to/demo_tp2_free \
   --target demo-tp2 \
+  --weights-dir /path/to/o5_full_hf \
   --forcing none \
   --capture-mode replay \
   --max-units 8 \
@@ -186,6 +194,7 @@ torchrun --standalone --nproc_per_node=2 \
   --reference-session /path/to/canonical_ref \
   --out-dir /path/to/demo_tp2_tf \
   --target demo-tp2 \
+  --weights-dir /path/to/o5_full_hf \
   --forcing all \
   --capture-mode replay \
   --max-units 8 \

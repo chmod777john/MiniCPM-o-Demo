@@ -143,7 +143,8 @@ def _model_dump(obj: Any) -> Dict[str, Any]:
 def _runtime_env_snapshot() -> Dict[str, Any]:
     keys = (
         "O5_DEPLOY_MODE",
-        "O5_BACKBONE_DIR",
+        "O5_WEIGHTS_DIR",
+        "O5_ASSETS_DIR",
         "O5_LLM_CACHE",
         "O5_LLM_GRAPH",
         "O5_TTS_GRAPH",
@@ -331,6 +332,7 @@ class BackendProtocolSession:
         self._active_response_id: Optional[str] = None
         self._fc_runtime: Optional[FcDuplexSessionRuntime] = None
         self._replay_manifest: Optional[Dict[str, Any]] = None
+        self._strategy_hd = False
 
     async def send(self, event_type: str, **fields: Any) -> None:
         data = {"type": event_type, **{k: v for k, v in fields.items() if v is not None}}
@@ -533,6 +535,7 @@ class BackendProtocolSession:
         if "use_tts" in params:
             config["generate_audio"] = bool(params.get("use_tts"))
         resolved_config = _resolved_duplex_config(config)
+        self._strategy_hd = bool(resolved_config.get("strategy_hd", False))
         effective_llm_seed = seed if seed is not None else _torch_initial_seed()
         if config:
             await asyncio.to_thread(self.backend.set_duplex_config, resolved_config)
@@ -769,7 +772,16 @@ class BackendProtocolSession:
             decoded_frames = decode_frame_base64_list(_extract_frame_base64_list(payload))
             hints = _first_dict(payload.get("hints"))
             force_listen = bool(_coalesce(payload.get("force_listen"), hints.get("force_listen"), default=False))
-            max_slice_nums = int(_coalesce(payload.get("max_slice_nums"), hints.get("max_slice_nums"), default=1))
+            requested_max_slice_nums = _coalesce(
+                payload.get("max_slice_nums"), hints.get("max_slice_nums"), default=None
+            )
+            # Strategy-HD owns the lag-one value. Ordinary requests preserve
+            # the existing explicit value/default of one slice.
+            max_slice_nums = (
+                None
+                if self._strategy_hd
+                else int(requested_max_slice_nums) if requested_max_slice_nums is not None else 1
+            )
 
             t0 = time.perf_counter()
 
@@ -795,6 +807,8 @@ class BackendProtocolSession:
             metrics["prefill_ms"] = round(prefill_ms, 1)
             metrics["wall_clock_ms"] = round(wall_clock_ms, 1)
             if isinstance(prefill_result, dict):
+                if prefill_result.get("effective_max_slice_nums") is not None:
+                    metrics["effective_max_slice_nums"] = prefill_result["effective_max_slice_nums"]
                 n_vision_images = prefill_result.get("n_vision_images")
                 if n_vision_images is not None:
                     metrics["vision_slices"] = n_vision_images
@@ -1050,6 +1064,18 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="modeling.o5 backend protocol server")
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=22500)
+    parser.add_argument(
+        "--weights-dir",
+        default=None,
+        help="complete O5 safetensors bundle; omitted means use O5_WEIGHTS_DIR/default discovery",
+    )
+    parser.add_argument(
+        "--assets-dir",
+        default=None,
+        help="processor and Token2Wav assets directory; omitted means use default discovery",
+    )
+    # Kept for old command lines so they fail at the O5 artifact boundary with
+    # a useful message instead of an argparse error.
     parser.add_argument("--model-path", default=None)
     parser.add_argument("--pt-path", default=None)
     parser.add_argument("--fc-deployment-profile", default=None)
@@ -1064,24 +1090,17 @@ def main() -> None:
         or os.environ.get("FC_DEPLOYMENT_PROFILE")
         or getattr(cfg.model, "fc_deployment_profile_path", None)
     )
-    model_path = args.model_path or cfg.model.model_path
-    if not model_path and not profile_path:
-        parser.error(
-            "model path or FC deployment profile is required for the backend"
-        )
-
     SERVER_CONFIG.update({
-        "model_path": model_path,
         "gpu_id": args.gpu_id,
         "fc_deployment_profile_path": profile_path,
-        "pt_path": args.pt_path or cfg.model.pt_path,
+        "weights_dir": args.weights_dir or cfg.model.weights_dir,
+        "assets_dir": args.assets_dir or cfg.model.assets_dir,
         "ref_audio_path": args.ref_audio_path or cfg.ref_audio_path,
         "duplex_pause_timeout": args.duplex_pause_timeout or cfg.duplex_pause_timeout,
         "compile": cfg.compile,
         "chat_vocoder": cfg.chat_vocoder,
         "attn_implementation": os.environ.get("O5_ATTN_IMPLEMENTATION", cfg.attn_implementation),
         "deployment_mode": getattr(cfg.model, "deployment_mode", "single_eager"),
-        "backbone_dir": getattr(cfg.model, "backbone_dir", None),
         "llm_cache_len": getattr(cfg.model, "llm_cache_len", 8192),
     })
 

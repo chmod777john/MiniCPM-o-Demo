@@ -38,6 +38,7 @@ def _set_env_flag(name: str, enabled: bool) -> None:
 
 def _apply_safe_engine_env(args: argparse.Namespace) -> None:
     os.environ["O5_EXPERTS_IMPLEMENTATION"] = args.experts_implementation
+    os.environ["O5_GROUPED_PREFILL_MIN_TOKENS"] = str(args.grouped_prefill_min_tokens)
     _set_env_flag("O5_LLM_GRAPH", args.llm_graph)
     _set_env_flag("O5_TTS_GRAPH", args.tts_graph)
     _set_env_flag("O5_VOCODER_GRAPH", args.vocoder_graph)
@@ -45,6 +46,7 @@ def _apply_safe_engine_env(args: argparse.Namespace) -> None:
     _set_env_flag("O5_LMHEAD", args.lmhead)
     _set_env_flag("O5_FUSE_VISION_AUDIO", args.fuse_vision_audio)
     _set_env_flag("O5_VISION_BATCH", args.batch_vision_feed)
+    _set_env_flag("O5_UNIT_PREFILL_BATCH", args.unit_prefill_batch)
     os.environ["O5_LLM_CACHE"] = str(args.o5_llm_cache)
 
 
@@ -178,6 +180,8 @@ def _duplex_sampling_config(args: argparse.Namespace) -> dict[str, Any]:
         "text_repetition_penalty": args.text_repetition_penalty,
         "text_repetition_window_size": args.text_repetition_window_size,
         "length_penalty": args.length_penalty,
+        "strategy_hd": args.strategy_hd,
+        "strategy_hd_max_slice_nums": args.strategy_hd_max_slice_nums,
     }
 
 
@@ -185,12 +189,14 @@ def _engine_summary(args: argparse.Namespace) -> dict[str, Any]:
     tp = 2 if args.deployment_mode in {"tp2", "tp2_llm"} else 1
     return {
         "experts": args.experts_implementation,
+        "grouped_prefill_min_tokens": args.grouped_prefill_min_tokens,
         "tts_fast": args.tts_fast,
         "lmhead": args.lmhead,
         "tts_graph": args.tts_graph,
         "vocoder_graph": args.vocoder_graph,
         "fuse_vision_audio": args.fuse_vision_audio,
         "batch_vision_feed": args.batch_vision_feed,
+        "unit_prefill_batch": args.unit_prefill_batch,
         "llm_graph": args.llm_graph,
         "llm_cache": args.o5_llm_cache,
         "tp": tp,
@@ -219,6 +225,8 @@ def _build_tp2_model(args: argparse.Namespace):
             "top_p": args.top_p,
             "force_listen_count": args.force_listen_count,
             "n_timesteps": args.n_timesteps,
+            "strategy_hd": args.strategy_hd,
+            "strategy_hd_max_slice_nums": args.strategy_hd_max_slice_nums,
         },
     }
     return deploy.get_mode(args.deployment_mode).build(cfg)
@@ -366,7 +374,7 @@ def _run_backend_probe(args: argparse.Namespace, out_dir: Path) -> int:
             prefill = backend.duplex_prefill(
                 audio_waveform=chunks[idx],
                 frame_list=frame_list,
-                max_slice_nums=1,
+                max_slice_nums=None if args.strategy_hd else 1,
             )
             result = backend.duplex_generate()
             backend.duplex_finalize()
@@ -467,7 +475,14 @@ def main() -> int:
     parser.add_argument("--tts-argmax", action="store_true")
     parser.add_argument("--trace-token2wav", action="store_true")
     parser.add_argument("--trace-distribution", action="store_true")
-    parser.add_argument("--experts-implementation", choices=("eager", "batched_mm"), default="eager")
+    parser.add_argument(
+        "--experts-implementation",
+        choices=("eager", "batched_mm", "grouped_mm", "hybrid"),
+        default="eager",
+    )
+    parser.add_argument("--grouped-prefill-min-tokens", type=int, default=100)
+    parser.add_argument("--strategy-hd", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--strategy-hd-max-slice-nums", type=int, default=4)
     parser.add_argument("--o5-llm-cache", type=int, default=32768)
     parser.add_argument("--llm-graph", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--tts-graph", action=argparse.BooleanOptionalAction, default=False)
@@ -476,6 +491,12 @@ def main() -> int:
     parser.add_argument("--lmhead", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--fuse-vision-audio", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--batch-vision-feed", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument(
+        "--unit-prefill-batch",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="merge the complete multimodal input unit into one LLM prefill",
+    )
     parser.add_argument("--overwrite", action="store_true")
     args = parser.parse_args()
 
@@ -540,7 +561,7 @@ def main() -> int:
             prefill = model.duplex_prefill(
                 audio_waveform=chunks[idx],
                 frame_list=frame_list,
-                max_slice_nums=1,
+                max_slice_nums=None if args.strategy_hd else 1,
                 batch_vision_feed=args.batch_vision_feed,
             )
             result = generate_with_optional_argmax(
@@ -563,6 +584,9 @@ def main() -> int:
             units.append({
                 "unit_id": idx,
                 "prefill_success": bool(prefill.get("success")) if isinstance(prefill, dict) else None,
+                "effective_max_slice_nums": (
+                    prefill.get("effective_max_slice_nums") if isinstance(prefill, dict) else None
+                ),
                 "is_listen": bool(result.get("is_listen")),
                 "text": result.get("text", ""),
                 "end_of_turn": bool(result.get("end_of_turn")),

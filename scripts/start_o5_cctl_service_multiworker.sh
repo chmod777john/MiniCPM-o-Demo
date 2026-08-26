@@ -2,8 +2,8 @@
 set -euo pipefail
 
 PROJECT_DIR="${PROJECT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
-MODEL_PATH="${MODEL_PATH:-}"
-PT_PATH="${PT_PATH:-}"
+WEIGHTS_DIR="${WEIGHTS_DIR:-${O5_WEIGHTS_DIR:-${PROJECT_DIR}/weights}}"
+ASSETS_DIR="${ASSETS_DIR:-${O5_ASSETS_DIR:-}}"
 VENV_DIR="${VENV_DIR:-${PROJECT_DIR}/.venv}"
 
 BACKEND_HOST="${BACKEND_HOST:-127.0.0.1}"
@@ -31,6 +31,8 @@ cd "${PROJECT_DIR}"
 export PYTHONPATH="${PROJECT_DIR}:${PYTHONPATH:-}"
 export TOKENIZERS_PARALLELISM="${TOKENIZERS_PARALLELISM:-false}"
 export O5_TOKEN_TRACE_DIR
+if [ -d "${WEIGHTS_DIR}" ]; then export O5_WEIGHTS_DIR="${WEIGHTS_DIR}"; fi
+if [ -d "${ASSETS_DIR}" ]; then export O5_ASSETS_DIR="${ASSETS_DIR}"; fi
 
 PYTHON="${VENV_DIR}/bin/python"
 
@@ -38,14 +40,8 @@ if [ ! -x "${PYTHON}" ]; then
     echo "[start] missing python: ${PYTHON}" >&2
     exit 1
 fi
-if [ -z "${MODEL_PATH}" ] || [ ! -d "${MODEL_PATH}" ]; then
-    echo "[start] missing model dir: ${MODEL_PATH}" >&2
-    exit 1
-fi
-if [ -z "${PT_PATH}" ] || [ ! -f "${PT_PATH}" ]; then
-    echo "[start] missing pt file: ${PT_PATH}" >&2
-    exit 1
-fi
+has_safetensors=0
+if [ -f "${WEIGHTS_DIR}/model.safetensors.index.json" ] && [ -f "${WEIGHTS_DIR}/llm/config.json" ]; then has_safetensors=1; fi
 
 pids=()
 frpc_loop_pid=""
@@ -106,8 +102,8 @@ start_frpc_retry_loop() {
 }
 
 echo "[start] project=${PROJECT_DIR}"
-echo "[start] model=${MODEL_PATH}"
-echo "[start] pt=${PT_PATH}"
+echo "[start] weights=${WEIGHTS_DIR} safetensors=${has_safetensors}"
+echo "[start] assets=${ASSETS_DIR:-<auto>}"
 echo "[start] token_trace_dir=${O5_TOKEN_TRACE_DIR}"
 echo "[start] workers=${NUM_WORKERS} backend_base=${BACKEND_BASE_PORT} worker_base=${WORKER_BASE_PORT}"
 echo "[start] backend_start_stagger_seconds=${BACKEND_START_STAGGER_SECONDS}"
@@ -142,12 +138,10 @@ for ((i=0; i<NUM_WORKERS; i++)); do
     worker_endpoints+=("${worker_endpoint}")
 
     echo "[start] backend ${i}: physical_gpu=${gpu_id} visible_cuda=0 url=${backend_url}"
+    backend_args=(--host "${BACKEND_HOST}" --port "${backend_port}" --weights-dir "${WEIGHTS_DIR}" --gpu-id 0)
+    if [ -n "${ASSETS_DIR}" ]; then backend_args+=(--assets-dir "${ASSETS_DIR}"); fi
     CUDA_VISIBLE_DEVICES="${gpu_id}" "${PYTHON}" -m py_backend.server \
-        --host "${BACKEND_HOST}" \
-        --port "${backend_port}" \
-        --model-path "${MODEL_PATH}" \
-        --pt-path "${PT_PATH}" \
-        --gpu-id 0 \
+        "${backend_args[@]}" \
         > "${LOG_DIR}/backend_${i}.log" 2>&1 &
     pids+=("$!")
     if [ "${BACKEND_START_STAGGER_SECONDS}" -gt 0 ] && [ "$((i + 1))" -lt "${NUM_WORKERS}" ]; then

@@ -1,6 +1,6 @@
 {
   "schema_version": "o5_api_internal_settings.v1",
-  "runtime_python": "/user/weihongliang/MiniCPM-o-Demo-wt-o5-inference-refactor-2026-06-30/.venv-accel/bin/python",
+  "runtime_python": "/user/weihongliang/MiniCPM-o-Demo-wt-o5-inference-refactor-2026-06-30/.venv-high-cu128/bin/python",
   "base_model_path": "/user/weihongliang/MiniCPM-o-4_6",
   "sdk_version": "0.0.5",
   "unit_policy": {

@@ -37,7 +37,6 @@ from tools.o5replay.session_io import (  # noqa: E402
 )
 
 
-DEFAULT_MODEL_PATH = "/user/weihongliang/MiniCPM-o-4_6"
 DEFAULT_CANONICAL_ROOT = (
     "/user/weihongliang/worktrees/"
     "moe-35b-a3b-canonical-tts-drift-investigation-2026-08-17"
@@ -46,11 +45,6 @@ DEFAULT_CKPT = (
     "/user/weihongliang/o5_weights/"
     "chenmoye_minicpm_5o_moe_omni_long_context_sft_stage2_sft2_8k_"
     "audio_online_process_on_online_audio_process_v2_iter_100.pt"
-)
-DEFAULT_BACKBONE = (
-    "/user/weihongliang/o5_weights/"
-    "o5_backbone_hf_chenmoye_minicpm_5o_moe_omni_long_context_sft_stage2_"
-    "sft2_8k_audio_online_process_on_online_audio_process_v2_iter_100"
 )
 
 
@@ -83,6 +77,8 @@ def _sampling(args: argparse.Namespace, session: RecordedSession) -> dict[str, A
         "tts_temperature": float(value("tts_temperature", 0.8)),
         "tts_repetition_penalty": float(value("tts_repetition_penalty", 1.05)),
         "n_timesteps": int(value("n_timesteps", 10)),
+        "strategy_hd": _bool_override(args.strategy_hd, config.get("strategy_hd", False)),
+        "strategy_hd_max_slice_nums": int(value("strategy_hd_max_slice_nums", 4)),
     }
 
 
@@ -184,6 +180,13 @@ def _runtime_environment(device: str) -> dict[str, Any]:
     return info
 
 
+def _optional_path(value: Any) -> str | None:
+    """Serialize an optional legacy/replay artifact path without inventing one."""
+    if not value:
+        return None
+    return str(Path(value).resolve())
+
+
 def _configure_deterministic_replay(enabled: bool) -> None:
     """Apply deterministic CUDA controls before constructing a runtime."""
     if not enabled:
@@ -260,9 +263,11 @@ def run(args: argparse.Namespace) -> int:
             "target": args.target,
             "requested_attn_implementation": args.attn_implementation,
             "actual_text_attn_implementation": _runtime_attention_implementation(runtime),
-            "checkpoint": str(Path(args.ckpt_path).resolve()),
-            "model_path": str(Path(args.model_path).resolve()),
-            "backbone_dir": str(Path(args.backbone_dir).resolve()),
+            "checkpoint": _optional_path(getattr(args, "ckpt_path", None)),
+            "model_path": _optional_path(getattr(args, "model_path", None)),
+            "backbone_dir": _optional_path(getattr(args, "backbone_dir", None)),
+            "weights_dir": _optional_path(getattr(args, "weights_dir", None)),
+            "assets_dir": _optional_path(getattr(args, "assets_dir", None)),
             "runtime_environment": runtime_environment,
             # Keep the actual deployment knobs beside the tensors.  A replay
             # directory must be self-describing: "noaccel" in a folder name
@@ -414,9 +419,9 @@ def parse_args() -> argparse.Namespace:
 
     parser.add_argument("--canonical-root", default=DEFAULT_CANONICAL_ROOT)
     parser.add_argument("--token2wav-dir", default="/user/weihongliang/o5_model_assets/token2wav")
-    parser.add_argument("--model-path", default=DEFAULT_MODEL_PATH)
     parser.add_argument("--ckpt-path", default=DEFAULT_CKPT)
-    parser.add_argument("--backbone-dir", default=DEFAULT_BACKBONE)
+    parser.add_argument("--weights-dir")
+    parser.add_argument("--assets-dir")
     parser.add_argument("--device", default="cuda:0")
     parser.add_argument("--attn-implementation", default="sdpa")
     parser.add_argument(
@@ -450,7 +455,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--tts-repetition-penalty", type=float)
     parser.add_argument("--n-timesteps", type=int)
 
-    parser.add_argument("--experts-implementation", choices=("eager", "batched_mm"), default="batched_mm")
+    parser.add_argument(
+        "--experts-implementation",
+        choices=("eager", "batched_mm", "grouped_mm", "hybrid"),
+        default="batched_mm",
+    )
+    parser.add_argument("--grouped-prefill-min-tokens", type=int, default=100)
+    parser.add_argument("--strategy-hd", action=argparse.BooleanOptionalAction, default=None)
+    parser.add_argument("--strategy-hd-max-slice-nums", type=int, default=None)
     parser.add_argument("--demo-single-mode", choices=("single_eager", "single_opt"), default="single_opt")
     parser.add_argument("--llm-cache", type=int, default=32768)
     parser.add_argument("--llm-graph", action=argparse.BooleanOptionalAction, default=True)
@@ -460,6 +472,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--lmhead", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--fuse-vision-audio", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--batch-vision-feed", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument(
+        "--unit-prefill-batch",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="merge one multimodal unit into one feed; defaults to O5_UNIT_PREFILL_BATCH or enabled",
+    )
     return parser.parse_args()
 
 

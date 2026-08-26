@@ -69,8 +69,7 @@ from core.processors.unified import UnifiedProcessor
 
 # 创建统一处理器（一次加载）
 processor = UnifiedProcessor(
-    model_path="/path/to/base_model",  # HuggingFace 格式基础模型
-    pt_path="/path/to/custom_weights.pt",  # 可选：覆盖权重
+    weights_dir="/path/to/full/safetensors/bundle",
     ref_audio_path="/path/to/ref.wav",
 )
 
@@ -113,7 +112,6 @@ import time
 import logging
 import base64
 import hashlib
-import glob
 import importlib
 
 import numpy as np
@@ -950,6 +948,8 @@ class DuplexView:
             "text_repetition_window_size",
             "listen_prob_scale",
             "force_listen_count",
+            "strategy_hd",
+            "strategy_hd_max_slice_nums",
         ):
             if hasattr(duplex, attr):
                 setattr(duplex, attr, getattr(self.config, attr))
@@ -1015,7 +1015,7 @@ class DuplexView:
         audio_waveform: Optional[np.ndarray] = None,
         audio_path: Optional[str] = None,
         frame_list: Optional[List[np.ndarray]] = None,
-        max_slice_nums: int = 1,
+        max_slice_nums: Optional[int] = None,
     ) -> dict:
         """预填充用户音频
         
@@ -2790,7 +2790,7 @@ class UnifiedProcessor(BaseProcessor):
     - Each mode returns a dedicated View with type-safe API
 
     Usage:
-        >>> processor = UnifiedProcessor(model_path=..., pt_path=...)
+        >>> processor = UnifiedProcessor(weights_dir=...)
         >>>
         >>> # Chat mode
         >>> chat = processor.set_chat_mode()
@@ -2808,8 +2808,8 @@ class UnifiedProcessor(BaseProcessor):
         >>> result = duplex.generate()
 
     Attributes:
-        model_path: Base model path (HuggingFace format directory).
-        pt_path: Optional extra .pt weights path (overrides base model weights).
+        weights_dir: Complete safetensors bundle.  Model code/config always
+            come from this checkout's vendored ``modeling.o5`` package.
         device: Target device.
         ref_audio_path: Default reference audio path.
         model: MiniCPMO unified model instance.
@@ -2817,8 +2817,8 @@ class UnifiedProcessor(BaseProcessor):
 
     def __init__(
         self,
-        model_path: str,
-        pt_path: Optional[str] = None,
+        weights_dir: Optional[str] = None,
+        assets_dir: Optional[str] = None,
         device: str = "cuda",
         ref_audio_path: Optional[str] = None,
         duplex_config: Optional[DuplexConfig] = None,
@@ -2831,8 +2831,10 @@ class UnifiedProcessor(BaseProcessor):
         """Initialize the unified processor.
 
         Args:
-            model_path: Base model path (HuggingFace format directory).
-            pt_path: Optional extra .pt weights path (overrides base weights).
+            weights_dir: Optional complete safetensors bundle.  When omitted,
+                the published default bundle is discovered automatically.
+            assets_dir: Optional processor/Token2Wav assets directory.  When
+                omitted, the repository/default shared assets are discovered.
             device: Target device.
             ref_audio_path: Default reference audio path for TTS voice cloning.
                 If None, TTS requests fail-fast when the client also omits it.
@@ -2844,7 +2846,13 @@ class UnifiedProcessor(BaseProcessor):
                 ("auto" / "flash_attention_2" / "sdpa" / "eager").
             fc_model_family: 部署 Profile 明确指定的 FC 模型族。
         """
-        self.pt_path = pt_path
+        artifacts = resolve_artifacts(
+            weights_dir=weights_dir,
+            assets_dir=assets_dir or os.environ.get("O5_ASSETS_DIR"),
+        )
+        self.model_path = artifacts["model_path"]
+        self.weights_dir = artifacts["weights_dir"]
+        self.assets_dir = artifacts["assets_dir"]
         self.ref_audio_path = ref_audio_path
         self.duplex_config = duplex_config or DuplexConfig()
         self.preload_both_tts = preload_both_tts
@@ -2862,7 +2870,7 @@ class UnifiedProcessor(BaseProcessor):
         # Current mode
         self._current_mode: Optional[ProcessorMode] = None
 
-        super().__init__(model_path=model_path, device=device)
+        super().__init__(model_path=self.model_path, device=device)
 
     @property
     def mode(self) -> ProcessorMode:
@@ -2930,55 +2938,14 @@ class UnifiedProcessor(BaseProcessor):
             )
             return "sdpa"
 
-    def _is_quantized_model(self, model_path: str) -> bool:
-        """Check if the model at *model_path* uses quantization (AWQ / GPTQ / BnB).
-
-        Reads ``config.json`` in the model directory and looks for a
-        ``quantization_config`` section with a ``quant_method``.
-        """
-        config_file = os.path.join(model_path, "config.json")
-        if not os.path.isfile(config_file):
-            return False
-        try:
-            import json as _json
-            with open(config_file, "r", encoding="utf-8") as f:
-                cfg = _json.load(f)
-            qcfg = cfg.get("quantization_config")
-            return bool(qcfg and qcfg.get("quant_method"))
-        except Exception:
-            return False
-
-    def _has_hf_checkpoint_files(self, model_path: str) -> bool:
-        """Return whether *model_path* contains loadable HF checkpoint files."""
-        patterns = (
-            "model.safetensors",
-            "model-*.safetensors",
-            "pytorch_model.bin",
-            "pytorch_model-*.bin",
-        )
-        return any(glob.glob(os.path.join(model_path, pattern)) for pattern in patterns)
-
-    def _load_state_dict_from_pt(self, pt_path: str) -> dict:
-        try:
-            state_dict = torch.load(pt_path, map_location="cpu", weights_only=True)
-        except TypeError:
-            state_dict = torch.load(pt_path, map_location="cpu")
-        for key in ("state_dict", "model", "module"):
-            if isinstance(state_dict, dict) and isinstance(state_dict.get(key), dict):
-                return state_dict[key]
-        return state_dict
-
     def _load_model(self) -> None:
         """Load the unified model.
 
-        Supports both full-precision (bf16) and quantized (AWQ) model weights.
-        Quantization metadata (including ``modules_to_not_convert``) is read
-        from the model's own ``config.json``.  When quantization is detected
-        the loader skips ``.bfloat16()`` and ``torch.compile``.
+        Loads the complete safetensors bundle and keeps floating-point buffers
+        such as RoPE metadata out of the parameter cast.
         """
         logger.info(f"Loading unified model: {self.model_path}")
-        if self.pt_path:
-            logger.info(f"Extra weights: {self.pt_path}")
+        logger.info("Weights bundle: %s", self.weights_dir)
         start = time.time()
 
         # ── Deployment-mode framework dispatch (core.deploy) ──────────────────
@@ -2990,8 +2957,8 @@ class UnifiedProcessor(BaseProcessor):
         if _dep_mode != "single_eager":
             import core.deploy as _deploy
             _cfg = {
-                "model_path": self.model_path, "pt_path": self.pt_path,
-                "backbone_dir": _os.environ.get("O5_BACKBONE_DIR", ""),
+                "weights_dir": self.weights_dir,
+                "assets_dir": self.assets_dir,
                 "chat_vocoder": self.chat_vocoder,
                 "attn_implementation": self._resolve_attn_implementation(),
                 "llm_cache_len": int(_os.environ.get("O5_LLM_CACHE", "8192")),
@@ -3023,91 +2990,47 @@ class UnifiedProcessor(BaseProcessor):
             return
         # ──────────────────────────────────────────────────────────────────────
 
-        model_module = importlib.import_module(
-            f"modeling.{self.fc_model_family}.modeling_minicpmo_unified"
-        )
-        config_module = importlib.import_module(
-            f"modeling.{self.fc_model_family}.configuration_minicpmo"
-        )
+        if self.fc_model_family != "o5":
+            raise RuntimeError(
+                "The full-safetensors unified loader supports model_family='o5'; "
+                "use the legacy O45 serving path for model_family='o45'."
+            )
+
+        model_module = importlib.import_module("modeling.o5.modeling_minicpmo_unified")
+        config_module = importlib.import_module("modeling.o5.configuration_minicpmo")
         MiniCPMO = model_module.MiniCPMO
         MiniCPMOConfig = config_module.MiniCPMOConfig
 
         # Resolve attention implementation (auto-detect when set to "auto")
         resolved_attn = self._resolve_attn_implementation()
 
-        is_quantized = self._is_quantized_model(self.model_path)
-        if is_quantized:
-            logger.info("Quantized model detected")
+        logger.info("Loading complete safetensors bundle: %s", self.weights_dir)
+        config = AutoConfig.from_pretrained(self.model_path, trust_remote_code=True)
+        config._attn_implementation = resolved_attn
+        config._name_or_path = self.model_path
+        config.name_or_path = self.model_path
+        from accelerate import init_empty_weights
+        from core.deploy.weights import load_safetensors_into
 
-        pt_only_checkpoint = bool(self.pt_path) and not self._has_hf_checkpoint_files(self.model_path)
-        pt_already_loaded = False
-        if pt_only_checkpoint:
-            logger.info(
-                "No HF checkpoint files found in model_path; "
-                "building model from config and loading pt directly"
+        # Construct the outer model on meta, then stream the one complete
+        # safetensors bundle into it.  This is deliberately the only O5 load
+        # path: no implicit .pt or standalone-backbone fallback is allowed.
+        with init_empty_weights():
+            self.model = MiniCPMO(config)
+        missing, unexpected = load_safetensors_into(self.model, self.weights_dir)
+        if unexpected:
+            logger.info("Ignored bundle keys outside outer model: %d", len(unexpected))
+        if missing:
+            raise RuntimeError(
+                "Complete O5 safetensors bundle did not materialize all model keys: "
+                f"{missing[:5]}"
             )
-            config = MiniCPMOConfig.from_pretrained(self.model_path)
-            config._attn_implementation = resolved_attn
-            config._name_or_path = self.model_path
-            config.name_or_path = self.model_path
-            from accelerate import init_empty_weights
-
-            state_dict = self._load_state_dict_from_pt(self.pt_path)
-            embed_key = "llm.model.embed_tokens.weight"
-            if embed_key in state_dict:
-                checkpoint_vocab_size = int(state_dict[embed_key].shape[0])
-                configured_vocab_size = int(getattr(config, "vocab_size", checkpoint_vocab_size))
-                if checkpoint_vocab_size != configured_vocab_size:
-                    logger.warning(
-                        "Checkpoint/config vocabulary mismatch: checkpoint=%d, config=%d. "
-                        "Building the O5 LLM with the checkpoint vocabulary size before assign=True load.",
-                        checkpoint_vocab_size,
-                        configured_vocab_size,
-                    )
-                    config.vocab_size = checkpoint_vocab_size
-
-            with init_empty_weights():
-                self.model = MiniCPMO(config)
-
-            info = self.model.load_state_dict(state_dict, strict=False, assign=True)
-            logger.info(
-                "PT weights loaded — missing: %d, unexpected: %d",
-                len(info.missing_keys),
-                len(info.unexpected_keys),
-            )
-            if info.missing_keys:
-                logger.warning("Missing keys: %s...", info.missing_keys[:5])
-            if info.unexpected_keys:
-                logger.warning("Unexpected keys: %s...", info.unexpected_keys[:5])
-            del state_dict
-            pt_already_loaded = True
-        else:
-            # Load base model
-            self.model = MiniCPMO.from_pretrained(
-                self.model_path,
-                _attn_implementation=resolved_attn,
-            )
-
-        if is_quantized:
-            # AWQ/GPTQ: integer qweight/qzeros must NOT be cast to bfloat16.
-            # Non-quantized sub-modules (vpm, apm, tts, resampler) are already
-            # stored in the correct dtype by the checkpoint.
-            self.model.eval()
-            logger.info(
-                "Quantized model detected — skipping .bfloat16() cast "
-                "(quantized layers use integer weights)"
-            )
-            if self.device == "cuda":
-                self.model.cuda()
-        else:
-            # RoPE and other numerical-state buffers must remain float32. The
-            # canonical replay loader and TP2 builder use the same policy.
-            _place_model_preserving_float_buffers(self.model, self.device)
+        _place_model_preserving_float_buffers(self.model, self.device)
 
         load_time = time.time() - start
         logger.info(
             f"Base model loaded in {load_time:.1f}s, "
-            f"attn_implementation={resolved_attn}, quantized={is_quantized}"
+            f"attn_implementation={resolved_attn}, bundle={self.weights_dir}"
         )
 
         # Unified initialization (supports all three modes)
@@ -3115,7 +3038,6 @@ class UnifiedProcessor(BaseProcessor):
         init_start = time.time()
 
         self.model.init_unified(
-            pt_path=None if pt_already_loaded else self.pt_path,
             preload_both_tts=self.preload_both_tts,
             duplex_config={
                 "generate_audio": self.duplex_config.generate_audio,
@@ -3128,6 +3050,7 @@ class UnifiedProcessor(BaseProcessor):
             },
             device=self.device,
             chat_vocoder=self.chat_vocoder,
+            assets_dir=self.assets_dir,
         )
 
         init_time = time.time() - init_start
@@ -3136,10 +3059,7 @@ class UnifiedProcessor(BaseProcessor):
         # torch.compile acceleration + warmup (optional)
         if self.compile:
             compile_start = time.time()
-            # AWQ: skip llm.model (custom INT4 kernels incompatible with compile),
-            # but still compile vpm / resampler / tts.model (all float, full benefit).
-            skip = ["llm.model"] if is_quantized else None
-            self.model.apply_torch_compile(mode="default", dynamic=True, skip_modules=skip)
+            self.model.apply_torch_compile(mode="default", dynamic=True)
             self.model.warmup_compile(ref_audio_path=self.ref_audio_path)
             compile_time = time.time() - compile_start
             logger.info(f"torch.compile + warmup done in {compile_time:.1f}s")

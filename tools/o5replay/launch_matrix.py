@@ -142,7 +142,7 @@ def main() -> int:
     parser.add_argument("--capture-layers", action="store_true")
     parser.add_argument("--runner-arg", action="append", default=[], help="one additional run_session.py argument")
     parser.add_argument("--repo", default=str(Path(__file__).resolve().parents[2]))
-    parser.add_argument("--venv", default="/user/weihongliang/MiniCPM-o-Demo-wt-o5-inference-refactor-2026-06-30/.venv-accel")
+    parser.add_argument("--venv", default="/user/weihongliang/MiniCPM-o-Demo-wt-o5-inference-refactor-2026-06-30/.venv-high-cu128")
     parser.add_argument("--project", default="o5")
     parser.add_argument("--billing-account-id", default="N00002")
     parser.add_argument("--cluster", default="langfang_train")

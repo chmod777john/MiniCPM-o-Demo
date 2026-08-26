@@ -19,10 +19,7 @@
 ```python
 from core.processors import UnifiedProcessor
 
-processor = UnifiedProcessor(
-    model_path="/path/to/base_model",
-    pt_path="/path/to/custom.pt",  # 可选：覆盖权重
-)
+processor = UnifiedProcessor(weights_dir="/path/to/full/safetensors/bundle")
 
 # 模式切换（毫秒级）
 chat = processor.set_chat_mode()
@@ -39,8 +36,7 @@ from core.capabilities import ProcessorMode
 # 创建 UnifiedProcessor 并返回指定模式的 View
 chat_view = ProcessorFactory.create(
     mode=ProcessorMode.CHAT,
-    model_path="/path/to/base_model",
-    pt_path="/path/to/custom.pt",  # 可选
+    weights_dir="/path/to/full/safetensors/bundle",
 )
 ```
 
@@ -50,8 +46,7 @@ chat_view = ProcessorFactory.create(
 ```python
 config = {
     "mode": "DUPLEX",
-    "model_path": "/path/to/base_model",
-    "pt_path": "/path/to/custom.pt",  # 可选
+    "weights_dir": "/path/to/full/safetensors/bundle",  # 可选
     "ref_audio_path": "/path/to/ref.wav",
 }
 duplex_view = ProcessorFactory.from_config(config)
@@ -91,19 +86,17 @@ class ProcessorFactory:
     
     @staticmethod
     def get_processor(
-        model_path: str,
-        pt_path: Optional[str] = None,
+        weights_dir: Optional[str] = None,
         device: str = "cuda",
         ref_audio_path: Optional[str] = None,
         **kwargs
     ) -> UnifiedProcessor:
         """获取或创建 UnifiedProcessor（带缓存）
         
-        如果相同 model_path + pt_path 的 processor 已存在，直接复用。
+        如果相同 weights_dir 的 processor 已存在，直接复用。
         
         Args:
-            model_path: 基础模型路径（HuggingFace 格式目录）
-            pt_path: 额外的 .pt 权重路径（可选，用于覆盖基础模型权重）
+            weights_dir: 完整 safetensors bundle；为空时自动发现默认 bundle。
             device: 运行设备
             ref_audio_path: 参考音频路径
             **kwargs: 其他参数
@@ -111,11 +104,10 @@ class ProcessorFactory:
         Returns:
             UnifiedProcessor 实例
         """
-        cache_key = f"{model_path}:{pt_path or ''}"
+        cache_key = weights_dir or "<default-bundle>"
         if cache_key not in _processor_cache:
             _processor_cache[cache_key] = UnifiedProcessor(
-                model_path=model_path,
-                pt_path=pt_path,
+                weights_dir=weights_dir,
                 device=device,
                 ref_audio_path=ref_audio_path,
                 **kwargs
@@ -125,8 +117,7 @@ class ProcessorFactory:
     @staticmethod
     def create(
         mode: ProcessorMode,
-        model_path: str,
-        pt_path: Optional[str] = None,
+        weights_dir: Optional[str] = None,
         device: str = "cuda",
         ref_audio_path: Optional[str] = None,
         **kwargs
@@ -137,8 +128,7 @@ class ProcessorFactory:
         
         Args:
             mode: 处理器模式（CHAT/HALF_DUPLEX/DUPLEX）
-            model_path: 基础模型路径（HuggingFace 格式目录）
-            pt_path: 额外的 .pt 权重路径（可选，用于覆盖基础模型权重）
+            weights_dir: 完整 safetensors bundle；为空时自动发现默认 bundle。
             device: 运行设备，默认 "cuda"
             ref_audio_path: 参考音频路径（TTS 用）
             **kwargs: 其他参数传递给处理器构造函数
@@ -153,20 +143,17 @@ class ProcessorFactory:
             >>> # Chat
             >>> chat = ProcessorFactory.create(
             ...     ProcessorMode.CHAT,
-            ...     model_path="/path/to/model",
-            ...     pt_path="/path/to/weights.pt"
+            ...     weights_dir="/path/to/full/safetensors/bundle"
             ... )
             
             >>> # Duplex
             >>> duplex = ProcessorFactory.create(
             ...     ProcessorMode.DUPLEX,
-            ...     model_path="/path/to/model",
-            ...     pt_path="/path/to/weights.pt"
+            ...     weights_dir="/path/to/full/safetensors/bundle"
             ... )
         """
         processor = ProcessorFactory.get_processor(
-            model_path=model_path,
-            pt_path=pt_path,
+            weights_dir=weights_dir,
             device=device,
             ref_audio_path=ref_audio_path,
             **kwargs
@@ -188,7 +175,7 @@ class ProcessorFactory:
         便于从配置文件（YAML/JSON）加载处理器。
         
         Args:
-            config: 配置字典，必须包含 "mode" 和 "model_path"
+            config: 配置字典，必须包含 "mode"；可选 "weights_dir"
             
         Returns:
             View 实例
@@ -201,8 +188,7 @@ class ProcessorFactory:
             ```python
             config = {
                 "mode": "CHAT" | "HALF_DUPLEX" | "DUPLEX",
-                "model_path": "/path/to/model",
-                "pt_path": "/path/to/weights.pt",  # 可选，覆盖权重
+                "weights_dir": "/path/to/full/safetensors/bundle",  # 可选
                 "device": "cuda",  # 可选，默认 cuda
                 "ref_audio_path": "/path/to/ref.wav",  # 可选
                 # ... 其他参数
@@ -220,7 +206,7 @@ class ProcessorFactory:
         
         # 提取必需参数
         mode_str = config.pop("mode")
-        model_path = config.pop("model_path")
+        weights_dir = config.pop("weights_dir", None)
         
         # 解析模式
         try:
@@ -232,15 +218,13 @@ class ProcessorFactory:
             )
         
         # 提取可选参数
-        pt_path = config.pop("pt_path", None)
         device = config.pop("device", "cuda")
         ref_audio_path = config.pop("ref_audio_path", None)
         
         # 创建 View
         return ProcessorFactory.create(
             mode=mode,
-            model_path=model_path,
-            pt_path=pt_path,
+            weights_dir=weights_dir,
             device=device,
             ref_audio_path=ref_audio_path,
             **config  # 剩余参数传递给处理器
@@ -250,7 +234,7 @@ class ProcessorFactory:
 # 便捷函数
 def create_processor(
     mode: ProcessorMode,
-    model_path: str,
+    weights_dir: Optional[str] = None,
     **kwargs
 ) -> Union[ChatView, HalfDuplexView, DuplexView]:
     """创建 View（便捷函数）
@@ -259,7 +243,7 @@ def create_processor(
     
     Args:
         mode: 处理器模式
-        model_path: 模型路径
+        weights_dir: 完整 safetensors bundle；为空时自动发现默认 bundle
         **kwargs: 其他参数
         
     Returns:
@@ -270,4 +254,4 @@ def create_processor(
         >>> from core.capabilities import ProcessorMode
         >>> chat = create_processor(ProcessorMode.CHAT, "/path/to/model")
     """
-    return ProcessorFactory.create(mode=mode, model_path=model_path, **kwargs)
+    return ProcessorFactory.create(mode=mode, weights_dir=weights_dir, **kwargs)

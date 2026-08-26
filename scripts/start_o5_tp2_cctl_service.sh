@@ -2,9 +2,8 @@
 set -euo pipefail
 
 PROJECT_DIR="${PROJECT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
-MODEL_PATH="${MODEL_PATH:-}"
-PT_PATH="${PT_PATH:-}"
-BACKBONE_DIR="${BACKBONE_DIR:-${O5_BACKBONE_DIR:-}}"
+WEIGHTS_DIR="${WEIGHTS_DIR:-${O5_WEIGHTS_DIR:-${PROJECT_DIR}/weights}}"
+ASSETS_DIR="${ASSETS_DIR:-${O5_ASSETS_DIR:-}}"
 VENV_DIR="${VENV_DIR:-${PROJECT_DIR}/.venv}"
 
 BACKEND_HOST="${BACKEND_HOST:-127.0.0.1}"
@@ -36,7 +35,8 @@ cd "${PROJECT_DIR}"
 
 export PYTHONPATH="${PROJECT_DIR}:${PYTHONPATH:-}"
 export TOKENIZERS_PARALLELISM="${TOKENIZERS_PARALLELISM:-false}"
-export O5_BACKBONE_DIR="${BACKBONE_DIR}"
+if [ -d "${WEIGHTS_DIR}" ]; then export O5_WEIGHTS_DIR="${WEIGHTS_DIR}"; fi
+if [ -d "${ASSETS_DIR}" ]; then export O5_ASSETS_DIR="${ASSETS_DIR}"; fi
 export O5_LLM_CACHE
 export O5_SPMD_HEARTBEAT_INTERVAL
 export O5_DETERMINISTIC_REPLAY
@@ -54,9 +54,8 @@ WORKER_ENDPOINT="${WORKER_HOST}:${WORKER_PORT}"
 GATEWAY_REGISTRY_URL="http://127.0.0.1:${GATEWAY_INTERNAL_PORT}/internal/workers/${WORKER_ID}"
 
 if [ ! -x "${PYTHON}" ]; then echo "[tp2-start] missing python: ${PYTHON}" >&2; exit 1; fi
-if [ -z "${MODEL_PATH}" ] || [ ! -d "${MODEL_PATH}" ]; then echo "[tp2-start] missing MODEL_PATH=${MODEL_PATH}" >&2; exit 1; fi
-if [ -z "${PT_PATH}" ] || [ ! -f "${PT_PATH}" ]; then echo "[tp2-start] missing PT_PATH=${PT_PATH}" >&2; exit 1; fi
-if [ -z "${BACKBONE_DIR}" ] || [ ! -d "${BACKBONE_DIR}" ]; then echo "[tp2-start] missing BACKBONE_DIR=${BACKBONE_DIR}" >&2; exit 1; fi
+has_safetensors=0
+if [ -f "${WEIGHTS_DIR}/model.safetensors.index.json" ] && [ -f "${WEIGHTS_DIR}/llm/config.json" ]; then has_safetensors=1; fi
 
 backend_pid=""; worker_pid=""; gateway_pid=""; frpc_pid=""
 cleanup() {
@@ -82,11 +81,11 @@ wait_http() {
 }
 
 echo "[tp2-start] project=${PROJECT_DIR}"
-echo "[tp2-start] model=${MODEL_PATH}"
-echo "[tp2-start] pt=${PT_PATH}"
+echo "[tp2-start] weights=${WEIGHTS_DIR} safetensors=${has_safetensors}"
+echo "[tp2-start] assets=${ASSETS_DIR:-<auto>}"
 echo "[tp2-start] ref_audio=${REF_AUDIO_PATH:-<model-default>}"
 echo "[tp2-start] token_trace_dir=${O5_TOKEN_TRACE_DIR}"
-echo "[tp2-start] backbone=${BACKBONE_DIR} llm_cache=${O5_LLM_CACHE} spmd_heartbeat=${O5_SPMD_HEARTBEAT_INTERVAL}"
+echo "[tp2-start] llm_cache=${O5_LLM_CACHE} spmd_heartbeat=${O5_SPMD_HEARTBEAT_INTERVAL}"
 if [ "${GATEWAY_HTTPS}" = "1" ]; then
     gateway_scheme="https"
     gateway_args=(--https --ssl-certfile certs/cert.pem --ssl-keyfile certs/key.pem)
@@ -108,9 +107,11 @@ wait_http "http://127.0.0.1:${GATEWAY_INTERNAL_PORT}/health" 120 "gateway-intern
 backend_args=(
     --host "${BACKEND_HOST}"
     --port "${BACKEND_PORT}"
-    --model-path "${MODEL_PATH}"
-    --pt-path "${PT_PATH}"
+    --weights-dir "${WEIGHTS_DIR}"
 )
+if [ -n "${ASSETS_DIR}" ]; then
+    backend_args+=(--assets-dir "${ASSETS_DIR}")
+fi
 if [ -n "${REF_AUDIO_PATH}" ]; then
     backend_args+=(--ref-audio-path "${REF_AUDIO_PATH}")
 fi

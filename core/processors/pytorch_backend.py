@@ -37,6 +37,7 @@ from core.fc_duplex.system_input import (
 )
 from core.schemas.streaming import StreamingChunk, StreamingRequest, StreamingResponse
 from core.sampling import tts_argmax_scope
+from o5_paths import DEFAULT_MODEL_PATH
 
 logger = logging.getLogger("pytorch_backend")
 
@@ -49,25 +50,32 @@ class PyTorchBackend:
 
     def __init__(
         self,
-        model_path: str,
         gpu_id: int,
-        pt_path: Optional[str] = None,
+        weights_dir: Optional[str] = None,
+        assets_dir: Optional[str] = None,
         ref_audio_path: Optional[str] = None,
         duplex_pause_timeout: float = 60.0,
         compile: bool = False,
         chat_vocoder: str = "token2wav",
         attn_implementation: str = "auto",
         fc_model_family: Literal["o45", "o5"] = "o5",
+        # Kept as keyword-only compatibility shims for old local callers.
+        # O5 serving never reads these legacy artifacts.
+        model_path: Optional[str] = None,
+        pt_path: Optional[str] = None,
     ):
-        self.model_path = model_path
+        self.model_path = str(DEFAULT_MODEL_PATH)
         self.gpu_id = gpu_id
-        self.pt_path = pt_path
+        self.weights_dir = weights_dir
+        self.assets_dir = assets_dir
         self.ref_audio_path = ref_audio_path
         self.duplex_pause_timeout = duplex_pause_timeout
         self.compile = compile
         self.chat_vocoder = chat_vocoder
         self.attn_implementation = attn_implementation
         self.fc_model_family = fc_model_family
+        self.legacy_model_path = model_path
+        self.legacy_pt_path = pt_path
 
         self.status = "loading"
         self.processor = None
@@ -97,8 +105,8 @@ class PyTorchBackend:
         from core.processors.unified import UnifiedProcessor
 
         self.processor = UnifiedProcessor(
-            model_path=self.model_path,
-            pt_path=self.pt_path,
+            weights_dir=self.weights_dir,
+            assets_dir=self.assets_dir,
             ref_audio_path=self.ref_audio_path,
             compile=self.compile,
             chat_vocoder=self.chat_vocoder,
@@ -167,8 +175,7 @@ class PyTorchBackend:
                 "session_id": session_id,
                 "capture_mode": self._trace_capture_mode,
                 "deployment_mode": os.environ.get("O5_DEPLOY_MODE", "single_eager"),
-                "model_path": self.model_path,
-                "checkpoint": self.pt_path,
+                "weights_dir": self.weights_dir,
             },
         )
         session_events = self._trace_controller.drain()
@@ -517,7 +524,7 @@ class PyTorchBackend:
         self,
         audio_waveform: Optional[np.ndarray] = None,
         frame_list: Optional[list] = None,
-        max_slice_nums: int = 1,
+        max_slice_nums: Optional[int] = None,
     ) -> Dict[str, Any]:
         duplex_view = self.processor.set_duplex_mode()
         return duplex_view.prefill(

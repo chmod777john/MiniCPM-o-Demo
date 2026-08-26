@@ -9,14 +9,15 @@ Worker 和 Gateway 统一读取此文件。
     3. config.json（与本文件同级目录，gitignored）
     4. Pydantic 默认值（本文件中定义）
 
-首次部署时，复制 config.example.json 为 config.json 并修改 model_path：
+首次部署时，可直接复制 config.example.json；默认会使用仓库内代码和自动发现的
+完整 safetensors bundle。只有切换模型或 assets 时才需要修改配置：
     cp config.example.json config.json
-    # 编辑 config.json 中的 model.model_path
+    # 可选：编辑 config.json 中的 model.weights_dir 或 model.assets_dir
 
 使用方式：
     from config import get_config
     config = get_config()
-    print(config.model.model_path)
+    print(config.model.weights_dir)
     print(config.audio.playback_delay_ms)
 """
 
@@ -46,13 +47,22 @@ class ModelConfig(BaseModel):
 
     model_config = {"protected_namespaces": ()}
 
-    model_path: str = Field(
-        default="",
+    weights_dir: Optional[str] = Field(
+        default=None,
         description=(
-            "基础模型路径（HuggingFace 格式目录）。"
-            "仅加载模型的 backend 进程必需；gateway/worker 不读此字段。"
-            "为空时 load_config 不报错（便于无模型的 gateway 启动），"
-            "由 backend 在构造模型时校验非空。"
+            "完整 HF safetensors bundle；为空时由 O5_WEIGHTS_DIR 或默认解析规则发现。"
+        ),
+    )
+    assets_dir: Optional[str] = Field(
+        default=None,
+        description=(
+            "processor/Token2Wav 运行时 assets 目录；为空时使用共享默认 assets。"
+        ),
+    )
+    model_path: Optional[str] = Field(
+        default=None,
+        description=(
+            "Deprecated O45 legacy model path; integrated O5 serving does not use it."
         ),
     )
     fc_deployment_profile_path: Optional[str] = Field(
@@ -64,7 +74,7 @@ class ModelConfig(BaseModel):
     )
     pt_path: Optional[str] = Field(
         default=None,
-        description="额外权重路径（.pt 文件，可选）。为 null 时不加载额外权重。",
+        description="Deprecated O45 legacy .pt checkpoint; integrated O5 serving does not use it.",
     )
     deployment_mode: str = Field(
         default="single_eager",
@@ -76,10 +86,6 @@ class ModelConfig(BaseModel):
             "tp2_llm = 实验性双卡张量并行，rank 同步下沉到 LLM wrapper。"
             "新模式在 core/deploy/modes.py 注册即可。"
         ),
-    )
-    backbone_dir: Optional[str] = Field(
-        default=None,
-        description="tp2 模式：抽取出的 HF 格式骨干目录（from_pretrained(tp_plan) 分片加载）。",
     )
     llm_cache_len: int = Field(
         default=8192,
@@ -209,13 +215,13 @@ class DuplexSectionConfig(BaseModel):
 class ServiceConfig(BaseModel):
     """modeling.o5 服务完整配置
 
-    从 config.json 加载，所有字段（除 model.model_path）均有默认值。
+    从 config.json 加载，所有字段都有默认值。
     用户只需在 config.json 中写需要覆盖的字段。
     """
 
     model: ModelConfig = Field(
         default_factory=ModelConfig,
-        description="模型加载配置（gateway/worker 可省略；backend 需 model_path）",
+        description="模型加载配置（gateway/worker 可省略；backend 使用仓库默认路径）",
     )
     audio: AudioConfig = Field(
         default_factory=AudioConfig,
@@ -331,8 +337,8 @@ def load_config(path: str = _CONFIG_PATH) -> ServiceConfig:
     所有字段都有默认值，文件可以完全不存在（此时全走默认）——这让无模型的
     gateway / worker 进程无需 config.json 即可启动。
 
-    唯一对内容有要求的是 `model.model_path`，但它只对加载模型的 backend 进程必需，
-    且该校验下沉到 backend 构造模型时执行（见 py_backend/server.py），这里不强制。
+    backend 默认使用仓库内的 `MiniCPMO45` 配置和代码，并自动寻找完整
+    safetensors bundle；`weights_dir` 和 `assets_dir` 可以按需覆盖。
 
     Args:
         path: config.json 的路径
@@ -345,8 +351,7 @@ def load_config(path: str = _CONFIG_PATH) -> ServiceConfig:
     """
     if not os.path.exists(path):
         logger.warning(
-            "config.json 不存在 (%s)，使用全部默认值。"
-            "加载模型的进程请通过 --model-path 或 config.json 提供 model.model_path。",
+            "config.json 不存在 (%s)，使用全部默认值；模型 artifact 由默认解析规则寻找。",
             path,
         )
         return ServiceConfig()
@@ -356,7 +361,7 @@ def load_config(path: str = _CONFIG_PATH) -> ServiceConfig:
 
     config = ServiceConfig(**data)
     logger.info(
-        f"配置已加载: model={config.model.model_path or '(未设置)'}, "
+        f"配置已加载: weights={config.model.weights_dir or '(auto)'}, "
         f"attn_implementation={config.attn_implementation}, "
         f"gateway_port={config.gateway_port}, "
         f"playback_delay_ms={config.playback_delay_ms}, "
