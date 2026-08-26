@@ -124,9 +124,9 @@ def _surgery_tp(
     load_safetensors_into(model, cfg["weights_dir"], exclude_prefixes=("llm.",))
     model.llm = None
     _place_outer_model(model, device)
-    # The complete bundle contains the native Qwen config and root shards.
-    # Keeping one artifact for both outer modules and TP avoids a second copy
-    # of the standalone backbone and removes a source of checkpoint skew.
+    # The complete bundle keeps the public MiniCPMO ``llm.*`` namespace.
+    # Translate that prefix only while loading the standalone Qwen target;
+    # the same shards are still shared by the outer model and TP2.
     tp_root = cfg["weights_dir"]
     tp_config_root = os.path.join(cfg["weights_dir"], "llm")
     tp_cfg = AutoConfig.from_pretrained(tp_config_root, trust_remote_code=True)
@@ -135,6 +135,7 @@ def _surgery_tp(
         tp_root,
         config=tp_cfg,
         tp_plan="auto",
+        key_mapping={r"^llm\.": ""},
         dtype=torch.bfloat16,
         attn_implementation=cfg.get("attn_implementation", "sdpa"),
     )

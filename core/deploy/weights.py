@@ -38,12 +38,12 @@ def _matches(
 def _artifact_key_candidates(key: str, expected: set[str]) -> tuple[str, ...]:
     """Return exact and complete-bundle aliases for one artifact key.
 
-    The published bundle stores the LLM in the native Transformers namespace
-    (``model.*`` and ``lm_head.*``), while the outer MiniCPMO module exposes it
-    below ``llm.``.  Keeping the artifact in the native namespace lets the
-    same shards be consumed by ``AutoModelForCausalLM.from_pretrained`` for
-    TP2.  The alias is deliberately limited to keys that exist in the target
-    module, so unrelated checkpoints cannot be silently remapped.
+    The public complete bundle normally stores the LLM below ``llm.*`` while
+    the outer MiniCPMO module exposes the same names.  Older/internal bundles
+    may store native Qwen keys (``model.*`` and ``lm_head.*``); support that
+    one-way alias for compatibility.  The alias is deliberately limited to
+    keys that exist in the target module, so unrelated checkpoints cannot be
+    silently remapped.
     """
     candidates = [key]
     if not key.startswith("llm."):

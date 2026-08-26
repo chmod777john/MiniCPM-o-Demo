@@ -17,9 +17,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent
 DEFAULT_MODEL_PATH = PROJECT_ROOT / "modeling" / "o5"
 DEFAULT_WEIGHTS_DIR = PROJECT_ROOT / "weights"
 DEFAULT_FULL_BUNDLE = Path(
-    "/user/weihongliang/o5_weights/o5_full_hf_"
-    "chenmoye_minicpm_5o_moe_omni_long_context_sft_stage2_sft2_8k_"
-    "audio_online_process_on_online_audio_process_v2_iter_100"
+    "/user/weihongliang/o5_weights/o5_full_hf_public_llm_iter_100_20260826"
 )
 DEFAULT_ASSETS_DIR = Path("/user/weihongliang/MiniCPM-o-4_6/assets")
 

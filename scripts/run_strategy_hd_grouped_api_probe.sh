@@ -3,7 +3,7 @@ set -euo pipefail
 
 PROJECT_DIR="${PROJECT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 VENV_DIR="${VENV_DIR:-/user/weihongliang/MiniCPM-o-Demo-wt-o5-inference-refactor-2026-06-30/.venv-high-cu128}"
-WEIGHTS_DIR="${WEIGHTS_DIR:-/user/weihongliang/o5_weights/o5_full_hf_chenmoye_minicpm_5o_moe_omni_long_context_sft_stage2_sft2_8k_audio_online_process_on_online_audio_process_v2_iter_100}"
+WEIGHTS_DIR="${WEIGHTS_DIR:-/user/weihongliang/o5_weights/o5_full_hf_public_llm_iter_100_20260826}"
 ASSETS_DIR="${ASSETS_DIR:-/user/weihongliang/MiniCPM-o-4_6/assets}"
 VIDEO_PATH="${VIDEO_PATH:-/user/weihongliang/omni_demo_duplex_01.mp4}"
 PROMPT_WAV="${PROMPT_WAV:-/user/weihongliang/MiniCPM-o-4_6/assets/audio_cases/paimon__system_ref_audio.wav}"

@@ -58,15 +58,14 @@ def parse_args() -> argparse.Namespace:
 
 
 def _write_bundle(model, output_dir: Path, max_shard_size: str) -> dict[str, str]:
-    """Write one complete bundle with a TP-compatible LLM namespace.
+    """Write one complete bundle using the public MiniCPMO namespace.
 
-    The outer Demo module names LLM parameters ``llm.model.*`` while native
-    Qwen loading expects ``model.*``.  Store the latter once and let the outer
-    loader alias it back under ``llm.``.  This is the key detail that avoids a
-    duplicated standalone TP backbone.
+    The full published artifact keeps LLM parameters under ``llm.*``.  TP2
+    maps that prefix at load time when it instantiates the standalone Qwen
+    backbone, so the artifact does not need a second namespace or copy.
     """
     state = {
-        (key[4:] if key.startswith("llm.") else key): value.detach().cpu().contiguous()
+        key: value.detach().cpu().contiguous()
         for key, value in model.state_dict().items()
     }
     split = split_torch_state_dict_into_shards(state, max_shard_size=max_shard_size)
@@ -136,7 +135,7 @@ def main() -> int:
     manifest = {
         "format": "o5-complete-hf-safetensors-v1",
         "scope": "complete MiniCPMO model state",
-        "llm_namespace": "native Qwen model.* stored once; outer loader aliases llm.*",
+        "llm_namespace": "public MiniCPMO llm.*; TP2 maps the prefix at load time",
         "source_checkpoint": str(pt_path),
         "source_model_path": str(model_path),
         "source_commit": source_commit,

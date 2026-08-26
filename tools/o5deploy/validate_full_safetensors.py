@@ -52,7 +52,11 @@ def main() -> int:
     with init_empty_weights():
         llm = AutoModelForCausalLM.from_config(llm_config)
     expected_llm = set(llm.state_dict())
-    artifact_llm = {key for key in index if key in expected_llm}
+    artifact_llm = {
+        key[4:] if key.startswith("llm.") else key
+        for key in index
+        if key in expected_llm or (key.startswith("llm.") and key[4:] in expected_llm)
+    }
     missing_llm = sorted(expected_llm - artifact_llm)
     if missing_llm:
         raise RuntimeError(f"TP2 LLM view missing {len(missing_llm)} keys: {missing_llm[:5]}")
