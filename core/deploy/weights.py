@@ -51,6 +51,61 @@ def _artifact_key_candidates(key: str, expected: set[str]) -> tuple[str, ...]:
     return tuple(candidate for candidate in candidates if candidate in expected)
 
 
+def _maybe_resize_llm_vocab(
+    model: torch.nn.Module,
+    root: Path,
+    weight_map: dict[str, str],
+    safe_open,
+    exclude_prefixes: Optional[Iterable[str]],
+) -> None:
+    """Match a complete bundle's LLM vocabulary before ``assign=True`` load.
+
+    FC checkpoints may contain the 24 SDK protocol rows (248168) while an
+    older code/config directory still declares the base 248144 rows.  The
+    extra rows belong to the LLM embedding and lm_head only; TTS keeps its
+    independent text embedding size.  TP2 skips this because it excludes the
+    outer ``llm.*`` namespace and constructs the native LLM from ``llm/``.
+    """
+    excludes = tuple(exclude_prefixes or ())
+    if any(prefix == "llm." or prefix.startswith("llm.") for prefix in excludes):
+        return
+
+    artifact_key = next(
+        (
+            key
+            for key in (
+                "llm.model.embed_tokens.weight",
+                "model.embed_tokens.weight",
+            )
+            if key in weight_map
+        ),
+        None,
+    )
+    if artifact_key is None:
+        return
+    shard_path = root / weight_map[artifact_key]
+    with safe_open(str(shard_path), framework="pt", device="cpu") as handle:
+        checkpoint_vocab_size = int(handle.get_slice(artifact_key).get_shape()[0])
+
+    llm = getattr(model, "llm", None)
+    embeddings = getattr(llm, "get_input_embeddings", lambda: None)()
+    if embeddings is None or not hasattr(embeddings, "weight"):
+        return
+    configured_vocab_size = int(embeddings.weight.shape[0])
+    if checkpoint_vocab_size == configured_vocab_size:
+        return
+    resize = getattr(llm, "resize_token_embeddings", None)
+    if not callable(resize):
+        raise RuntimeError(
+            "complete safetensors bundle requires LLM vocabulary resize, but "
+            "the target model does not expose resize_token_embeddings"
+        )
+    resize(checkpoint_vocab_size, mean_resizing=False)
+    config = getattr(model, "config", None)
+    if config is not None and hasattr(config, "vocab_size"):
+        config.vocab_size = checkpoint_vocab_size
+
+
 def load_safetensors_into(
     model: torch.nn.Module,
     directory: str | Path,
@@ -70,8 +125,15 @@ def load_safetensors_into(
     except ImportError as exc:
         raise RuntimeError("safetensors is required for the HF weight bundle") from exc
 
-    expected = set(model.state_dict().keys())
     weight_map = _weight_map(root)
+    _maybe_resize_llm_vocab(
+        model,
+        root,
+        weight_map,
+        safe_open,
+        exclude_prefixes,
+    )
+    expected = set(model.state_dict().keys())
     loaded: set[str] = set()
     used_artifact_keys: set[str] = set()
     shard_names = list(dict.fromkeys(weight_map.values()))
