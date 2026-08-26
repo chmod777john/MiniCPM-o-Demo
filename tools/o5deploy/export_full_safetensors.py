@@ -100,11 +100,26 @@ def main() -> int:
     config = AutoConfig.from_pretrained(str(model_path), trust_remote_code=True)
     config._name_or_path = str(model_path)
     config.name_or_path = str(model_path)
-    with init_empty_weights():
-        model = MiniCPMO(config)
-
     print(f"[export] loading PT metadata/tensors: {pt_path}", flush=True)
     state = load_state_dict(pt_path)
+    embed_key = "llm.model.embed_tokens.weight"
+    checkpoint_embeddings = state.get(embed_key)
+    if checkpoint_embeddings is not None:
+        checkpoint_vocab_size = int(checkpoint_embeddings.shape[0])
+        configured_vocab_size = int(getattr(config, "vocab_size", checkpoint_vocab_size))
+        if checkpoint_vocab_size != configured_vocab_size:
+            # FC checkpoints include the 24 SDK protocol rows.  Resize only the
+            # LLM vocabulary; the TTS text embedding intentionally remains on
+            # its own 248144-row vocabulary.
+            print(
+                "[export] checkpoint/config LLM vocabulary mismatch: "
+                f"checkpoint={checkpoint_vocab_size} config={configured_vocab_size}; "
+                "using checkpoint vocabulary",
+                flush=True,
+            )
+            config.vocab_size = checkpoint_vocab_size
+    with init_empty_weights():
+        model = MiniCPMO(config)
     info = model.load_state_dict(state, strict=False, assign=True)
     print(
         f"[export] loaded keys={len(state)} missing={len(info.missing_keys)} "
