@@ -55,6 +55,36 @@ MAX_JOBS=16 bash install.sh --with-accel
 
 ## 启动 demo 服务
 
+### Docker Compose
+
+`docker-compose.deploy.yml` is the image deployment entrypoint for selectable
+single-card and two-card TP2 topologies. Model weights and runtime assets are
+mounted read-only at runtime and are not copied into the image.
+
+Single card:
+
+```bash
+GPU_ID=0 \
+WEIGHTS_HOST_PATH=/path/to/o5-full-bundle \
+ASSETS_HOST_PATH=/path/to/o5-assets \
+docker compose -f docker-compose.deploy.yml --profile single up -d
+```
+
+TP2 on two cards:
+
+```bash
+TP2_GPU0=0 TP2_GPU1=1 \
+WEIGHTS_HOST_PATH=/path/to/o5-full-bundle \
+ASSETS_HOST_PATH=/path/to/o5-assets \
+docker compose -f docker-compose.deploy.yml --profile tp2 up -d
+```
+
+The `single` profile starts an eager one-GPU backend. The `tp2` profile
+assigns both GPUs to one worker container and starts two backend ranks with
+`torchrun`. Acceleration flags such as `O5_LLM_GRAPH`, `O5_TTS_GRAPH`,
+`O5_VOCODER_GRAPH`, and `O5_EXPERTS_IMPLEMENTATION` can be overridden through
+the environment.
+
 准备模型代码目录和 checkpoint：
 
 ```bash

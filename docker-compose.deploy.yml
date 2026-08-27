@@ -1,0 +1,117 @@
+# Selectable single-card / TP2 Docker deployment.
+#
+# Single card (default GPU0):
+#   GPU_ID=0 SINGLE_DEPLOY_MODE=single_eager \
+#   WEIGHTS_HOST_PATH=/path/to/bundle ASSETS_HOST_PATH=/path/to/assets \
+#   docker compose -f docker-compose.deploy.yml --profile single up -d
+#
+# TP2 (GPU0 + GPU1 in one container):
+#   TP2_GPU0=0 TP2_GPU1=1 \
+#   WEIGHTS_HOST_PATH=/path/to/bundle ASSETS_HOST_PATH=/path/to/assets \
+#   docker compose -f docker-compose.deploy.yml --profile tp2 up -d
+#
+# Switch profiles only after taking the previous profile down. Both profiles
+# use the same worker image; TP2 changes the container GPU reservation and the
+# entrypoint launches core/deploy/launch_tp2.sh under torchrun.
+
+x-common-worker: &common-worker
+  image: ${WORKER_IMAGE:-minicpm-o5-full-worker:docker-20260826}
+  restart: unless-stopped
+  environment: &worker-env
+    GPU_ID: "0"
+    BACKEND_PORT: "22500"
+    WORKER_PORT: "22400"
+    WEIGHTS_DIR: /models/o5-full-bundle
+    ASSETS_DIR: /models/o5-assets
+    O5_ATTN_IMPLEMENTATION: "${O5_ATTN_IMPLEMENTATION:-auto}"
+    O5_EXPERTS_IMPLEMENTATION: "${O5_EXPERTS_IMPLEMENTATION:-batched_mm}"
+    O5_LLM_GRAPH: "${O5_LLM_GRAPH:-1}"
+    O5_TTS_FAST: "${O5_TTS_FAST:-1}"
+    O5_LMHEAD: "${O5_LMHEAD:-1}"
+    O5_TTS_GRAPH: "${O5_TTS_GRAPH:-1}"
+    O5_VOCODER_GRAPH: "${O5_VOCODER_GRAPH:-0}"
+    O5_FUSE_VISION_AUDIO: "${O5_FUSE_VISION_AUDIO:-1}"
+    O5_VISION_BATCH: "${O5_VISION_BATCH:-1}"
+    O5_UNIT_PREFILL_BATCH: "${O5_UNIT_PREFILL_BATCH:-1}"
+    O5_LLM_CACHE: "${O5_LLM_CACHE:-32768}"
+    O5_SPMD_HEARTBEAT_INTERVAL: "${O5_SPMD_HEARTBEAT_INTERVAL:-30}"
+    GATEWAY_REGISTRY_URL: "http://gateway:8007/internal/workers"
+  volumes:
+    - ${WEIGHTS_HOST_PATH:?set WEIGHTS_HOST_PATH to the host safetensors bundle}:/models/o5-full-bundle:ro
+    - ${ASSETS_HOST_PATH:?set ASSETS_HOST_PATH to the host runtime assets}:/models/o5-assets:ro
+  healthcheck:
+    test: ["CMD", "curl", "-sf", "http://127.0.0.1:22400/health"]
+    interval: 15s
+    timeout: 5s
+    retries: 80
+    start_period: 120s
+  logging:
+    driver: json-file
+    options: {max-size: "50m", max-file: "3"}
+
+services:
+  # This service is selected with --profile single.
+  worker-single:
+    <<: *common-worker
+    profiles: [single]
+    container_name: ${DEPLOY_PROJECT_NAME:-minicpm-o5-deploy}-worker-single
+    environment:
+      <<: *worker-env
+      O5_DEPLOY_MODE: "${SINGLE_DEPLOY_MODE:-single_eager}"
+      WORKER_ID: ${WORKER_ID:-o5-docker-single}
+      WORKER_ENDPOINT: worker-single:22400
+      WORKER_GPU_GROUP: gpu-${GPU_ID:-0}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["${GPU_ID:-0}"]
+              capabilities: [gpu]
+
+  # This service is selected with --profile tp2. One container owns both GPUs;
+  # the backend entrypoint starts rank0/rank1 with torchrun and the worker
+  # connects to rank0's localhost HTTP endpoint.
+  worker-tp2:
+    <<: *common-worker
+    profiles: [tp2]
+    container_name: ${DEPLOY_PROJECT_NAME:-minicpm-o5-deploy}-worker-tp2
+    environment:
+      <<: *worker-env
+      O5_DEPLOY_MODE: tp2
+      WORKER_ID: ${WORKER_ID:-o5-docker-tp2}
+      WORKER_ENDPOINT: worker-tp2:22400
+      WORKER_GPU_GROUP: gpu-${TP2_GPU0:-0}-${TP2_GPU1:-1}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["${TP2_GPU0:-0}", "${TP2_GPU1:-1}"]
+              capabilities: [gpu]
+
+  gateway:
+    image: ${GATEWAY_IMAGE:-minicpm-o5-full-gateway:docker-20260826}
+    container_name: ${DEPLOY_PROJECT_NAME:-minicpm-o5-deploy}-gateway
+    command:
+      - "--host"
+      - "0.0.0.0"
+      - "--port"
+      - "8006"
+      - "--internal-port"
+      - "8007"
+      - "--https"
+      - "--ssl-certfile"
+      - "/app/certs/cert.pem"
+      - "--ssl-keyfile"
+      - "/app/certs/key.pem"
+    ports:
+      - "${GATEWAY_HOST_PORT:-8006}:8006"
+    expose: [8007]
+    volumes:
+      - ${DATA_HOST_PATH:-./data}:/app/data
+      - ${CERTS_HOST_PATH:-./certs}:/app/certs:ro
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options: {max-size: "50m", max-file: "3"}

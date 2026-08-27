@@ -33,3 +33,19 @@
 - Probe session: `sess_8db149d90b37`; result:
   `run-logs/docker-smoke-20260826/video_probe.json` on the remote host.
   The probe reported 11 text delta chunks and 10 output audio chunks.
+
+## Selectable Docker topology
+
+- `docker-compose.deploy.yml` now exposes two explicit Compose profiles:
+  `--profile single` binds one GPU and starts `single_eager`; `--profile tp2`
+  binds `TP2_GPU0` and `TP2_GPU1` to one container and starts
+  `core/deploy/launch_tp2.sh` with two `torchrun` ranks.
+- The worker entrypoint validates `O5_DEPLOY_MODE` and selects the backend
+  launcher accordingly. `SINGLE_DEPLOY_MODE=single_eager` keeps the plain
+  single-card path; `SINGLE_DEPLOY_MODE=single_opt` enables the single-card
+  optimization engine. TP2 receives the acceleration flags through Compose,
+  with LLM Graph, TTS fast, TTS Graph, batched MM, vision batching, and fused
+  vision/audio enabled by default; vocoder graph remains opt-in.
+- The selectable topology change requires rebuilding the worker image because
+  the entrypoint is part of the image. The dependency layers remain reusable;
+  model weights and runtime assets remain read-only runtime mounts.

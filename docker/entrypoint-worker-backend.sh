@@ -3,7 +3,8 @@
 # worker + backend bundle 容器入口（新链路）。
 #
 # 容器内拉起两个进程：
-#   1. py_backend.server  —— 加载模型，独占本容器可见的 GPU（容器内恒为 cuda:0）
+#   1. py_backend.server 或 launch_tp2.sh —— 加载模型；tp2 模式下由
+#      torchrun 在本容器内启动两个 rank，容器内 GPU 为 cuda:0/1
 #   2. worker.py          —— 纯转发，--backend-server-url 指向 localhost 的 backend
 #
 # 健康判定以 backend 的 /health 为准（模型真加载好），而非 worker
@@ -19,6 +20,7 @@
 #   WORKER_ID         可选，动态注册 ID。默认 hostname
 #   WORKER_ENDPOINT   可选，动态注册 endpoint。默认 ${WORKER_ID}:${WORKER_PORT}
 #   WORKER_GPU_GROUP  可选，物理/共享 GPU 分组提示，只用于 gateway 调度观测
+#   O5_DEPLOY_MODE    single_eager、single_opt 或 tp2（默认 single_eager）
 
 set -euo pipefail
 
@@ -27,11 +29,22 @@ ASSETS_DIR="${ASSETS_DIR:-${O5_ASSETS_DIR:-/models/o5-assets}}"
 BACKEND_PORT="${BACKEND_PORT:-22500}"
 WORKER_PORT="${WORKER_PORT:-22400}"
 GPU_ID="${GPU_ID:-0}"
+DEPLOY_MODE="${O5_DEPLOY_MODE:-single_eager}"
 GATEWAY_REGISTRY_URL="${GATEWAY_REGISTRY_URL:-}"
 WORKER_ID="${WORKER_ID:-$(hostname)}"
 WORKER_ENDPOINT="${WORKER_ENDPOINT:-${WORKER_ID}:${WORKER_PORT}}"
 WORKER_GPU_GROUP="${WORKER_GPU_GROUP:-}"
 BACKEND_URL="http://127.0.0.1:${BACKEND_PORT}"
+
+case "${DEPLOY_MODE}" in
+    single_eager|single_opt|tp2|tp2_llm)
+        ;;
+    *)
+        echo "[entrypoint] 错误：不支持的 O5_DEPLOY_MODE=${DEPLOY_MODE}" >&2
+        echo "[entrypoint] 可选值：single_eager、single_opt、tp2" >&2
+        exit 1
+        ;;
+esac
 
 cd /app
 
@@ -62,6 +75,7 @@ echo "=================================================="
 echo "  worker + backend bundle"
 echo "  WEIGHTS_DIR  = $WEIGHTS_DIR"
 echo "  ASSETS_DIR   = $ASSETS_DIR"
+echo "  deploy_mode  = $DEPLOY_MODE"
 echo "  backend      = 127.0.0.1:$BACKEND_PORT  (gpu-id=$GPU_ID)"
 echo "  worker       = 0.0.0.0:$WORKER_PORT  -> $BACKEND_URL"
 echo "=================================================="
@@ -81,12 +95,22 @@ cleanup() {
 trap cleanup SIGTERM SIGINT
 
 # ---- 1. 启动 backend（加载模型，耗时 30-90s）----
-echo "[entrypoint] 启动 py_backend.server ..."
-python -m py_backend.server \
-    --host 0.0.0.0 --port "$BACKEND_PORT" \
-    --gpu-id "$GPU_ID" \
-    --weights-dir "$WEIGHTS_DIR" \
-    --assets-dir "$ASSETS_DIR" &
+if [[ "$DEPLOY_MODE" == "tp2" || "$DEPLOY_MODE" == "tp2_llm" ]]; then
+    # launch_tp2.sh starts torchrun with two ranks. Docker Compose must expose
+    # exactly two GPUs to this container; LOCAL_RANK selects cuda:0/cuda:1.
+    echo "[entrypoint] 启动 TP2 backend（torchrun, 2 ranks）..."
+    bash /app/core/deploy/launch_tp2.sh \
+        --host 0.0.0.0 --port "$BACKEND_PORT" \
+        --weights-dir "$WEIGHTS_DIR" \
+        --assets-dir "$ASSETS_DIR" &
+else
+    echo "[entrypoint] 启动 ${DEPLOY_MODE} backend ..."
+    python -m py_backend.server \
+        --host 0.0.0.0 --port "$BACKEND_PORT" \
+        --gpu-id "$GPU_ID" \
+        --weights-dir "$WEIGHTS_DIR" \
+        --assets-dir "$ASSETS_DIR" &
+fi
 backend_pid=$!
 
 # ---- 2. 等 backend 把模型加载好 ----

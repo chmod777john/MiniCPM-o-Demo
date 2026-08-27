@@ -135,12 +135,44 @@ mkdir -p certs data
 openssl req -x509 -newkey rsa:2048 -nodes -days 365 \
   -keyout certs/key.pem -out certs/cert.pem -subj "/CN=minicpm-o"
 
-MODEL_HOST_PATH=/path/to/MiniCPM-o-4_5 docker compose up -d --build
-docker compose logs -f gateway
-docker compose logs -f worker-backend-0
+WEIGHTS_HOST_PATH=/path/to/o5-full-bundle \
+ASSETS_HOST_PATH=/path/to/o5-assets \
+docker compose -f docker-compose.deploy.yml --profile single up -d
+docker compose -f docker-compose.deploy.yml logs -f gateway
+docker compose -f docker-compose.deploy.yml logs -f worker-single
 ```
 
-请按机器 GPU 数量修改 `docker-compose.yml`。如果确实需要单张 GPU 跑多个 worker 实例，可以参考 `docker-compose.multi.yml`。
+`docker-compose.deploy.yml` 支持单卡和双卡 TP2 两种拓扑。单卡使用一个
+worker 容器和一张 GPU：
+
+```bash
+GPU_ID=0 \
+WEIGHTS_HOST_PATH=/path/to/o5-full-bundle \
+ASSETS_HOST_PATH=/path/to/o5-assets \
+docker compose -f docker-compose.deploy.yml --profile single up -d
+```
+
+双卡 TP2 使用一个 worker 容器绑定两张 GPU；容器入口会用 `torchrun`
+启动两个 rank：
+
+```bash
+TP2_GPU0=0 TP2_GPU1=1 \
+WEIGHTS_HOST_PATH=/path/to/o5-full-bundle \
+ASSETS_HOST_PATH=/path/to/o5-assets \
+docker compose -f docker-compose.deploy.yml --profile tp2 up -d
+```
+
+TP2 profile 默认开启 LLM Graph、TTS fast、TTS Graph、batched MM、视觉
+batch 和 fuse vision/audio；vocoder graph 默认关闭，可通过环境变量覆盖：
+`O5_LLM_GRAPH`、`O5_TTS_FAST`、`O5_TTS_GRAPH`、`O5_VOCODER_GRAPH`、
+`O5_EXPERTS_IMPLEMENTATION` 等。切换 profile 前先执行对应的
+`docker compose ... down`，避免旧 worker 继续占用 GPU。
+
+单卡 profile 的 `SINGLE_DEPLOY_MODE` 可设为 `single_eager`（默认、不开
+部署优化引擎）或 `single_opt`（开启单卡优化引擎）。
+
+原有的 `docker-compose.yml` 和 `docker-compose.multi.yml` 仍保留，用于
+已有的多 worker 单卡部署场景。
 
 **C++ backend（Compose）：**
 
@@ -195,6 +227,7 @@ minicpmo45_service/
 ├── config.py                 # 配置加载逻辑（Pydantic 定义 + JSON 加载）
 ├── requirements.txt          # Python 依赖
 ├── docker-compose.yml        # 推荐的 PyTorch backend 部署
+├── docker-compose.deploy.yml # 单卡 / TP2 双卡可选镜像部署
 ├── docker-compose.cpp.yml    # 推荐的 C++ backend 部署
 ├── docker-compose.multi.yml  # 单卡多 worker 部署变体
 ├── docker/                   # Dockerfile 和容器 entrypoint
