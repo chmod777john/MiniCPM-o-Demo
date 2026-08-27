@@ -20,7 +20,9 @@
   `/home/weihongliang/o5-artifacts/job672317_iter4000/o5_full_hf_fc_job672317_iter4000_public_llm_20260826`
 - Processor and Token2Wav assets mounted read-only at runtime:
   `/home/weihongliang/o5-artifacts/assets/MiniCPM-o-4_5-assets`
-- Worker image: `minicpm-o5-full-worker:docker-20260826`.
+- Worker image: `minicpm-o5-full-worker:docker-20260826` for the initial
+  single-card smoke test; the selectable-topology image is
+  `minicpm-o5-full-worker:docker-20260827`.
   Gateway image: `minicpm-o5-full-gateway:docker-20260826`.
 - The worker image includes `gcc` and `libc6-dev` because FLA/Triton compiles
   a CUDA helper on first use. `gcc` alone was insufficient because
