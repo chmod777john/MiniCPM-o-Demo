@@ -15,6 +15,7 @@ import asyncio
 import base64
 import contextlib
 import copy
+import hashlib
 import json
 import re
 import ssl
@@ -403,24 +404,39 @@ async def run_probe(args: argparse.Namespace) -> Dict[str, Any]:
 
         async def handle_event(event: Dict[str, Any]) -> None:
             events.append(event)
-            if event.get("type") != "response.tool_call.args.raw":
+            event_type = event.get("type")
+            # Semantic v3 emits the structured call at ``done``.  Keep the
+            # legacy raw event for older backends, but record a call only once
+            # when a backend happens to expose both forms.
+            if event_type == "response.tool_call.done":
+                raw_call = event.get("call") or {}
+            elif event_type == "response.tool_call.args.raw":
+                raw_call = event.get("raw") or {}
+            else:
                 return
-            raw_call = event.get("raw") or {}
             normalized = normalize_raw_tool_call(raw_call)
+            api_id = str(event.get("tool_call_id") or "")
+            if api_id and any(
+                call.get("api_tool_call_id") == api_id for call in api_calls
+            ):
+                return
             call_index = len(api_calls)
             train_id = (
                 prepared["train_tool_call_ids"][call_index]
                 if call_index < len(prepared["train_tool_call_ids"])
                 else None
             )
-            api_id = str(event.get("tool_call_id") or "")
             if train_id and api_id:
                 train_to_api[str(train_id)] = api_id
             api_calls.append(
                 {
                     "index": call_index,
                     "input_id": event.get("input_id"),
-                    "unit_index": unit_index_from_input_id(event.get("input_id")),
+                    "unit_index": (
+                        int(event["unit_index"])
+                        if event.get("unit_index") is not None
+                        else unit_index_from_input_id(event.get("input_id"))
+                    ),
                     "api_tool_call_id": api_id,
                     "train_tool_call_id": train_id,
                     "raw": raw_call,
@@ -509,11 +525,19 @@ async def run_probe(args: argparse.Namespace) -> Dict[str, Any]:
             with contextlib.suppress(urllib.error.URLError, OSError):
                 await asyncio.to_thread(urllib.request.urlopen, request, timeout=10)
 
-    spoken_text = "".join(
-        str(event.get("delta") or event.get("text") or "")
-        for event in events
-        if event.get("type") == "response.output.delta" and event.get("kind") == "text"
-    )
+    spoken_text_parts: List[str] = []
+    spoken_audio_parts: List[bytes] = []
+    for event in events:
+        if event.get("type") != "response.spoken.delta":
+            continue
+        for step in event.get("steps", []) or []:
+            if step.get("kind") == "text":
+                spoken_text_parts.append(str(step.get("text", "")))
+        audio = event.get("audio")
+        if audio:
+            spoken_audio_parts.append(base64.b64decode(str(audio)))
+    spoken_audio = b"".join(spoken_audio_parts)
+    spoken_text = "".join(spoken_text_parts)
     think_text = "".join(
         str(event.get("delta") or "")
         for event in events
@@ -534,6 +558,14 @@ async def run_probe(args: argparse.Namespace) -> Dict[str, Any]:
         "remaining_tool_responses_by_unit": tool_responses_by_unit,
         "spoken_text": spoken_text,
         "think_text": think_text,
+        "spoken_audio_events": len(spoken_audio_parts),
+        "spoken_audio_bytes": len(spoken_audio),
+        "spoken_audio_sha256": (
+            hashlib.sha256(spoken_audio).hexdigest()
+            if spoken_audio
+            else None
+        ),
+        "spoken_audio_nonzero_bytes": sum(byte != 0 for byte in spoken_audio),
         "config": {
             "backend": args.backend,
             "path": args.path,
