@@ -17,6 +17,18 @@ FROM python:3.12-slim-bookworm
 ENV PYTHONUNBUFFERED=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PYTHONPATH=/app \
+    O5_DEPLOY_MODE=tp2 \
+    O5_ATTN_IMPLEMENTATION=auto \
+    O5_EXPERTS_IMPLEMENTATION=batched_mm \
+    O5_LLM_GRAPH=1 \
+    O5_TTS_FAST=1 \
+    O5_LMHEAD=1 \
+    O5_TTS_GRAPH=1 \
+    O5_VOCODER_GRAPH=0 \
+    O5_FUSE_VISION_AUDIO=1 \
+    O5_VISION_BATCH=1 \
+    O5_UNIT_PREFILL_BATCH=1 \
+    O5_LLM_CACHE=32768 \
     LD_LIBRARY_PATH=/usr/local/lib/python3.12/site-packages/nvidia/npp/lib:/usr/local/cuda/lib64:/usr/local/nvidia/lib64:/usr/local/nvidia/lib \
     TORCHINDUCTOR_CACHE_DIR=/app/torch_compile_cache
 

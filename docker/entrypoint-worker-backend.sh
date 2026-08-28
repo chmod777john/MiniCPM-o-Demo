@@ -11,6 +11,8 @@
 #（worker 一进转发模式就报 model_loaded=true，不反映模型状态）。
 #
 # 环境变量：
+#   MODEL_PATH        LIS ModelWeight 的统一 artifact 根目录；设置后同时作为
+#                     WEIGHTS_DIR 和 ASSETS_DIR 的默认值。
 #   WEIGHTS_DIR       完整 safetensors bundle（容器内，通常是挂载点）。
 #   ASSETS_DIR        processor + Token2Wav runtime assets（容器内，通常是挂载点）。
 #   BACKEND_PORT      backend 协议端口。默认 22500
@@ -20,21 +22,29 @@
 #   WORKER_ID         可选，动态注册 ID。默认 hostname
 #   WORKER_ENDPOINT   可选，动态注册 endpoint。默认 ${WORKER_ID}:${WORKER_PORT}
 #   WORKER_GPU_GROUP  可选，物理/共享 GPU 分组提示，只用于 gateway 调度观测
-#   O5_DEPLOY_MODE    single_eager、single_opt 或 tp2（默认 single_eager）
+#   O5_DEPLOY_MODE    single_eager、single_opt 或 tp2（镜像默认 tp2）
 
 set -euo pipefail
 
-WEIGHTS_DIR="${WEIGHTS_DIR:-${O5_WEIGHTS_DIR:-/models/o5-full-bundle}}"
-ASSETS_DIR="${ASSETS_DIR:-${O5_ASSETS_DIR:-/models/o5-assets}}"
+MODEL_PATH="${MODEL_PATH:-}"
+WEIGHTS_DIR="${WEIGHTS_DIR:-${O5_WEIGHTS_DIR:-${MODEL_PATH:-/models/o5-full-bundle}}}"
+ASSETS_DIR="${ASSETS_DIR:-${O5_ASSETS_DIR:-${MODEL_PATH:-/models/o5-assets}}}"
 BACKEND_PORT="${BACKEND_PORT:-22500}"
 WORKER_PORT="${WORKER_PORT:-22400}"
 GPU_ID="${GPU_ID:-0}"
 DEPLOY_MODE="${O5_DEPLOY_MODE:-single_eager}"
+REF_AUDIO_PATH="${REF_AUDIO_PATH:-${O5_REF_AUDIO_PATH:-}}"
 GATEWAY_REGISTRY_URL="${GATEWAY_REGISTRY_URL:-}"
 WORKER_ID="${WORKER_ID:-$(hostname)}"
 WORKER_ENDPOINT="${WORKER_ENDPOINT:-${WORKER_ID}:${WORKER_PORT}}"
 WORKER_GPU_GROUP="${WORKER_GPU_GROUP:-}"
 BACKEND_URL="http://127.0.0.1:${BACKEND_PORT}"
+
+# LIS exposes one ModelWeight mount and does not need a separate ref-audio
+# setting.  The combined artifact carries the same default reference audio.
+if [ -z "$REF_AUDIO_PATH" ] && [ -n "$MODEL_PATH" ] && [ -f "$MODEL_PATH/system_ref_audio.wav" ]; then
+    REF_AUDIO_PATH="$MODEL_PATH/system_ref_audio.wav"
+fi
 
 case "${DEPLOY_MODE}" in
     single_eager|single_opt|tp2|tp2_llm)
@@ -73,8 +83,10 @@ fi
 
 echo "=================================================="
 echo "  worker + backend bundle"
+echo "  MODEL_PATH   = ${MODEL_PATH:-<not-set>}"
 echo "  WEIGHTS_DIR  = $WEIGHTS_DIR"
 echo "  ASSETS_DIR   = $ASSETS_DIR"
+echo "  REF_AUDIO    = ${REF_AUDIO_PATH:-<not-set>}"
 echo "  deploy_mode  = $DEPLOY_MODE"
 echo "  backend      = 127.0.0.1:$BACKEND_PORT  (gpu-id=$GPU_ID)"
 echo "  worker       = 0.0.0.0:$WORKER_PORT  -> $BACKEND_URL"
@@ -99,17 +111,27 @@ if [[ "$DEPLOY_MODE" == "tp2" || "$DEPLOY_MODE" == "tp2_llm" ]]; then
     # launch_tp2.sh starts torchrun with two ranks. Docker Compose must expose
     # exactly two GPUs to this container; LOCAL_RANK selects cuda:0/cuda:1.
     echo "[entrypoint] 启动 TP2 backend（torchrun, 2 ranks）..."
-    bash /app/core/deploy/launch_tp2.sh \
-        --host 0.0.0.0 --port "$BACKEND_PORT" \
-        --weights-dir "$WEIGHTS_DIR" \
-        --assets-dir "$ASSETS_DIR" &
+    backend_args=(
+        --host 0.0.0.0 --port "$BACKEND_PORT"
+        --weights-dir "$WEIGHTS_DIR"
+        --assets-dir "$ASSETS_DIR"
+    )
+    if [ -n "$REF_AUDIO_PATH" ]; then
+        backend_args+=(--ref-audio-path "$REF_AUDIO_PATH")
+    fi
+    bash /app/core/deploy/launch_tp2.sh "${backend_args[@]}" &
 else
     echo "[entrypoint] 启动 ${DEPLOY_MODE} backend ..."
-    python -m py_backend.server \
-        --host 0.0.0.0 --port "$BACKEND_PORT" \
-        --gpu-id "$GPU_ID" \
-        --weights-dir "$WEIGHTS_DIR" \
-        --assets-dir "$ASSETS_DIR" &
+    backend_args=(
+        --host 0.0.0.0 --port "$BACKEND_PORT"
+        --gpu-id "$GPU_ID"
+        --weights-dir "$WEIGHTS_DIR"
+        --assets-dir "$ASSETS_DIR"
+    )
+    if [ -n "$REF_AUDIO_PATH" ]; then
+        backend_args+=(--ref-audio-path "$REF_AUDIO_PATH")
+    fi
+    python -m py_backend.server "${backend_args[@]}" &
 fi
 backend_pid=$!
 
