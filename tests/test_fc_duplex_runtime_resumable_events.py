@@ -1198,3 +1198,175 @@ async def test_runtime_emits_explicit_processed_unit_tool_event_attribution() ->
             ],
         }
     ]
+
+
+@pytest.mark.asyncio
+async def test_generation_batch_flush_uses_open_kind_not_live_kind() -> None:
+    """开攒后的 kind 快照必须决定 flush 的归属，不受 live kind 切换影响。
+
+    复现失败模式 A：think 尾巴 batch 尚未 flush 时模型切到 tool_call，之后又来一条
+    tool_call 文本 delta。旧实现按 live kind 把整批(含 think 文本)误发成
+    response.tool_call.delta。修复后：流水线 detect 到 kind 变化先冲旧批(think.delta)，
+    再按新 kind 单开 tool_call.delta。
+    """
+
+    events: list[dict[str, Any]] = []
+
+    async def send(event_type: str, **fields: Any) -> None:
+        events.append({"type": event_type, **fields})
+
+    runtime = FcDuplexSessionRuntime(
+        session_id="sess_kind_snapshot",
+        backend=object(),
+        send=send,
+    )
+    # 开一个 think 块并封装一个未到阈值(16 步/50ms)的尾巴 batch。
+    await runtime._begin_block("think", unit_index=0)
+    await runtime._record_generation_steps(
+        [
+            FcViewGenerationStep(
+                token_id=100,
+                stream_id="think_1",
+                track="non_spoken",
+                output=FcGenerationTextDeltaOutput(
+                    text="龘",
+                    source_step_count=1,
+                ),
+            ),
+        ],
+        unit_index=0,
+        input_id="u0",
+    )
+    assert not any(
+        event["type"] == "response.think.delta"
+        for event in events
+    )  # batch 尚未 flush
+
+    # live kind 切到 tool_call 并追加一条 tool_call 文本 delta。
+    await runtime._begin_block("tool_call", unit_index=0)
+    await runtime._record_generation_steps(
+        [
+            FcViewGenerationStep(
+                token_id=101,
+                stream_id="tool_call_1",
+                track="non_spoken",
+                output=FcGenerationTextDeltaOutput(
+                    text="把",
+                    source_step_count=1,
+                ),
+            ),
+        ],
+        unit_index=0,
+        input_id="u0",
+    )
+    await runtime._flush_generation_batch()
+
+    think_deltas = [
+        event for event in events if event["type"] == "response.think.delta"
+    ]
+    assert len(think_deltas) == 1
+    assert think_deltas[0]["steps"] == [{"kind": "text", "text": "龘"}]
+    tool_deltas = [
+        event for event in events if event["type"] == "response.tool_call.delta"
+    ]
+    assert len(tool_deltas) == 1
+    assert tool_deltas[0]["tool_call_id"]  # 带 tool_call id
+    assert tool_deltas[0]["steps"] == [{"kind": "text", "text": "把"}]
+
+
+@pytest.mark.asyncio
+async def test_generation_batch_flush_after_kind_cleared_does_not_raise() -> None:
+    """think 块结束、_current_block_kind 被清空后 flush 不得再抛错过 active message。
+
+    复现失败模式 B：旧实现 flush 读 live _current_block_kind，闭块后它为 None，
+    _flush_generation_batch 直接 raise RuntimeError。修复后 flush 用开攒快照，安全。
+    """
+
+    events: list[dict[str, Any]] = []
+
+    async def send(event_type: str, **fields: Any) -> None:
+        events.append({"type": event_type, **fields})
+
+    runtime = FcDuplexSessionRuntime(
+        session_id="sess_kind_cleared",
+        backend=object(),
+        send=send,
+    )
+    await runtime._begin_block("think", unit_index=0)
+    await runtime._record_generation_steps(
+        [
+            FcViewGenerationStep(
+                token_id=100,
+                stream_id="think_1",
+                track="non_spoken",
+                output=FcGenerationTextDeltaOutput(
+                    text="龘",
+                    source_step_count=1,
+                ),
+            ),
+        ],
+        unit_index=0,
+        input_id="u0",
+    )
+    # 闭块会清掉 _current_block_kind，但 batch 可能尚未 flush。
+    await runtime._emit_close_for_span(
+        FcClosedSpan(type="think", text="龘"),
+        unit_index=0,
+    )
+    # 此时再 flush：旧实现 raise，新实现按开攒快照直接发出。
+    await runtime._flush_generation_batch()
+
+    think_deltas = [
+        event for event in events if event["type"] == "response.think.delta"
+    ]
+    assert len(think_deltas) == 1
+    assert think_deltas[0]["steps"] == [{"kind": "text", "text": "龘"}]
+
+
+@pytest.mark.asyncio
+async def test_begin_block_flushes_pending_think_before_tool_call() -> None:
+    """think 块开新 block(tool_call)前必须先flush掉未满批尾巴,避免think文本漏在tool_call之后。
+
+    复现顺序违例：模型在 think 尾巴(未达16步/50ms)后就开 tool_call。
+    若 _begin_block 不先 flush,think.delta 会在 tool_call.begin 之后才发出,
+    客户端先收到 begin 后收到迟到 delta。修复后 begin 前先冲旧批(belonging think)。
+    """
+
+    events: list[dict[str, Any]] = []
+
+    async def send(event_type: str, **fields: Any) -> None:
+        events.append({"type": event_type, **fields})
+
+    runtime = FcDuplexSessionRuntime(
+        session_id="sess_begin_flush",
+        backend=object(),
+        send=send,
+    )
+    await runtime._begin_block("think", unit_index=0)
+    await runtime._record_generation_steps(
+        [
+            FcViewGenerationStep(
+                token_id=100,
+                stream_id="think_1",
+                track="non_spoken",
+                output=FcGenerationTextDeltaOutput(
+                    text="龘",
+                    source_step_count=1,
+                ),
+            ),
+        ],
+        unit_index=0,
+        input_id="u0",
+    )
+    assert not any(
+        event["type"] == "response.think.delta"
+        for event in events
+    )  # batch 尚未 flush
+
+    await runtime._begin_block("tool_call", unit_index=0)
+
+    event_types = [event["type"] for event in events]
+    # think.delta 必须出现在 tool_call.begin 之前（被 begin 的 flush 先冲掉）。
+    assert event_types.index("response.think.delta") < event_types.index(
+        "response.tool_call.begin"
+    )

@@ -143,6 +143,8 @@ class FcDuplexSessionRuntime:
         self._generation_batch_unit_index: Optional[int] = None
         self._generation_batch_started_at: Optional[float] = None
         self._generation_batch_steps: List[Dict[str, Any]] = []
+        self._generation_batch_kind: Optional[str] = None
+        self._generation_batch_tool_call_id: Optional[str] = None
         self._unit_has_deferred_close = False
         self._unit_non_spoken_end: Optional[str] = None
         self._resume_identity: Dict[str, Any] = {}
@@ -1018,6 +1020,11 @@ class FcDuplexSessionRuntime:
                 )
             if (
                 self._generation_batch_steps
+                and self._generation_batch_kind != self._current_block_kind
+            ):
+                await self._flush_generation_batch()
+            if (
+                self._generation_batch_steps
                 and (
                     stream_id != self._generation_batch_stream_id
                     or track != self._generation_batch_track
@@ -1031,6 +1038,8 @@ class FcDuplexSessionRuntime:
                 self._generation_batch_input_id = input_id
                 self._generation_batch_unit_index = unit_index
                 self._generation_batch_started_at = time.perf_counter()
+                self._generation_batch_kind = self._current_block_kind
+                self._generation_batch_tool_call_id = self._current_tool_call_id
 
             self._generation_step_index += 1
             public_step: Dict[str, Any]
@@ -1081,11 +1090,11 @@ class FcDuplexSessionRuntime:
         }
         if self._generation_batch_track == "spoken":
             event_type = "response.spoken.delta"
-        elif self._current_block_kind == "think":
+        elif self._generation_batch_kind == "think":
             event_type = "response.think.delta"
-        elif self._current_block_kind == "tool_call":
+        elif self._generation_batch_kind == "tool_call":
             event_type = "response.tool_call.delta"
-            fields["tool_call_id"] = self._current_tool_call_id
+            fields["tool_call_id"] = self._generation_batch_tool_call_id
         else:
             raise RuntimeError(
                 "non-spoken text delta has no active semantic message"
@@ -1098,6 +1107,8 @@ class FcDuplexSessionRuntime:
         self._generation_batch_unit_index = None
         self._generation_batch_started_at = None
         self._generation_batch_steps = []
+        self._generation_batch_kind = None
+        self._generation_batch_tool_call_id = None
 
     async def _emit_generation_warnings(
         self,
@@ -1216,11 +1227,6 @@ class FcDuplexSessionRuntime:
         step_text = str(getattr(step, "text_delta", "") or "")
         close_reason = getattr(step, "close_reason", None)
         span_started = getattr(step, "span_started", None)
-        if self._current_block_id is None and span_started:
-            await self._begin_block(
-                str(span_started),
-                unit_index=unit_index,
-            )
         await self._record_generation_steps(
             list(getattr(step, "generation_steps", None) or []),
             unit_index=unit_index,
@@ -1251,6 +1257,11 @@ class FcDuplexSessionRuntime:
                 span,
                 unit_index=unit_index,
                 suppress_fallback_text=suppress_fallback_text,
+            )
+        if self._current_block_id is None and span_started:
+            await self._begin_block(
+                str(span_started),
+                unit_index=unit_index,
             )
         if close_reason:
             await self._emit_non_spoken_end(
@@ -1295,6 +1306,7 @@ class FcDuplexSessionRuntime:
         )
 
     async def _begin_block(self, kind: str, *, unit_index: int) -> None:
+        await self._flush_generation_batch()
         self._block_seq += 1
         self._current_block_id = f"nsb_{self._block_seq:06d}"
         self._current_block_kind = kind
@@ -1344,6 +1356,8 @@ class FcDuplexSessionRuntime:
         Mirrors audio_duplex_board.session._emit_close_for_span, replacing board
         events with formal API events and leaving tool execution to the client.
         """
+
+        await self._flush_generation_batch()
 
         span_type = getattr(span, "type", None)
         if span_type == "think":
