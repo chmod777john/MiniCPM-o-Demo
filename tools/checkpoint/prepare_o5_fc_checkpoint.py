@@ -403,10 +403,26 @@ def _is_safe_resume_request_correction(
         return True
     # 主链路拆分：model.pt 已在后允许 dcp_to_pt → pt_to_backbone
     #（stage / 源占位 / para stub vs 廊坊完整 base_model_dir）
+    #
+    # 🔴 2026-09-26 补上 output_dir。原因：两个阶段跑在不同集群，而
+    # **两地的 deploy 根从 2026-09-25 起不再是同一个路径**
+    #   内蒙 dcp_to_pt  → /para_hdd/user/sunweiyue/checkpoints/model_tunnel_moe_deploy/...
+    #   廊坊 pt_to_backbone → /backup/user/sunweiyue/checkpoints/model_tunnel_moe_deploy/...
+    # dcp_to_pt 写的 preparation_request.json 会随 model.pt 一起被 file-task 同步到廊坊，
+    # 于是 pt_to_backbone 在廊坊读到的 previous.output_dir 是内蒙那个路径 →
+    # changed_fields = {stage, output_dir}，而 output_dir 不在任何白名单里 → 全部被拒。
+    # 实测：F8 的 t001/t002/t003 各 4 个 + F5-T4 的 4 个，**16 个 tp2 job 全挂在这里**。
+    # 迁盘之前两地同路径，changed_fields 只有 {stage}，所以这条白名单一直够用。
+    #
+    # 为什么放开是安全的：守卫仍是 `has_model_pt and not has_backbone` ——
+    # PT 已发布、backbone 还没发布，此时 output_dir 变化的语义就是
+    # "同一份资产换了个落点"，正是跨集群同步的本意；它改不了已发布的 model.pt，
+    # 也不会跳过 backbone 的产出校验。
     post_pt_stage_split = {
         "stage",
         "source_checkpoint_dir",
         "base_model_dir",
+        "output_dir",
     }
     if has_model_pt and not has_backbone and changed_fields <= post_pt_stage_split:
         return True
