@@ -226,13 +226,18 @@ class LLMGraphRunner:
         Long prefills are fed in bounded chunks with a memory-safe MoE implementation
         (see bounded_prefill.py); the captured decode graph is unaffected.
         """
-        from .bounded_prefill import iter_prefill_chunks, prefill_experts_implementation
+        from .bounded_prefill import (
+            iter_prefill_chunks,
+            prefill_attention_implementation,
+            prefill_experts_implementation,
+        )
 
         with torch.inference_mode():
             L = inputs_embeds.shape[1]
             self._check_capacity(start_pos + L)
             hidden_chunks = []
-            with prefill_experts_implementation(self.model):
+            with prefill_experts_implementation(self.model), \
+                    prefill_attention_implementation(self.model):
                 for chunk_start, chunk_end in iter_prefill_chunks(L):
                     pos0, pos1 = start_pos + chunk_start, start_pos + chunk_end
                     cpos = torch.arange(pos0, pos1, device=self.device)

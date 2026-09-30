@@ -61,3 +61,18 @@ def test_prefill_restores_on_exception() -> None:
         with prefill_experts_implementation(model):
             raise RuntimeError("boom")
     assert config._experts_implementation == "batched_mm"
+
+
+def test_prefill_attention_switches_only_eager_and_restores() -> None:
+    """graph 固定的 eager attention 在 prefill 内切到 sdpa，退出后恢复；其他实现不动。"""
+
+    from modeling.o5.bounded_prefill import prefill_attention_implementation
+
+    eager = SimpleNamespace(_attn_implementation="eager")
+    flash = SimpleNamespace(_attn_implementation="flash_attention_2")
+    model = torch.nn.Sequential(_Experts(eager), _Experts(flash))
+
+    with prefill_attention_implementation(model):
+        assert eager._attn_implementation == "sdpa"
+        assert flash._attn_implementation == "flash_attention_2"
+    assert eager._attn_implementation == "eager"

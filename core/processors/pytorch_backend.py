@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import collections
 import gc
 import io
 import logging
+import os
 import time
 from typing import Any, Dict, Iterator, List, Literal, Optional
 
@@ -546,7 +548,13 @@ class PyTorchBackend:
         self.processor.set_fc_duplex_mode().cleanup()
         gc.collect()
         torch.cuda.empty_cache()
-        logger.info(f"[GPU {self.gpu_id}] FC duplex cleanup done, GPU memory released")
+        logger.info(
+            f"[GPU {self.gpu_id}] FC duplex cleanup done, GPU memory released "
+            f"(allocated={torch.cuda.memory_allocated() / 2**30:.2f}GiB "
+            f"reserved={torch.cuda.memory_reserved() / 2**30:.2f}GiB)"
+        )
+        if os.environ.get("FC_DUPLEX_MEM_AUDIT") == "1":
+            _log_live_cuda_tensors(self.gpu_id)
 
     def shutdown(self) -> None:
         """PyTorch backend currently has no external process to shut down."""
@@ -614,3 +622,27 @@ class PyTorchBackend:
         half_duplex_view = self.processor.set_half_duplex_mode()
         half_duplex_view._model.reset_session(reset_token2wav_cache=False)
         logger.info(f"[GPU {self.gpu_id}] Half-Duplex model session reset (KV cache cleared)")
+
+
+def _log_live_cuda_tensors(gpu_id: int, top: int = 15) -> None:
+    """显存审计（FC_DUPLEX_MEM_AUDIT=1）：按 (dtype, shape) 汇总仍存活的 CUDA 张量。
+
+    模型参数会占绝大部分；这里关心的是 Session 结束后多出来的那部分是谁持有。
+    """
+
+    groups: collections.Counter = collections.Counter()
+    counts: collections.Counter = collections.Counter()
+    for obj in gc.get_objects():
+        try:
+            if torch.is_tensor(obj) and obj.is_cuda and not isinstance(obj, torch.nn.Parameter):
+                key = (str(obj.dtype), tuple(obj.shape))
+                groups[key] += obj.numel() * obj.element_size()
+                counts[key] += 1
+        except Exception:  # noqa: BLE001 - 审计不能影响清理
+            continue
+    total = sum(groups.values())
+    logger.info(f"[GPU {gpu_id}] mem-audit: non-parameter live CUDA tensors {total / 2**30:.2f}GiB")
+    for (dtype, shape), size in groups.most_common(top):
+        logger.info(
+            f"[GPU {gpu_id}] mem-audit:   {size / 2**20:9.1f}MiB x{counts[(dtype, shape)]:<4d} {dtype} {shape}"
+        )

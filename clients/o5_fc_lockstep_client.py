@@ -68,7 +68,8 @@ def build_system(
 class O5FcSessionPreset:
     """模型调用口径（per-checkpoint 事实），由最外层调用方用一个 JSON 文件给出。
 
-    JSON 字段与本类字段同名；除 ``prefix_text`` 外全部必填，不提供任何默认值::
+    JSON 字段与本类字段同名，6 个键都必须出现（缺键、多键都报错），不提供任何默认值；
+    ``prefix_text`` / ``system_audio_path`` / ``tts_prompt_audio_path`` 的值可以是 null::
 
         {
           "prefix_text": "You are operating in duplex Agent mode. ...\\n",   // 或 null
@@ -152,7 +153,7 @@ class O5FcSessionSpec:
     tts_prompt_audio_path: Optional[str]
     non_spoken_scheduling: str = "quality"
     decode_mode: str = "greedy"
-    queue_timeout_sec: float = 7200.0
+    queue_timeout_sec: float = 86400.0
     event_timeout_sec: float = 900.0
 
     def session_init_frame(self) -> dict[str, Any]:

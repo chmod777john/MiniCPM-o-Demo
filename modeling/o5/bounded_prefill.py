@@ -9,11 +9,14 @@ O5 的 hidden=2048、moe_intermediate=512、top_k=8，所以**每个 prefill tok
 decode（L=1）只有 32 MiB，速度最快；但一次 ~550 token 的 system prefill 就要
 ~17 GiB，在单卡常驻 ~72 GiB 的完整 BF16 PT 上必然 OOM。TP2 把专家切半才躲过去。
 
-因此本模块只做两件事，且对 decode 零影响：
+因此本模块只做三件事，且对 decode 零影响：
 
 1. prefill（L>1）期间把 ``batched_mm`` 临时切到 ``eager``（逐专家循环，显存 O(L)）；
-2. 把长 prefill 切成不超过 ``O5_PREFILL_CHUNK_TOKENS`` 的块依次喂入同一个 cache，
-   同时约束 eager full attention 的 ``[heads, L, max_cache_len]`` 分数矩阵。
+2. 把长 prefill 切成不超过 ``O5_PREFILL_CHUNK_TOKENS`` 的块依次喂入同一个 cache；
+3. LLM graph 路径为了捕获 decode 图把 full attention 固定成 eager，而 eager 会按 StaticCache
+   全宽物化 fp32 分数矩阵 ``[heads, L, max_cache_len]``（512×32768×16 头 = 1 GiB/块）。
+   prefill 期间临时切到 ``sdpa``（memory-efficient kernel，不物化分数矩阵）。
+   单卡常驻 ~77 GiB 时这 1 GiB 就是 OOM 与否的分界（2026-09-30 冒烟实测）。
 
 分块 prefill 与一次性 prefill 在数学上等价（因果 attention + 递推的线性 attention 状态），
 数值上只有 kernel 切分带来的 BF16 舍入差异。
@@ -30,6 +33,7 @@ import torch
 DEFAULT_PREFILL_CHUNK_TOKENS = 512
 _MEMORY_HEAVY_EXPERTS_IMPLEMENTATIONS = frozenset({"batched_mm"})
 _PREFILL_EXPERTS_IMPLEMENTATION = "eager"
+_PREFILL_ATTENTION_IMPLEMENTATION = "sdpa"
 
 
 def prefill_chunk_tokens() -> int:
@@ -107,3 +111,46 @@ def prefill_experts_implementation(model: torch.nn.Module) -> Iterator[None]:
     finally:
         for config, original in switched:
             config._experts_implementation = original
+
+
+def _attention_configs(model: torch.nn.Module) -> list[object]:
+    cached = getattr(model, "_o5_attention_configs", None)
+    if cached is not None:
+        return cached
+    seen: set[int] = set()
+    configs: list[object] = []
+    for module in model.modules():
+        config = getattr(module, "config", None)
+        if (
+            config is not None
+            and hasattr(config, "_attn_implementation")
+            and id(config) not in seen
+        ):
+            seen.add(id(config))
+            configs.append(config)
+    model._o5_attention_configs = configs
+    return configs
+
+
+@contextmanager
+def prefill_attention_implementation(model: torch.nn.Module) -> Iterator[None]:
+    """prefill 期间把被 graph 固定的 eager full attention 临时切到 sdpa。
+
+    参数:
+        model: LLM backbone（LLM graph runner 的 ``self.model``）。
+
+    返回:
+        上下文管理器；退出时恢复 eager，已捕获的 decode graph 不受影响。
+    """
+
+    switched: list[tuple[object, str]] = []
+    for config in _attention_configs(model):
+        current = getattr(config, "_attn_implementation", None)
+        if current == "eager":
+            switched.append((config, current))
+            config._attn_implementation = _PREFILL_ATTENTION_IMPLEMENTATION
+    try:
+        yield
+    finally:
+        for config, original in switched:
+            config._attn_implementation = original

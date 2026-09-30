@@ -345,9 +345,13 @@ def prepare_runtime_plan(
     _write_json(profile_path, profile.model_dump(mode="json"))
 
     service_config_path = runtime_dir / "service_config.json"
+    # 离线评测由调用方自己落盘结果；关闭网关的 Session 录音，避免每个 Session 额外写上百 MB。
     _write_json(
         service_config_path,
-        {"service": {"data_dir": str(runtime_dir / "data")}},
+        {
+            "service": {"data_dir": str(runtime_dir / "data")},
+            "recording": {"enabled": False},
+        },
     )
 
     host_tag = settings.advertise_host.replace(".", "-")

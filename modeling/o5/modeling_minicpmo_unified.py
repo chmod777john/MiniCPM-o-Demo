@@ -870,6 +870,19 @@ class FcDuplexCapability:
         self.tts_text_start_pos = 0
         self.tts_past_key_values = None
         self.token2wav_buffer = []
+        self._release_token2wav_stream()
+
+    def _release_token2wav_stream(self) -> None:
+        """释放上一个 Session 的 Token2Wav 流式缓存（prompt base cache 保留、跨 Session 复用）。
+
+        流式缓存按参考音频长度线性增长（fp32；14.25 s 的 F409 约 1.4–2 GiB）。若不在 Session
+        结束时释放，下一个 Session 从 base 克隆新缓存时新旧两份同时驻留，单卡余量会被吃光。
+        """
+
+        tokenizer = getattr(getattr(self.model, "tts", None), "audio_tokenizer", None)
+        if tokenizer is not None:
+            tokenizer.stream_cache = None
+            tokenizer.hift_cache_dict = {}
 
     def _init_token2wav_cache(self, prompt_wav_path: str) -> None:
         """为一个 reference WAV 构造可复用的 Token2Wav 基础缓存。
