@@ -1643,10 +1643,24 @@ class FcDuplexView:
                         self._non_spoken_aggregate_kind = stream_kind
                     setattr(self, stream_attr, stream)
             if semantic_key == "listen" and self._spoken_text_stream is not None:
-                raise RuntimeError(
-                    "listen before spoken_turn_eos: "
-                    f"active_stream={self._spoken_text_stream.stream_id}"
+                # 模型在 spoken turn 尚未以 spoken_turn_eos 收尾时直接 listen：训练分布外的
+                # 模型行为（SDK replay 也不支持）。推理只负责如实记录：关闭该 turn 的文本流并
+                # 发出公开 warning，模型 token 与 KV 原样保留；不再把它变成 Session 级故障，
+                # 否则评测里这条样本永远没有结果（greedy 重跑结果相同）。
+                interrupted_stream_id = self._spoken_text_stream.stream_id
+                bpe_warning = self._terminate_text_stream(track="spoken", reason="listen")
+                if bpe_warning is not None:
+                    warnings.append(bpe_warning)
+                warnings.append(
+                    FcGenerationWarning(
+                        code="listen_before_spoken_turn_eos",
+                        stream_id=interrupted_stream_id,
+                        track="spoken",
+                        reason="listen",
+                        message="模型未输出 spoken_turn_eos 即 listen；该 spoken turn 视为未完成结束",
+                    )
                 )
+                stream = None
             stream_id = (
                 stream.stream_id
                 if stream is not None

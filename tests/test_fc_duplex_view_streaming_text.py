@@ -318,8 +318,8 @@ def test_spoken_repeated_speak_across_units_reuses_turn_stream() -> None:
     assert view.resume_boundary_status() == {"status": "available"}
 
 
-def test_spoken_listen_before_turn_eos_is_runtime_error() -> None:
-    """Active spoken turn 尚未 turn_eos 时出现 listen 属于协议错误。"""
+def test_spoken_listen_before_turn_eos_is_public_warning() -> None:
+    """Active spoken turn 尚未 turn_eos 就出现 listen：如实记录为 warning 并关闭该 turn，不终止 Session。"""
 
     model = _FakeFcModel()
     tokenizer = model.fc_duplex.protocol_tokenizer
@@ -340,8 +340,11 @@ def test_spoken_listen_before_turn_eos_is_runtime_error() -> None:
     view.prepare(FcDuplexPrepareRequest(system=FcSystemContentInput()))
     view.streaming_spoken_generate(FcSpokenGenerateRequest())
 
-    with pytest.raises(RuntimeError, match="listen before spoken_turn_eos"):
-        view.streaming_spoken_generate(FcSpokenGenerateRequest())
+    result = view.streaming_spoken_generate(FcSpokenGenerateRequest())
+
+    assert result.is_listen
+    assert [w.code for w in result.warnings] == ["listen_before_spoken_turn_eos"]
+    assert view._spoken_text_stream is None
 
 
 def test_budget_reached_preserves_think_stream_for_direct_closer() -> None:

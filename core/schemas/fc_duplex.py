@@ -74,6 +74,7 @@ class FcGenerationWarning(BaseModel):
     code: Literal[
         "incomplete_bpe_at_stream_end",
         "unclassified_non_spoken_token",
+        "listen_before_spoken_turn_eos",
     ]
     stream_id: str
     track: FcGenerationTrack
