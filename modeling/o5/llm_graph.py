@@ -212,30 +212,38 @@ class LLMGraphRunner:
             return
         self._reset_local()
 
-    def _warn_overflow(self, pos):
-        if not getattr(self, "_overflowed", False):
-            self._overflowed = True
-            print(f"[llm_graph] WARNING: LLM position {pos} >= max_cache_len {self.max_cache_len}; "
-                  f"clamping. A >{self.max_cache_len}-token session: reset sessions or raise max_cache_len "
-                  f"(the demo sliding_window does NOT trim a StaticCache). No crash; tail may degrade.",
-                  flush=True)
+    def _check_capacity(self, end_pos):
+        """StaticCache 写满时直接失败：截断或复位都会静默丢上下文，推理结果不可信。"""
+        if end_pos > self.max_cache_len:
+            raise RuntimeError(
+                f"[llm_graph] session needs {end_pos} LLM positions > max_cache_len "
+                f"{self.max_cache_len}; raise O5_LLM_CACHE for this deployment"
+            )
 
     def _prefill_local(self, inputs_embeds, start_pos):
-        """Variable-length prefill via the non-graph StaticCache path. inputs_embeds: [1,L,H]."""
+        """Variable-length prefill via the non-graph StaticCache path. inputs_embeds: [1,L,H].
+
+        Long prefills are fed in bounded chunks with a memory-safe MoE implementation
+        (see bounded_prefill.py); the captured decode graph is unaffected.
+        """
+        from .bounded_prefill import iter_prefill_chunks, prefill_experts_implementation
+
         with torch.inference_mode():
             L = inputs_embeds.shape[1]
-            if L > self.max_cache_len:              # pathological single prefill > ceiling: keep last window
-                self._warn_overflow(L); inputs_embeds = inputs_embeds[:, -self.max_cache_len:, :]
-                L = self.max_cache_len; start_pos = 0
-            end = start_pos + L
-            if end > self.max_cache_len:
-                self._warn_overflow(end); end = self.max_cache_len; start_pos = max(0, end - L)
-            cpos = torch.arange(start_pos, start_pos + L, device=self.device)
-            mask2d = torch.zeros(1, self.max_cache_len, dtype=torch.long, device=self.device)
-            mask2d[:, :start_pos + L] = 1
-            h = self.model(inputs_embeds=inputs_embeds, position_ids=cpos.unsqueeze(0),
-                           cache_position=cpos, attention_mask=mask2d,
-                           past_key_values=self.cache, use_cache=True, return_dict=True).last_hidden_state
+            self._check_capacity(start_pos + L)
+            hidden_chunks = []
+            with prefill_experts_implementation(self.model):
+                for chunk_start, chunk_end in iter_prefill_chunks(L):
+                    pos0, pos1 = start_pos + chunk_start, start_pos + chunk_end
+                    cpos = torch.arange(pos0, pos1, device=self.device)
+                    mask2d = torch.zeros(1, self.max_cache_len, dtype=torch.long, device=self.device)
+                    mask2d[:, :pos1] = 1
+                    hidden_chunks.append(self.model(
+                        inputs_embeds=inputs_embeds[:, chunk_start:chunk_end, :],
+                        position_ids=cpos.unsqueeze(0), cache_position=cpos,
+                        attention_mask=mask2d, past_key_values=self.cache,
+                        use_cache=True, return_dict=True).last_hidden_state)
+            h = hidden_chunks[0] if len(hidden_chunks) == 1 else torch.cat(hidden_chunks, dim=1)
             # mark all prefilled positions valid for the graph's additive mask
             self._mask[..., :start_pos + L] = 0.0
         return h
@@ -249,8 +257,7 @@ class LLMGraphRunner:
     def _decode_local(self, inputs_embeds, pos):
         """Single-token decode at absolute position `pos` (== cache length before this token)."""
         with torch.inference_mode():
-            if pos >= self.max_cache_len:
-                self._warn_overflow(pos); pos = self.max_cache_len - 1
+            self._check_capacity(pos + 1)
             self._emb.copy_(inputs_embeds)
             self._pos.fill_(pos); self._cpos.fill_(pos)
             self._mask[..., pos] = 0.0

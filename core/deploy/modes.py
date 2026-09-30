@@ -66,13 +66,58 @@ def _load_full(cfg: Dict[str, Any], device: str):
     """Single-card: build MiniCPMO, load the full .pt, place on `device`, init_unified."""
     from accelerate import init_empty_weights
     from modeling.o5.modeling_minicpmo_unified import MiniCPMO
+    config = _mk_config(cfg)
+    sd = torch.load(
+        cfg["pt_path"],
+        map_location="cpu",
+        weights_only=True,
+        mmap=True,
+    )
+    checkpoint_vocab_size = _checkpoint_vocab_size(sd)
+    configured_vocab_size = int(
+        getattr(config, "vocab_size", checkpoint_vocab_size)
+    )
+    if checkpoint_vocab_size != configured_vocab_size:
+        logger.warning(
+            "Checkpoint/config vocabulary mismatch: checkpoint=%d, config=%d. "
+            "Building the single-card O5 LLM with checkpoint vocabulary size.",
+            checkpoint_vocab_size,
+            configured_vocab_size,
+        )
+        config.vocab_size = checkpoint_vocab_size
     with init_empty_weights():
-        model = MiniCPMO(_mk_config(cfg))
-    sd = torch.load(cfg["pt_path"], map_location="cpu", weights_only=True, mmap=True)
+        model = MiniCPMO(config)
     model.load_state_dict(sd, strict=False, assign=True); del sd
     model.bfloat16().eval().to(device)
     model.processor = _load_o5_processor(cfg["model_path"])
     return model
+
+
+def _checkpoint_vocab_size(state_dict: Dict[str, Any]) -> int:
+    """读取完整 O5 PT 中 embedding 与 lm_head 的共同词表行数。
+
+    参数:
+        state_dict: 完整 O5 checkpoint state_dict。
+
+    返回:
+        embedding 与 lm_head 一致的词表行数。
+    """
+
+    embedding_key = "llm.model.embed_tokens.weight"
+    lm_head_key = "llm.lm_head.weight"
+    if embedding_key not in state_dict or lm_head_key not in state_dict:
+        raise KeyError(
+            "完整 O5 PT 缺少 embedding/lm_head: "
+            f"{embedding_key}, {lm_head_key}"
+        )
+    embedding_rows = int(state_dict[embedding_key].shape[0])
+    lm_head_rows = int(state_dict[lm_head_key].shape[0])
+    if embedding_rows != lm_head_rows:
+        raise ValueError(
+            "O5 PT embedding/lm_head 词表行数不一致: "
+            f"embedding={embedding_rows}, lm_head={lm_head_rows}"
+        )
+    return embedding_rows
 
 
 def _surgery_tp(

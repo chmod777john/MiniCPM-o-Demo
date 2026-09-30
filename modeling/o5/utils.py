@@ -14,6 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import contextlib
 import logging
 import os
 from dataclasses import dataclass
@@ -2297,17 +2298,8 @@ class StreamDecoder:
         if bool(_OPT.get("llm_graph")):
             _r = self.ensure_llm_graph_runner()
             _pos = self._static_pos
-            if _pos + L > _r.max_cache_len:
-                # Session exceeds the graph StaticCache ceiling. StaticLayer auto-advances its own write
-                # index (cumulative_length), so writing past max_cache_len device-asserts. Reset the session
-                # (context lost) to stay crash-safe. NOTE: the demo sliding_window does NOT help here -- it
-                # silently no-ops on a StaticCache (no .crop). For long sessions with llm_graph, options are:
-                # periodic session reset (bounds cache), raise max_cache_len (VRAM permitting), or disable
-                # llm_graph (DynamicCache path supports real cache trimming).
-                logger.warning("[llm_graph] session cache full (%d+%d > %d); resetting session (context lost). "
-                               "sliding_window does NOT trim a StaticCache; reset sessions or raise max_cache_len.",
-                               _pos, L, _r.max_cache_len)
-                _r.reset(); self._static_pos = 0; _pos = 0
+            # Session 超过 StaticCache 上限时 runner 直接报错（不静默复位丢上下文）。
+            _r._check_capacity(_pos + L)
             if L == 1:
                 _h = _r.decode(embeds.unsqueeze(0), _pos)
             else:
@@ -2341,39 +2333,31 @@ class StreamDecoder:
                 return self.m.lm_head(_h[:, -1:])[:, -1], _h
             return
 
-        past_len = self.get_cache_length()
-        pos_ids = torch.arange(past_len, past_len + L, device=device).unsqueeze(0)  # [1, L]
+        # Dynamic-cache path: run the backbone and apply lm_head to the LAST position only
+        # (the full-vocab head over a long prefill is an [L, 248k] tensor and is never read).
+        # Long prefills go through bounded chunks with a memory-safe MoE implementation.
+        from .bounded_prefill import iter_prefill_chunks, prefill_experts_implementation
 
-        if _OPT.get("lmhead"):
-            # skip CausalLM internal full-vocab lm_head + our double recompute;
-            # run backbone, lm_head on LAST position only. Bit-identical logits + hidden.
-            out = self.m.model(
-                inputs_embeds=embeds.unsqueeze(0),  # [1, L, H]
-                position_ids=pos_ids,
-                past_key_values=self.cache,
-                return_dict=True,
-                output_hidden_states=True,
-            )
-            self.cache = out.past_key_values
-            if return_logits:
-                _h = out.hidden_states[-1]
-                logits = self.m.lm_head(_h[:, -1:])[:, -1]  # [1, vocab]
-                return logits, _h
-        else:
-            out = self.m(
-                inputs_embeds=embeds.unsqueeze(0),  # [1, L, H]
-                position_ids=pos_ids,
-                past_key_values=self.cache,
-                # use_cache = True,
-                return_dict=True,
-                output_hidden_states=True,
-                # attention_mask=attention_mask
-            )
-            self.cache = out.past_key_values
-
-            if return_logits:
-                logits = self.m.lm_head(out.hidden_states[-1])[:, -1]  # [1, vocab]
-                return logits, out.hidden_states[-1]
+        hidden_chunks = []
+        with prefill_experts_implementation(self.m) if L > 1 else contextlib.nullcontext():
+            for chunk_start, chunk_end in iter_prefill_chunks(L):
+                past_len = self.get_cache_length()
+                pos_ids = torch.arange(
+                    past_len, past_len + (chunk_end - chunk_start), device=device
+                ).unsqueeze(0)
+                out = self.m.model(
+                    inputs_embeds=embeds[chunk_start:chunk_end].unsqueeze(0),  # [1, l, H]
+                    position_ids=pos_ids,
+                    past_key_values=self.cache,
+                    use_cache=True,
+                    return_dict=True,
+                )
+                self.cache = out.past_key_values
+                hidden_chunks.append(out.last_hidden_state)
+        if return_logits:
+            _h = hidden_chunks[0] if len(hidden_chunks) == 1 else torch.cat(hidden_chunks, dim=1)
+            logits = self.m.lm_head(_h[:, -1:])[:, -1]  # [1, vocab]
+            return logits, _h
 
     @torch.no_grad()
     def decode(

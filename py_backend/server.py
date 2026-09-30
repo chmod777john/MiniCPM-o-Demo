@@ -254,6 +254,11 @@ class BackendProtocolSession:
                 if self._fc_runtime is not None
                 else None
             ),
+            system_prefill=(
+                self._fc_runtime.system_prefill
+                if self._fc_runtime is not None
+                else None
+            ),
             metrics=self._safe_metrics(),
         )
 

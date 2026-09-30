@@ -545,6 +545,7 @@ def build_session_init_payload(
     system: FcSystemContentInput,
     unit_policy: O5UnitPolicy,
     tts_prompt_audio_path: str | None,
+    non_spoken_scheduling: str = "quality",
 ) -> JsonObject:
     """构造不包含评测信息的 FC Semantic API Session 初始化帧。
 
@@ -552,6 +553,7 @@ def build_session_init_payload(
         system: 保持 TrainingData segment 顺序和嵌套 tools 的 v3 system。
         unit_policy: TrainingData 显式 UnitPolicy。
         tts_prompt_audio_path: 独立 TTS prompt；默认由调用方选择首段 system audio。
+        non_spoken_scheduling: non-spoken 调度策略；session-bound 服务要求显式提供。
 
     返回:
         可直接发送的 ``session.init`` 帧。
@@ -569,6 +571,7 @@ def build_session_init_payload(
             "runtime": "fc_duplex",
             "decode_mode": "greedy",
             "sample_rate": AUDIO_SAMPLE_RATE,
+            "non_spoken_scheduling": non_spoken_scheduling,
         },
     }
     if tts_prompt_audio_path is not None:

@@ -1770,7 +1770,11 @@ async def realtime_ws(ws: WebSocket):
     # inference is still being optimized. Keep the API session watchdog, but
     # make the total session duration 4x the original limits to avoid ending
     # otherwise healthy long-running manual tests.
-    max_duration_s = 1200 if mode == "video" else 2400
+    max_duration_s: Optional[float] = 1200 if mode == "video" else 2400
+    # 离线评测按 Unit 锁步驱动，墙钟时长与对话时长无关；副本池部署用 0 关闭该看门狗。
+    override = os.environ.get("FC_API_SESSION_MAX_DURATION_S")
+    if override is not None:
+        max_duration_s = float(override) or None
     request_type = "omni_duplex" if mode == "video" else "audio_duplex"
 
     await _api_worker_passthrough_ws(

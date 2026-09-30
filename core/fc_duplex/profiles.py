@@ -13,7 +13,14 @@ from pathlib import Path
 from typing import Annotated, Literal, Union
 
 from minicpm_o5_sdk import O5UnitPolicy
-from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    TypeAdapter,
+    field_validator,
+    model_validator,
+)
 
 
 class _BaseFcDeploymentProfile(BaseModel):
@@ -40,10 +47,15 @@ class _BaseFcDeploymentProfile(BaseModel):
         default=None,
         description="FC Board 静态 TrainingData case 目录。",
     )
-    unit_policy: O5UnitPolicy = Field(description="SDK 0.0.5 定义的完整 UnitPolicy。")
-    non_spoken_scheduling: Literal["quality", "latency"] = Field(
+    unit_policy: O5UnitPolicy | None = Field(
+        description=(
+            "SDK 0.0.5 定义的完整 UnitPolicy；None 表示不在进程级绑定，"
+            "由每个 Session 的 session.init 显式提供（通用评测服务使用）。"
+        ),
+    )
+    non_spoken_scheduling: Literal["quality", "latency"] | None = Field(
         default="quality",
-        description="模型已验证的 non-spoken 调度策略。",
+        description="模型已验证的 non-spoken 调度策略；None 表示由 Session 显式提供。",
     )
 
     @field_validator("profile_id", "model_path", "pt_path")
@@ -92,22 +104,23 @@ class O45FcDeploymentProfile(_BaseFcDeploymentProfile):
 
 
 class O5FcDeploymentProfile(_BaseFcDeploymentProfile):
-    """O5 MoE TP2 + LLM Graph 双工 FC 部署配置。"""
+    """O5 MoE 单卡或 TP2 双工 FC 部署配置。"""
 
     model_family: Literal["o5"] = "o5"
     tokenizer_target: Literal["o5"] = "o5"
     required_model_rows: Literal[248168] = 248168
     modeling_package: Literal["modeling.o5"] = "modeling.o5"
-    deployment_mode: Literal["tp2"] = "tp2"
-    backbone_dir: str = Field(
+    deployment_mode: Literal["single_eager", "single_opt", "tp2"] = "tp2"
+    backbone_dir: str | None = Field(
+        default=None,
         min_length=1,
-        description="从同一个完整 PT 抽取的 HF sharded safetensors LLM backbone。",
+        description="TP2 使用的 HF sharded safetensors LLM backbone；单卡模式不需要。",
     )
     backbone_manifest_sha256: str | None = Field(
         default=None,
         description="backbone manifest 的可选 SHA256；正式部署应填写。",
     )
-    tp_size: Literal[2] = 2
+    tp_size: Literal[1, 2] = 2
     llm_graph: Literal[True] = True
     llm_cache: int = Field(default=32768, ge=1)
     spmd_heartbeat_interval_sec: float = Field(default=30.0, gt=0)
@@ -115,19 +128,38 @@ class O5FcDeploymentProfile(_BaseFcDeploymentProfile):
 
     @field_validator("backbone_dir")
     @classmethod
-    def validate_backbone_dir(cls, value: str) -> str:
+    def validate_backbone_dir(cls, value: str | None) -> str | None:
         """拒绝带首尾空白的 backbone 路径。
 
         参数:
-            value: backbone 目录字符串。
+            value: backbone 目录字符串或 None。
 
         返回:
-            原始非空路径。
+            原始非空路径或 None。
         """
 
+        if value is None:
+            return None
         if value != value.strip():
             raise ValueError("backbone_dir 不能包含首尾空白")
         return value
+
+    @model_validator(mode="after")
+    def validate_deployment_topology(self) -> "O5FcDeploymentProfile":
+        """校验部署模式、TP 大小和 backbone 的组合关系。
+
+        返回:
+            已校验的 Profile。
+        """
+
+        if self.deployment_mode == "tp2":
+            if self.tp_size != 2:
+                raise ValueError("tp2 模式必须使用 tp_size=2")
+            if self.backbone_dir is None:
+                raise ValueError("tp2 模式必须提供 backbone_dir")
+        elif self.tp_size != 1:
+            raise ValueError("O5 单卡模式必须使用 tp_size=1")
+        return self
 
     @field_validator("backbone_manifest_sha256")
     @classmethod
@@ -198,27 +230,43 @@ def apply_fc_deployment_profile_environment(
 
     os.environ["FC_MODEL_FAMILY"] = profile.model_family
     os.environ["CHECKPOINT_PROFILE_ID"] = profile.profile_id
-    os.environ["FC_DUPLEX_UNIT_POLICY_JSON"] = profile.unit_policy.model_dump_json()
-    os.environ["FC_DUPLEX_NON_SPOKEN_SCHEDULING"] = (
-        profile.non_spoken_scheduling
-    )
-    policy_data = profile.unit_policy.model_dump(mode="json")
-    os.environ["FC_DUPLEX_UNIT_SEC"] = str(policy_data["unit_sec"])
-    _set_uniform_budget_environment(
-        "FC_DUPLEX_NON_SPOKEN_BUDGET_WHILE_LISTENING",
-        policy_data.get("non_spoken_budgets_while_listening"),
-    )
-    _set_uniform_budget_environment(
-        "FC_DUPLEX_NON_SPOKEN_BUDGET_WHILE_SPEAKING",
-        policy_data.get("non_spoken_budgets_while_speaking"),
-    )
+    if profile.non_spoken_scheduling is None:
+        os.environ.pop("FC_DUPLEX_NON_SPOKEN_SCHEDULING", None)
+    else:
+        os.environ["FC_DUPLEX_NON_SPOKEN_SCHEDULING"] = (
+            profile.non_spoken_scheduling
+        )
+    if profile.unit_policy is None:
+        # Session-bound：进程不登记任何 budget 事实，Runtime 只接受 session.init 提供的策略。
+        for name in (
+            "FC_DUPLEX_UNIT_POLICY_JSON",
+            "FC_DUPLEX_UNIT_SEC",
+            "FC_DUPLEX_NON_SPOKEN_BUDGET_WHILE_LISTENING",
+            "FC_DUPLEX_NON_SPOKEN_BUDGET_WHILE_SPEAKING",
+        ):
+            os.environ.pop(name, None)
+    else:
+        os.environ["FC_DUPLEX_UNIT_POLICY_JSON"] = profile.unit_policy.model_dump_json()
+        policy_data = profile.unit_policy.model_dump(mode="json")
+        os.environ["FC_DUPLEX_UNIT_SEC"] = str(policy_data["unit_sec"])
+        _set_uniform_budget_environment(
+            "FC_DUPLEX_NON_SPOKEN_BUDGET_WHILE_LISTENING",
+            policy_data.get("non_spoken_budgets_while_listening"),
+        )
+        _set_uniform_budget_environment(
+            "FC_DUPLEX_NON_SPOKEN_BUDGET_WHILE_SPEAKING",
+            policy_data.get("non_spoken_budgets_while_speaking"),
+        )
     os.environ["O5_DEPLOY_MODE"] = profile.deployment_mode
     if profile.reference_audio_path is not None:
         os.environ["FC_REFERENCE_AUDIO_PATH"] = profile.reference_audio_path
     if profile.case_folder is not None:
         os.environ["FC_BOARD_CASE_FOLDER"] = profile.case_folder
     if isinstance(profile, O5FcDeploymentProfile):
-        os.environ["O5_BACKBONE_DIR"] = profile.backbone_dir
+        if profile.backbone_dir is not None:
+            os.environ["O5_BACKBONE_DIR"] = profile.backbone_dir
+        else:
+            os.environ.pop("O5_BACKBONE_DIR", None)
         os.environ["O5_LLM_CACHE"] = str(profile.llm_cache)
         os.environ["O5_LLM_GRAPH"] = "1"
         os.environ["O5_SPMD_HEARTBEAT_INTERVAL"] = str(
@@ -276,7 +324,12 @@ def _validate_profile_paths(profile: FcDeploymentProfile) -> None:
         raise FileNotFoundError(
             f"case_folder 不存在或不是目录: {profile.case_folder}"
         )
-    if isinstance(profile, O5FcDeploymentProfile):
+    if (
+        isinstance(profile, O5FcDeploymentProfile)
+        and profile.deployment_mode == "tp2"
+    ):
+        if profile.backbone_dir is None:
+            raise ValueError("tp2 Profile 缺少 backbone_dir")
         backbone_dir = Path(profile.backbone_dir)
         if not backbone_dir.is_dir():
             raise FileNotFoundError(

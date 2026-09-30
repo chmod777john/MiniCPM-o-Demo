@@ -113,6 +113,51 @@ def test_o5_profile_has_fixed_tp2_graph_contract() -> None:
     assert profile.llm_graph is True
 
 
+def test_o5_single_opt_profile_requires_one_gpu_and_no_backbone() -> None:
+    """O5 单卡优化 Profile 应显式使用 tp_size=1，且不需要 backbone。"""
+
+    profile = O5FcDeploymentProfile(
+        profile_id="o5-single-opt",
+        model_path="/model/o5",
+        pt_path="/checkpoint/o5.pt",
+        deployment_mode="single_opt",
+        tp_size=1,
+        unit_policy=_unit_policy(),
+    )
+
+    assert profile.deployment_mode == "single_opt"
+    assert profile.tp_size == 1
+    assert profile.backbone_dir is None
+
+
+@pytest.mark.parametrize(
+    ("deployment_mode", "tp_size", "backbone_dir"),
+    [
+        ("tp2", 1, "/checkpoint/o5-backbone"),
+        ("tp2", 2, None),
+        ("single_eager", 2, None),
+        ("single_opt", 2, None),
+    ],
+)
+def test_o5_profile_rejects_inconsistent_deployment_topology(
+    deployment_mode: str,
+    tp_size: int,
+    backbone_dir: str | None,
+) -> None:
+    """Profile 必须拒绝部署模式、TP 大小和 backbone 不一致。"""
+
+    with pytest.raises(ValidationError):
+        O5FcDeploymentProfile(
+            profile_id="o5-invalid-topology",
+            model_path="/model/o5",
+            pt_path="/checkpoint/o5.pt",
+            deployment_mode=deployment_mode,
+            tp_size=tp_size,
+            backbone_dir=backbone_dir,
+            unit_policy=_unit_policy(),
+        )
+
+
 def test_profile_rejects_cross_model_target() -> None:
     """Profile 不允许 O5 模型声明 O45 tokenizer target。"""
 
@@ -153,6 +198,55 @@ def test_load_profile_uses_discriminated_union(tmp_path: Path) -> None:
     assert isinstance(profile, O45FcDeploymentProfile)
 
 
+@pytest.fixture(autouse=True)
+def _restore_process_environment():
+    """apply_fc_deployment_profile_environment 直接写 os.environ；每个测试后整体恢复，
+    避免 Profile 绑定的 UnitPolicy 泄漏到同进程的 Runtime 测试。"""
+
+    snapshot = dict(__import__("os").environ)
+    yield
+    environ = __import__("os").environ
+    environ.clear()
+    environ.update(snapshot)
+
+
+def test_session_bound_profile_registers_no_budget_facts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """unit_policy/non_spoken_scheduling 为 None 时，进程环境里不能残留任何 budget 事实。"""
+
+    profile = O5FcDeploymentProfile(
+        profile_id="o5-session-bound",
+        model_path="/model/o5",
+        pt_path="/checkpoint/o5.pt",
+        deployment_mode="single_opt",
+        tp_size=1,
+        unit_policy=None,
+        non_spoken_scheduling=None,
+    )
+    for name in (
+        "FC_DUPLEX_UNIT_POLICY_JSON",
+        "FC_DUPLEX_UNIT_SEC",
+        "FC_DUPLEX_NON_SPOKEN_BUDGET_WHILE_LISTENING",
+        "FC_DUPLEX_NON_SPOKEN_BUDGET_WHILE_SPEAKING",
+        "FC_DUPLEX_NON_SPOKEN_SCHEDULING",
+    ):
+        monkeypatch.setenv(name, "stale")
+
+    apply_fc_deployment_profile_environment(profile)
+
+    environ = __import__("os").environ
+    assert environ["CHECKPOINT_PROFILE_ID"] == "o5-session-bound"
+    for name in (
+        "FC_DUPLEX_UNIT_POLICY_JSON",
+        "FC_DUPLEX_UNIT_SEC",
+        "FC_DUPLEX_NON_SPOKEN_BUDGET_WHILE_LISTENING",
+        "FC_DUPLEX_NON_SPOKEN_BUDGET_WHILE_SPEAKING",
+        "FC_DUPLEX_NON_SPOKEN_SCHEDULING",
+    ):
+        assert name not in environ
+
+
 def test_profile_environment_is_server_internal(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -189,6 +283,27 @@ def test_profile_environment_is_server_internal(
 
     assert __import__("os").environ["FC_MODEL_FAMILY"] == "o5"
     assert __import__("os").environ["O5_DEPLOY_MODE"] == "tp2"
+
+
+def test_o5_single_profile_removes_stale_backbone_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """单卡 Profile 不能继承父进程残留的 TP2 backbone。"""
+
+    profile = O5FcDeploymentProfile(
+        profile_id="o5-single-env",
+        model_path="/model/o5",
+        pt_path="/checkpoint/o5.pt",
+        deployment_mode="single_opt",
+        tp_size=1,
+        unit_policy=_unit_policy(),
+    )
+    monkeypatch.setenv("O5_BACKBONE_DIR", "/stale/backbone")
+
+    apply_fc_deployment_profile_environment(profile)
+
+    assert __import__("os").environ["O5_DEPLOY_MODE"] == "single_opt"
+    assert "O5_BACKBONE_DIR" not in __import__("os").environ
 
 
 def test_o45_adapter_exposes_matching_tokenizer_and_resume() -> None:

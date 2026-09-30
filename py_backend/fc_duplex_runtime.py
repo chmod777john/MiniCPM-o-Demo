@@ -118,6 +118,7 @@ class FcDuplexSessionRuntime:
         self._fixed_tool_call_ids: Optional[List[str]] = None
         self._decode_mode = "greedy"
         self._sample_rate = 16000
+        self._system_prefill: Optional[Dict[str, Any]] = None
         self._input_queue: asyncio.Queue[Dict[str, Any]] = asyncio.Queue()
         self._seen_input_ids: set[str] = set()
         self._queue_worker: Optional[asyncio.Task[None]] = None
@@ -275,13 +276,14 @@ class FcDuplexSessionRuntime:
         self._decode_mode = str(config.get("decode_mode", params.get("decode_mode", "greedy")) or "greedy")
         self._sample_rate = int(config.get("sample_rate", params.get("sample_rate", 16000)) or 16000)
         self._tools = list(prepare_request.system.tools)
-        await asyncio.to_thread(
+        prepare_result = await asyncio.to_thread(
             self.backend.fc_duplex_prepare,
             system=prepare_request.system,
             tts_prompt_audio=prepare_request.tts_prompt_audio,
             generate_audio=prepare_request.generate_audio,
             fixed_tool_call_ids=self._fixed_tool_call_ids,
         )
+        self._system_prefill = _system_prefill_audit(prepare_result)
         resume_identity_fn = getattr(self.backend, "fc_duplex_resume_identity", None)
         self._resume_identity = (
             await asyncio.to_thread(resume_identity_fn)
@@ -318,6 +320,12 @@ class FcDuplexSessionRuntime:
         """Return a copy of the current public resume identity metadata."""
 
         return dict(self._resume_identity)
+
+    @property
+    def system_prefill(self) -> Optional[Dict[str, Any]]:
+        """Return the audited system prefill (token count + special-token render)."""
+
+        return dict(self._system_prefill) if self._system_prefill is not None else None
 
     async def resume(self, params: Dict[str, Any]) -> None:
         """Rebuild a safe Unit checkpoint exclusively from client-provided history."""
@@ -1761,6 +1769,33 @@ def _validate_policy_budget_matches_scalar(
             f"{field_name}={list(budgets)!r} conflicts with {source_name} "
             f"value {scalar}"
         )
+
+
+def _system_prefill_audit(prepare_result: Any) -> Optional[Dict[str, Any]]:
+    """把 prepare 结果投影为可公开审计的 system 预填摘要。
+
+    参数:
+        prepare_result: backend ``fc_duplex_prepare`` 的返回值（Pydantic 或 dict）。
+
+    返回:
+        ``{"token_count", "render"}``；backend 未返回 prefill 信息时为 None。
+    """
+
+    if prepare_result is None:
+        return None
+    data = (
+        prepare_result.model_dump()
+        if hasattr(prepare_result, "model_dump")
+        else dict(prepare_result)
+    )
+    prefill_ids = data.get("prefill_ids")
+    render = data.get("output_render")
+    if prefill_ids is None and render is None:
+        return None
+    return {
+        "token_count": len(prefill_ids or []),
+        "render": render or "",
+    }
 
 
 def _resolve_unit_policy(

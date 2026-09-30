@@ -1,6 +1,6 @@
 """按一个 DeploymentProfile 启动统一双工 FC Demo。
 
-调用者只选择服务端 Profile。脚本根据 Profile 启动 O45 单卡或 O5 TP2 backend，
+调用者只选择服务端 Profile。脚本根据 Profile 启动单卡或 O5 TP2 backend，
 公共 Gateway、Worker、Semantic API v2 和 FC Board 保持完全一致。
 """
 
@@ -47,13 +47,21 @@ def main() -> None:
                 environment.get("WORKER_GPU_GROUP")
                 or (
                     f"{profile.model_family}-tp2"
-                    if isinstance(profile, O5FcDeploymentProfile)
+                    if (
+                        isinstance(profile, O5FcDeploymentProfile)
+                        and profile.deployment_mode == "tp2"
+                    )
                     else f"{profile.model_family}-single"
                 )
             ),
         }
     )
-    if isinstance(profile, O5FcDeploymentProfile):
+    if (
+        isinstance(profile, O5FcDeploymentProfile)
+        and profile.deployment_mode == "tp2"
+    ):
+        if profile.backbone_dir is None:
+            raise RuntimeError("O5 TP2 Profile 缺少 backbone_dir")
         environment["BACKBONE_DIR"] = profile.backbone_dir
         entry = project_dir / "scripts" / "start_o5_tp2_cctl_service.sh"
     else:

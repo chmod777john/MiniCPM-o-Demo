@@ -115,7 +115,12 @@ def validate_fc_checkpoint(
         )
 
     backbone_vocab_size: int | None = None
-    if isinstance(profile, O5FcDeploymentProfile):
+    if (
+        isinstance(profile, O5FcDeploymentProfile)
+        and profile.deployment_mode == "tp2"
+    ):
+        if profile.backbone_dir is None:
+            raise ValueError("O5 TP2 Profile 缺少 backbone_dir")
         config_path = Path(profile.backbone_dir) / "config.json"
         backbone_config = json.loads(config_path.read_text(encoding="utf-8"))
         backbone_vocab_size = int(backbone_config["vocab_size"])
