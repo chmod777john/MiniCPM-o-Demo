@@ -25,7 +25,7 @@ class FcDuplexModelAdapter(Protocol):
 
     @property
     def protocol_tokenizer(self) -> MiniCPMO5TokenizerAdapter:
-        """返回当前模型 target 对应的 SDK 0.0.5 tokenizer。"""
+        """返回当前模型 target 对应的 SDK tokenizer。"""
 
     @property
     def model_name(self) -> str:

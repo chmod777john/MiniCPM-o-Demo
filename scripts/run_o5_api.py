@@ -62,7 +62,7 @@ class O5ApiRuntimeSettings(BaseModel):
     )
     runtime_python: Path
     base_model_path: Path
-    sdk_version: Literal["0.0.5"] = "0.0.5"
+    sdk_version: Literal["0.0.6a3"] = "0.0.6a3"
     unit_policy: O5UnitPolicy
     non_spoken_scheduling: Literal["quality", "latency"] = "quality"
     llm_cache: int = Field(default=32768, ge=1)

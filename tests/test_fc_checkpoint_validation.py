@@ -1,4 +1,4 @@
-"""SDK 0.0.5 FC checkpoint/Profile 硬兼容性测试。"""
+"""SDK FC checkpoint/Profile 硬兼容性测试。"""
 
 from __future__ import annotations
 
@@ -92,7 +92,7 @@ def test_o5_checkpoint_and_backbone_match_sdk005(tmp_path: Path) -> None:
 
 
 def test_o5_rejects_legacy_005a1_rows(tmp_path: Path) -> None:
-    """正式 SDK 0.0.5 必须拒绝 0.0.5a1 的 248174 行权重。"""
+    """正式 SDK 必须拒绝 0.0.5a1 的 248174 行权重。"""
 
     pt_path = tmp_path / "o5-legacy.pt"
     _write_checkpoint(pt_path, 248174)
