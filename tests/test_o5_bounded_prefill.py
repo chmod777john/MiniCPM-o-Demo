@@ -76,3 +76,26 @@ def test_prefill_attention_switches_only_eager_and_restores() -> None:
         assert eager._attn_implementation == "sdpa"
         assert flash._attn_implementation == "flash_attention_2"
     assert eager._attn_implementation == "eager"
+
+
+def test_streaming_prefill_and_non_spoken_report_cost() -> None:
+    """prefill / non_spoken / finalize 都要带耗时，否则无法回答「每个 Unit 慢在哪」。
+
+    2026-10-01 之前只有 spoken 有 cost_llm，prefill 与 non_spoken 完全没计时，
+    被问到「每 Unit prefill 多少 ms」时拿不出数。
+    """
+
+    import inspect
+
+    from modeling.o5 import modeling_minicpmo_unified as mod
+
+    prefill_src = inspect.getsource(mod.FcDuplexCapability.streaming_prefill)
+    assert 'info["cost_prefill"] = time.time() - prefill_start' in prefill_src
+
+    non_spoken_src = inspect.getsource(
+        mod.FcDuplexCapability.streaming_non_spoken_generate
+    )
+    assert '"cost_llm": time.time() - non_spoken_start' in non_spoken_src
+
+    finalize_src = inspect.getsource(mod.FcDuplexCapability.finalize_unit)
+    assert 'info["cost_finalize"] = time.time() - finalize_start' in finalize_src

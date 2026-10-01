@@ -148,6 +148,9 @@ class FcDuplexSessionRuntime:
         self._generation_batch_tool_call_id: Optional[str] = None
         self._unit_has_deferred_close = False
         self._unit_non_spoken_end: Optional[str] = None
+        # 每个 Unit 的分段耗时累加（ms）。由 FC_DUPLEX_UNIT_METRICS=1 打开逐 Unit 日志；
+        # 默认只累加不打印（600 Unit × 数十副本会把日志冲爆）。
+        self._unit_cost_ms: Dict[str, float] = {}
         self._resume_identity: Dict[str, Any] = {}
         self._emit_debug_events = (
             os.environ.get("FC_DUPLEX_DEBUG_EVENTS", "0") == "1"
@@ -584,6 +587,7 @@ class FcDuplexSessionRuntime:
         self._audio_dump_unit_seq += 1
         self._unit_has_deferred_close = False
         self._unit_non_spoken_end = None
+        self._unit_cost_ms = {}
 
         if self._audio_dump_session_dir is not None:
             self._maybe_dump_user_wav(
@@ -599,6 +603,7 @@ class FcDuplexSessionRuntime:
             tool_responses=tool_responses or None,
             sample_rate=sample_rate,
         )
+        self._accumulate_unit_cost("prefill", getattr(prefill, "cost_prefill_ms", None))
         await self._emit_unit_input_events(
             prefill,
             unit_index=unit_index,
@@ -610,6 +615,9 @@ class FcDuplexSessionRuntime:
             max_tokens=self._max_spoken_tokens,
             decode_mode=self._decode_mode,
         )
+        self._accumulate_unit_cost("spoken", getattr(spoken, "cost_llm_ms", None))
+        self._accumulate_unit_cost("tts", getattr(spoken, "cost_tts_ms", None))
+        self._accumulate_unit_cost("token2wav", getattr(spoken, "cost_token2wav_ms", None))
         await self._emit_spoken(
             spoken,
             input_id=input_id,
@@ -666,6 +674,15 @@ class FcDuplexSessionRuntime:
         if self._unit_non_spoken_end is None:
             raise RuntimeError(
                 f"Unit {unit_index} finalized without response.non_spoken.end"
+            )
+        if self._unit_cost_ms and os.environ.get("FC_DUPLEX_UNIT_METRICS") == "1":
+            logger.info(
+                "FC unit metrics unit=%s %s",
+                unit_index,
+                " ".join(
+                    f"{key}={value:.1f}ms"
+                    for key, value in sorted(self._unit_cost_ms.items())
+                ),
             )
         await self._send(
             "response.unit.committed",
@@ -887,6 +904,7 @@ class FcDuplexSessionRuntime:
                 decode_mode=self._decode_mode,
             )
             step_durations_ms.append((time.perf_counter() - step_t0) * 1000)
+            self._accumulate_unit_cost("non_spoken", getattr(step, "cost_llm_ms", None))
             used += 1
             await self._emit_step_events(
                 step,
@@ -1118,6 +1136,18 @@ class FcDuplexSessionRuntime:
         self._generation_batch_kind = None
         self._generation_batch_tool_call_id = None
 
+    def _accumulate_unit_cost(self, phase: str, value: Optional[float]) -> None:
+        """累加当前 Unit 某个阶段的耗时（ms）。
+
+        参数:
+            phase: 阶段名（prefill / spoken / non_spoken / tts / token2wav）。
+            value: 本次调用的耗时 ms；None 表示该阶段此次没有计时，直接忽略。
+        """
+
+        if value is None:
+            return
+        self._unit_cost_ms[phase] = self._unit_cost_ms.get(phase, 0.0) + float(value)
+
     async def _emit_generation_warnings(
         self,
         warnings: List[Any],
@@ -1134,6 +1164,17 @@ class FcDuplexSessionRuntime:
                 else dict(warning)
             )
             fields.pop("stream_id", None)
+            # 同时落服务端日志：warning 只经 WS 发出时，客户端若不接收就什么都查不到。
+            # 2026-10-01 踩过：把「未 turn_eos 即 listen」从致命错误降级成 warning 后，
+            # 评测跑完无法回答「这次到底有没有发生」。
+            logger.warning(
+                "FC generation warning unit=%s code=%s track=%s reason=%s: %s",
+                unit_index,
+                fields.get("code"),
+                fields.get("track"),
+                fields.get("reason"),
+                fields.get("message"),
+            )
             await self._send(
                 "response.warning",
                 unit_index=unit_index,

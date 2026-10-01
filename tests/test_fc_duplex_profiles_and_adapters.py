@@ -348,3 +348,24 @@ def test_adapter_factory_never_guesses_model_family() -> None:
     adapter = create_fc_duplex_model_adapter(model=model, model_family="o45")
 
     assert isinstance(adapter, O45FcDuplexModelAdapter)
+
+
+def test_unit_cost_accumulator_sums_per_phase_and_resets():
+    """逐 Unit 分段耗时：同阶段多次调用要累加，None 忽略，换 Unit 要清零。
+
+    non_spoken 一个 Unit 内会被调多次（每次 1 token），所以必须累加而不是覆盖。
+    """
+
+    from py_backend.fc_duplex_runtime import FcDuplexSessionRuntime
+
+    runtime = FcDuplexSessionRuntime.__new__(FcDuplexSessionRuntime)
+    runtime._unit_cost_ms = {}
+
+    runtime._accumulate_unit_cost("prefill", 120.0)
+    runtime._accumulate_unit_cost("non_spoken", 10.0)
+    runtime._accumulate_unit_cost("non_spoken", 15.5)
+    runtime._accumulate_unit_cost("spoken", None)  # 没计时的阶段不该建键
+    assert runtime._unit_cost_ms == {"prefill": 120.0, "non_spoken": 25.5}
+
+    runtime._unit_cost_ms = {}
+    assert runtime._unit_cost_ms == {}

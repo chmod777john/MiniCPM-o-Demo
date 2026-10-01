@@ -1132,6 +1132,7 @@ class FcDuplexCapability:
             "non_spoken_terminator": None, "closed_spans": [],
         }
         self._current_unit_info = info
+        prefill_start = time.time()
         self._feed_ids([self.sid(self.K.UNIT_START)])
         self._current_unit_open = True
         if audio_waveform is not None and len(audio_waveform):
@@ -1142,6 +1143,9 @@ class FcDuplexCapability:
             self._feed_ids(self._event_ids(tool_responses))
         self._spoken_logits = self._feed_ids([self.sid(self.K.AI_SPOKEN_SLOT_START)], True)
         self._spoken_slot_open = True
+        # 本 Unit 的 prefill 墙钟：UNIT_START + 音频 slot(含 APM 编码) + input_event + SPOKEN_SLOT_START。
+        # 与 spoken / non_spoken 的解码耗时分开记，便于定位每个 Unit 的时间花在哪。
+        info["cost_prefill"] = time.time() - prefill_start
         return dict(info)
 
     def streaming_spoken_generate(self, max_tokens=24, decode_mode="greedy"):
@@ -1224,6 +1228,7 @@ class FcDuplexCapability:
             self._non_spoken_slot_open = True
 
     def streaming_non_spoken_generate(self, decode_mode="greedy", max_tokens=1, close_reason=None):
+        non_spoken_start = time.time()
         self._open_non_spoken()
         close_map = {
             "eos": self.K.NON_SPOKEN_EOS, "no_action": self.K.NO_ACTION,
@@ -1295,17 +1300,20 @@ class FcDuplexCapability:
         return {
             "token_ids": tids, "terminated": terminated, "close_reason": reason,
             "closed_spans": spans, "text": self._flush(ordinary) if ordinary else "",
+            "cost_llm": time.time() - non_spoken_start,
         }
 
     def finalize_unit(self):
         if not self._current_unit_open:
             return {}
+        finalize_start = time.time()
         if self._non_spoken_slot_open:
             self.streaming_non_spoken_generate(close_reason="budget_reached")
         if self._spoken_slot_open:
             self._close_spoken_slot()
         self._feed_ids([self.sid(self.K.UNIT_END)])
         info = dict(self._current_unit_info)
+        info["cost_finalize"] = time.time() - finalize_start
         self.units_info.append(info)
         self._current_unit_idx += 1
         self._current_unit_info = None

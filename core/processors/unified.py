@@ -1739,6 +1739,9 @@ class FcDuplexView:
             closed_spans=spans,
             text=data.get("text", ""),
             text_delta=text_delta,
+            cost_llm_ms=(
+                data["cost_llm"] * 1000 if data.get("cost_llm") is not None else None
+            ),
             span_started=span_started,
             generation_steps=generation_steps,
             warnings=warnings,
@@ -1788,6 +1791,9 @@ class FcDuplexView:
             is_speaking=data.get("is_speaking", False),
             inserted_token_ids=data.get("inserted_token_ids", []),
             tool_events=list(data.get("tool_events") or []),
+            cost_prefill_ms=(
+                data["cost_prefill"] * 1000 if data.get("cost_prefill") is not None else None
+            ),
         )
 
     def _spoken_result(self, data: dict) -> FcSpokenGenerateResult:

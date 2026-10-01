@@ -247,6 +247,10 @@ class FcDuplexPrefillResult(BaseModel):
         default_factory=list,
         description="Actual internal tool events attributed to this processed Unit",
     )
+    cost_prefill_ms: Optional[float] = Field(
+        None,
+        description="Wall-clock of this unit's prefill (unit start + user audio slot incl. APM encode + input events + spoken slot start)",
+    )
 
 
 class FcSpokenGenerateRequest(BaseModel):
@@ -297,6 +301,9 @@ class FcDuplexStepResult(BaseModel):
     closed_spans: List[FcClosedSpan] = Field(default_factory=list, description="Spans closed by this step")
     text: str = Field("", description="BPE-merged decode of token_ids")
     text_delta: str = Field("", description="Safe incremental Unicode produced by View")
+    cost_llm_ms: Optional[float] = Field(
+        None, description="Wall-clock of this primitive's LLM decode"
+    )
     span_started: Optional[Literal["think", "tool_call"]] = Field(
         None,
         description="Semantic span created by this View step, including implicit post-budget continuation",
