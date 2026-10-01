@@ -1794,6 +1794,12 @@ class FcDuplexView:
             cost_prefill_ms=(
                 data["cost_prefill"] * 1000 if data.get("cost_prefill") is not None else None
             ),
+            cost_audio_ms=(
+                data["cost_audio"] * 1000 if data.get("cost_audio") is not None else None
+            ),
+            cost_apm_ms=(
+                data["cost_apm"] * 1000 if data.get("cost_apm") is not None else None
+            ),
         )
 
     def _spoken_result(self, data: dict) -> FcSpokenGenerateResult:

@@ -251,6 +251,12 @@ class FcDuplexPrefillResult(BaseModel):
         None,
         description="Wall-clock of this unit's prefill (unit start + user audio slot incl. APM encode + input events + spoken slot start)",
     )
+    cost_audio_ms: Optional[float] = Field(
+        None, description="Wall-clock of the user audio segment: APM encode plus its single feed"
+    )
+    cost_apm_ms: Optional[float] = Field(
+        None, description="Wall-clock of APM audio encoding alone, excluding the feed"
+    )
 
 
 class FcSpokenGenerateRequest(BaseModel):

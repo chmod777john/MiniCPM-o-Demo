@@ -731,6 +731,7 @@ class FcDuplexCapability:
     def _feed_audio(self, waveform) -> int:
         if waveform is None or len(waveform) == 0:
             return 0
+        encode_start = time.time()
         data = self.processor.process_audio([np.asarray(waveform, dtype=np.float32)])
         nested = self.model.get_audio_embedding(
             data, chunk_length=self.model.config.audio_chunk_length
@@ -738,6 +739,8 @@ class FcDuplexCapability:
         if not nested:
             return 0
         embeds = torch.cat([item for group in nested for item in group], dim=0)
+        if self._current_unit_info is not None:
+            self._current_unit_info["cost_apm"] = time.time() - encode_start
         self.output_ids.extend([self.sid(self.K.AUDIO_PLACEHOLDER)] * int(embeds.shape[0]))
         self.decoder.feed(embeds)
         return int(embeds.shape[0])
@@ -1137,7 +1140,11 @@ class FcDuplexCapability:
         self._current_unit_open = True
         if audio_waveform is not None and len(audio_waveform):
             self._feed_ids([self.sid(self.K.USER_AUDIO_SLOT_START)])
+            audio_start = time.time()
             info["n_audio"] = self._feed_audio(audio_waveform)
+            # 拆出音频这一段：它 = APM 编码 + 一次 L≈10 的 feed，是 prefill 里最重的部分。
+            # 想知道「把 5 次 feed 合并成 1 次能省多少」，必须先知道省的不是这一段。
+            info["cost_audio"] = time.time() - audio_start
             self._feed_ids([self.sid(self.K.USER_AUDIO_SLOT_END)])
         if tool_responses:
             self._feed_ids(self._event_ids(tool_responses))

@@ -604,6 +604,8 @@ class FcDuplexSessionRuntime:
             sample_rate=sample_rate,
         )
         self._accumulate_unit_cost("prefill", getattr(prefill, "cost_prefill_ms", None))
+        self._accumulate_unit_cost("audio", getattr(prefill, "cost_audio_ms", None))
+        self._accumulate_unit_cost("apm", getattr(prefill, "cost_apm_ms", None))
         await self._emit_unit_input_events(
             prefill,
             unit_index=unit_index,
@@ -615,9 +617,12 @@ class FcDuplexSessionRuntime:
             max_tokens=self._max_spoken_tokens,
             decode_mode=self._decode_mode,
         )
-        self._accumulate_unit_cost("spoken", getattr(spoken, "cost_llm_ms", None))
-        self._accumulate_unit_cost("tts", getattr(spoken, "cost_tts_ms", None))
-        self._accumulate_unit_cost("token2wav", getattr(spoken, "cost_token2wav_ms", None))
+        # FcSpokenGenerateResult 的 cost_* 是**秒**（与 FcDuplexStepResult.cost_llm_ms 不同单位）
+        self._accumulate_unit_cost("spoken", self._seconds_to_ms(getattr(spoken, "cost_llm", None)))
+        self._accumulate_unit_cost("tts", self._seconds_to_ms(getattr(spoken, "cost_tts", None)))
+        self._accumulate_unit_cost(
+            "token2wav", self._seconds_to_ms(getattr(spoken, "cost_token2wav", None))
+        )
         await self._emit_spoken(
             spoken,
             input_id=input_id,
@@ -1135,6 +1140,14 @@ class FcDuplexSessionRuntime:
         self._generation_batch_steps = []
         self._generation_batch_kind = None
         self._generation_batch_tool_call_id = None
+
+    @staticmethod
+    def _seconds_to_ms(value: Optional[float]) -> Optional[float]:
+        """秒 → 毫秒；None 或 0 原样返回 None（0 表示该阶段本次没跑）。"""
+
+        if not value:
+            return None
+        return float(value) * 1000.0
 
     def _accumulate_unit_cost(self, phase: str, value: Optional[float]) -> None:
         """累加当前 Unit 某个阶段的耗时（ms）。
