@@ -244,6 +244,16 @@ class O5FcLockstepSession:
         self._next_unit = 0
         self._closed = False
 
+    @property
+    def session_id(self) -> Optional[str]:
+        """服务端在 ``session.created`` 里返回的 Session ID；未建立时为 None。
+
+        它也是网关 API 往返数据录制的目录名（``<recording_dir>/<session_id>/``），
+        调用方把它随自己的结果一起存下，之后即可按 ID 找回该 Session 的全部收发帧。
+        """
+        value = self.session_created.get("session_id")
+        return str(value) if value else None
+
     # ── lifecycle ───────────────────────────────────────────────────
     def __enter__(self) -> "O5FcLockstepSession":
         self.open()

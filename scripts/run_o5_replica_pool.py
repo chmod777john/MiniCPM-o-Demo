@@ -27,7 +27,7 @@ import sys
 import time
 from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import IO, Literal
+from typing import IO, Any, Literal
 from urllib.error import URLError
 from urllib.request import Request, urlopen
 
@@ -63,6 +63,9 @@ class ReplicaPoolSettings(BaseModel):
         backend_base_port: 第一个 Backend 端口。
         worker_base_port: 第一个 Worker 端口。
         master_base_port: 第一个 TP2 torchrun rendezvous 端口。
+        recording_dir: API 往返数据录制根目录；None = 不录制。指定后本机 Gateway 把每个
+            Session 的全部收发帧（含时间戳）忠实写到 ``<recording_dir>/<session_id>/``。
+            只对本机起的 Gateway 生效（``--remote-gateway`` 时流量走远端 Gateway，由它录）。
         check_only: 是否只生成和打印运行计划。
     """
 
@@ -81,6 +84,7 @@ class ReplicaPoolSettings(BaseModel):
     backend_base_port: int = Field(default=22510, ge=1, le=65535)
     worker_base_port: int = Field(default=22410, ge=1, le=65535)
     master_base_port: int = Field(default=29500, ge=1, le=65535)
+    recording_dir: Path | None = None
     check_only: bool = False
 
     @field_validator("gpu_groups")
@@ -345,12 +349,17 @@ def prepare_runtime_plan(
     _write_json(profile_path, profile.model_dump(mode="json"))
 
     service_config_path = runtime_dir / "service_config.json"
-    # 离线评测由调用方自己落盘结果；关闭网关的 Session 录音，避免每个 Session 额外写上百 MB。
+    # 录制默认关；调用方显式给 recording_dir 才开（离线评测按 run 指到评测输出目录下）。
+    recording: dict[str, Any] = {"enabled": False}
+    if settings.recording_dir is not None:
+        recording_dir = settings.recording_dir.expanduser().resolve()
+        recording_dir.mkdir(parents=True, exist_ok=True)
+        recording = {"enabled": True, "dir": str(recording_dir)}
     _write_json(
         service_config_path,
         {
             "service": {"data_dir": str(runtime_dir / "data")},
-            "recording": {"enabled": False},
+            "recording": recording,
         },
     )
 
@@ -737,6 +746,12 @@ def build_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument("--worker-base-port", type=int, default=22410)
     parser.add_argument("--master-base-port", type=int, default=29500)
     parser.add_argument(
+        "--recording-dir",
+        type=Path,
+        default=None,
+        help="开启 API 往返数据录制并写到 <dir>/<session_id>/；省略=不录制",
+    )
+    parser.add_argument(
         "--internal-settings",
         type=Path,
         default=DEFAULT_INTERNAL_SETTINGS_PATH,
@@ -774,6 +789,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             backend_base_port=args.backend_base_port,
             worker_base_port=args.worker_base_port,
             master_base_port=args.master_base_port,
+            recording_dir=args.recording_dir,
             check_only=args.check_only,
         )
         plan = prepare_runtime_plan(settings=settings, internal=internal)

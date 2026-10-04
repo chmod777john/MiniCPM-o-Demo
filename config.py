@@ -184,6 +184,14 @@ class RecordingConfig(BaseModel):
         default=True,
         description="是否开启自动录制",
     )
+    dir: Optional[str] = Field(
+        default=None,
+        description=(
+            "录制根目录：每个 Session 落在 <dir>/<session_id>/。"
+            "None = 沿用 <service.data_dir>/sessions。相对路径相对项目根目录。"
+            "离线评测按 run 指定到评测输出目录下，录制与该次 run 同生命周期。"
+        ),
+    )
     session_retention_days: int = Field(
         default=-1,
         description="Session 保留天数（-1 = 不清理，>0 = 超过天数后删除）",
