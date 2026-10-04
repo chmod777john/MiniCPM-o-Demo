@@ -40,6 +40,13 @@ class WorkerInfo(BaseModel):
     current_request_type: Optional[str] = None
     task_started_at: Optional[datetime] = None
     capabilities: List[str] = Field(default_factory=list)
+    draining: bool = False
+    """被摘流（drain）的 Worker 不再接新会话；手上的会话照常跑完。"""
+
+
+class WorkerDrainRequest(BaseModel):
+    """Worker 摘流请求（内部控制面）。"""
+    draining: bool = Field(default=True, description="True=不再接新会话；False=恢复接单")
 
 
 class WorkerRegistrationRequest(BaseModel):

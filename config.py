@@ -23,7 +23,7 @@ Worker 和 Gateway 统一读取此文件。
 import json
 import logging
 import os
-from typing import List, Optional
+from typing import List, Optional, Literal
 
 from pydantic import BaseModel, Field
 
@@ -167,6 +167,15 @@ class ServiceSectionConfig(BaseModel):
         default=300.0,
         description="请求超时时间（秒）",
     )
+    placement: Literal["spread", "pack"] = Field(
+        default="spread",
+        description=(
+            "新会话放到哪个空闲 Worker。spread（默认）= 当前负载最低的 GPU；"
+            "pack = 本机（127.0.0.1/localhost 注册的）Worker 优先，其次放到"
+            "「预计全部跑完最晚」的远端主机，让其余远端主机尽早整机空闲、可以退出。"
+            "离线评测的弹性缩容用 pack。"
+        ),
+    )
     compile: bool = Field(
         default=False,
         description="是否对核心子模块应用 torch.compile 加速（首次推理触发编译）",
@@ -279,6 +288,10 @@ class ServiceConfig(BaseModel):
     @property
     def eta_ema_alpha(self) -> float:
         return self.service.eta_ema_alpha
+
+    @property
+    def placement(self) -> str:
+        return self.service.placement
 
     @property
     def eta_ema_min_samples(self) -> int:

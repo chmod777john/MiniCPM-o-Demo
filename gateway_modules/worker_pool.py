@@ -24,7 +24,7 @@ import heapq
 import logging
 import uuid
 from typing import Dict, List, Optional, Tuple, Any, Callable, Awaitable
-from collections import OrderedDict
+from collections import OrderedDict, deque
 from datetime import datetime
 from dataclasses import dataclass, field
 
@@ -45,6 +45,11 @@ from runtime.protocol import DEFAULT_WORKER_CAPABILITIES, capability_for_request
 logger = logging.getLogger("gateway.worker_pool")
 
 HEALTH_CHECK_INTERVAL = 10.0
+
+# pack 放置下视为「本机」的注册地址：本机副本池以 127.0.0.1 注册，扩容主机以自己的 IP 注册。
+HOME_HOSTS = frozenset({"127.0.0.1", "localhost"})
+# 估算在跑会话剩余时长时，历史样本少于这个数就退回 ETA 基准值。
+_MIN_DURATION_SAMPLES = 5
 
 
 # ============ Worker 连接 ============
@@ -68,6 +73,8 @@ class WorkerConnection:
     current_request_type: Optional[str] = None
     task_started_at: Optional[datetime] = None
     capabilities: Optional[List[str]] = None
+    draining: bool = False
+    """摘流中：不再接新会话，手上的会话照常跑完（见 ``WorkerPool.set_draining``）。"""
     _gateway_dispatched: bool = False
 
     @property
@@ -80,7 +87,8 @@ class WorkerConnection:
 
     @property
     def is_idle(self) -> bool:
-        return self.status == GatewayWorkerStatus.IDLE
+        """可以接新会话：状态空闲且没有被摘流。"""
+        return self.status == GatewayWorkerStatus.IDLE and not self.draining
 
     @property
     def is_busy(self) -> bool:
@@ -111,6 +119,7 @@ class WorkerConnection:
             current_request_type=self.current_request_type,
             task_started_at=self.task_started_at,
             capabilities=list(self.capabilities or DEFAULT_WORKER_CAPABILITIES),
+            draining=self.draining,
         )
 
     def mark_busy(self, status: GatewayWorkerStatus, request_type: str,
@@ -235,6 +244,7 @@ class WorkerPool:
         eta_config: Optional[EtaConfig] = None,
         ema_alpha: float = 0.3,
         ema_min_samples: int = 3,
+        placement: str = "spread",
     ):
         """初始化 Worker 池
 
@@ -246,7 +256,12 @@ class WorkerPool:
             ema_alpha: EMA 平滑系数
             ema_min_samples: EMA 生效最少样本数
         """
+        if placement not in ("spread", "pack"):
+            raise ValueError(f"placement must be 'spread' or 'pack', got {placement!r}")
         self.workers: Dict[str, WorkerConnection] = {}
+        self.placement = placement
+        # 已完成会话的时长（秒），pack 放置用它估算在跑会话还要多久
+        self._durations: deque = deque(maxlen=2000)
         self.max_queue_size = max_queue_size
         self.request_timeout = request_timeout
 
@@ -470,17 +485,94 @@ class WorkerPool:
         return counts
 
     def _get_idle_worker(self, request_type: Optional[str] = None) -> Optional[WorkerConnection]:
-        """获取当前负载最低 GPU 上支持该请求类型的空闲 Worker"""
+        """选一个支持该请求类型的空闲 Worker。
+
+        spread：当前负载最低的 GPU（原有行为）。pack：见 ``_pick_packed``。
+        """
         gpu_busy = self._gpu_busy_counts()
-        idle_workers = (
+        idle_workers = [
             w for w in self.workers.values()
             if w.is_idle and (request_type is None or w.supports(request_type))
-        )
+        ]
+        if self.placement == "pack" and idle_workers:
+            idle_workers = self._pick_packed(idle_workers)
         return min(
             idle_workers,
             key=lambda w: (gpu_busy.get(self._gpu_group_key(w), 0), w.worker_id),
             default=None,
         )
+
+    # ---------- pack 放置 ----------
+
+    def _pick_packed(self, idle: List[WorkerConnection]) -> List[WorkerConnection]:
+        """pack 放置：缩小候选到一台主机，再由调用方按 GPU 负载挑具体 Worker。
+
+        规则（目标是让远端主机尽早「整机空闲」从而可以退出）：
+        1. 本机（``HOME_HOSTS``）有空闲 Worker 就用本机 —— 本机的网关要一直跑到最后，
+           相当于预计释放时间无限晚，往它身上放不会推迟任何主机的释放。
+        2. 否则选「预计全部跑完最晚」的远端主机：新会话放上去，对它释放时间的推迟最小。
+           预计释放时间 = 该主机在跑会话的预计结束时间的最大值；完全空闲的主机记为 -inf，
+           所以不会去唤醒空主机，除非别无选择。
+        3. 并列时选更早注册的主机，开局按注册顺序逐台填满。
+        """
+        home = [w for w in idle if w.host in HOME_HOSTS]
+        if home:
+            return home
+        now = datetime.now()
+        by_host: Dict[str, List[WorkerConnection]] = {}
+        for w in idle:
+            by_host.setdefault(w.host, []).append(w)
+        first_seen = {
+            h: min(w.registered_at for w in self.workers.values() if w.host == h)
+            for h in by_host
+        }
+        best = max(
+            by_host,
+            key=lambda h: (self._host_release_estimate(h, now), -first_seen[h].timestamp()),
+        )
+        return by_host[best]
+
+    def _host_release_estimate(self, host: str, now: datetime) -> float:
+        """主机的预计释放时间（unix 秒）= 其上在跑会话预计结束时间的最大值；无在跑会话为 -inf。"""
+        ends = []
+        for w in self.workers.values():
+            if w.host != host or not w.is_busy or w.task_started_at is None:
+                continue
+            elapsed = max(0.0, (now - w.task_started_at).total_seconds())
+            remaining = self._expected_remaining(elapsed, w.current_request_type)
+            ends.append(now.timestamp() + remaining)
+        return max(ends, default=float("-inf"))
+
+    def _expected_remaining(self, elapsed: float, request_type: Optional[str]) -> float:
+        """在跑会话还要多久：E[时长 − 已跑 | 时长 > 已跑]，用本网关已完成会话的时长分布估。
+
+        利用了「已经跑了多久」：刚开始的会话按整体均值估，已经跑了很久的只看比它更长的那些样本。
+        样本不足时退回 ETA 基准值；已跑时长超过所有样本时给一个随已跑时长增长的保守值。
+        """
+        if len(self._durations) >= _MIN_DURATION_SAMPLES:
+            longer = [d for d in self._durations if d > elapsed]
+            if longer:
+                return sum(longer) / len(longer) - elapsed
+            return max(60.0, 0.25 * elapsed)
+        base = self.eta_tracker.get_eta(request_type or "omni_duplex")
+        return max(60.0, base - elapsed)
+
+    # ---------- 摘流 ----------
+
+    def set_draining(self, worker_id: str, draining: bool = True) -> Optional[WorkerConnection]:
+        """摘流 / 恢复一个 Worker；返回该 Worker，未知 ID 返回 None。
+
+        摘流只影响「接不接新会话」（``is_idle`` 为 False），不打断在跑会话；
+        健康检查也不会清掉这个标记。恢复后立即尝试调度排队中的请求。
+        """
+        worker = self.workers.get(worker_id)
+        if worker is None:
+            return None
+        worker.draining = draining
+        logger.info("Worker %s draining=%s", worker_id, draining)
+        if not draining:
+            self._dispatch_next()
+        return worker
 
     # ========== FIFO 队列核心 ==========
 
@@ -627,6 +719,7 @@ class WorkerPool:
         # 更新 EMA
         if request_type and duration_s is not None and duration_s > 0:
             self.eta_tracker.record_duration(request_type, duration_s)
+            self._durations.append(duration_s)
 
         # 尝试调度下一个
         self._dispatch_next()

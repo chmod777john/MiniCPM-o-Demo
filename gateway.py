@@ -53,6 +53,7 @@ from gateway_modules.models import (
     ServiceStatus,
     WorkersResponse,
     WorkerRegistrationRequest,
+    WorkerDrainRequest,
     QueueStatus,
     EtaConfig,
     EtaStatus,
@@ -423,6 +424,7 @@ async def lifespan(app: FastAPI):
         eta_config=eta_config,
         ema_alpha=GATEWAY_CONFIG.get("eta_ema_alpha", 0.3),
         ema_min_samples=GATEWAY_CONFIG.get("eta_ema_min_samples", 3),
+        placement=GATEWAY_CONFIG.get("placement", "spread"),
     )
     await worker_pool.start()
 
@@ -617,6 +619,21 @@ async def register_worker(worker_id: str, payload: WorkerRegistrationRequest):
         "ok": True,
         "worker": worker.to_info(),
     }
+
+
+@internal_app.post("/internal/workers/{worker_id}/drain")
+async def drain_worker(worker_id: str, payload: WorkerDrainRequest):
+    """摘流 / 恢复一个 Worker：摘流后不再接新会话，手上的会话照常跑完。
+
+    离线评测的弹性缩容用它：控制器先摘流某台扩容主机的全部 Worker，确认都空闲后再让该主机退出，
+    这样退出时不会掐断会话，也不会在退出前一刻又被分到新会话。
+    """
+    if worker_pool is None:
+        raise HTTPException(status_code=503, detail="Service not ready")
+    worker = worker_pool.set_draining(worker_id, payload.draining)
+    if worker is None:
+        raise HTTPException(status_code=404, detail=f"unknown worker {worker_id}")
+    return {"ok": True, "worker": worker.to_info()}
 
 
 
@@ -1929,6 +1946,7 @@ def main():
         },
         "eta_ema_alpha": cfg.eta_ema_alpha,
         "eta_ema_min_samples": cfg.eta_ema_min_samples,
+        "placement": cfg.placement,
     })
 
     proto_label = "HTTPS" if use_https else "HTTP"
