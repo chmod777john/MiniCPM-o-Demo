@@ -63,6 +63,8 @@ class ReplicaPoolSettings(BaseModel):
         backend_base_port: 第一个 Backend 端口。
         worker_base_port: 第一个 Worker 端口。
         master_base_port: 第一个 TP2 torchrun rendezvous 端口。
+        placement: 本机 Gateway 的新会话放置策略（``spread`` / ``pack``），见 ``config.ServiceSectionConfig.placement``；
+            只对本机起的 Gateway 生效。
         recording_dir: API 往返数据录制根目录；None = 不录制。指定后本机 Gateway 把每个
             Session 的全部收发帧（含时间戳）忠实写到 ``<recording_dir>/<session_id>/``。
             只对本机起的 Gateway 生效（``--remote-gateway`` 时流量走远端 Gateway，由它录）。
@@ -85,6 +87,7 @@ class ReplicaPoolSettings(BaseModel):
     worker_base_port: int = Field(default=22410, ge=1, le=65535)
     master_base_port: int = Field(default=29500, ge=1, le=65535)
     recording_dir: Path | None = None
+    placement: Literal["spread", "pack"] = "spread"
     check_only: bool = False
 
     @field_validator("gpu_groups")
@@ -358,7 +361,10 @@ def prepare_runtime_plan(
     _write_json(
         service_config_path,
         {
-            "service": {"data_dir": str(runtime_dir / "data")},
+            "service": {
+                "data_dir": str(runtime_dir / "data"),
+                "placement": settings.placement,
+            },
             "recording": recording,
         },
     )
@@ -752,6 +758,12 @@ def build_argument_parser() -> argparse.ArgumentParser:
         help="开启 API 往返数据录制并写到 <dir>/<session_id>/；省略=不录制",
     )
     parser.add_argument(
+        "--placement",
+        choices=("spread", "pack"),
+        default="spread",
+        help="本机 Gateway 的新会话放置策略；pack=本机优先、其次预计最晚跑完的扩容主机（弹性缩容用）",
+    )
+    parser.add_argument(
         "--internal-settings",
         type=Path,
         default=DEFAULT_INTERNAL_SETTINGS_PATH,
@@ -790,6 +802,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             worker_base_port=args.worker_base_port,
             master_base_port=args.master_base_port,
             recording_dir=args.recording_dir,
+            placement=args.placement,
             check_only=args.check_only,
         )
         plan = prepare_runtime_plan(settings=settings, internal=internal)

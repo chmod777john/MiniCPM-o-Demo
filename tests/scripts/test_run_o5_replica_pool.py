@@ -198,3 +198,32 @@ def test_remote_gateway_plan_registers_advertised_workers(tmp_path: Path) -> Non
     assert plan.registry_url == "http://10.0.0.1:8010"
     assert plan.worker_host == "0.0.0.0"
     assert plan.replicas[0].worker_id == "o5-single_opt-10-0-0-2-00"
+
+
+@pytest.mark.parametrize("placement", ["spread", "pack"])
+def test_placement_is_written_to_gateway_service_config(tmp_path: Path, placement: str) -> None:
+    """--placement 透传到本机 Gateway 的 service.placement；默认 spread。"""
+
+    settings = ReplicaPoolSettings(
+        pt_path=_pt(tmp_path),
+        deployment_mode="single_opt",
+        gpu_groups=((0,),),
+        runtime_dir=tmp_path / f"rt-{placement}",
+        llm_cache=32768,
+        placement=placement,
+    )
+    plan = prepare_runtime_plan(settings=settings, internal=_internal_settings(tmp_path))
+    service = json.loads(plan.service_config_path.read_text(encoding="utf-8"))["service"]
+    assert service["placement"] == placement
+
+
+def test_placement_rejects_unknown_value(tmp_path: Path) -> None:
+    with pytest.raises(ValueError):
+        ReplicaPoolSettings(
+            pt_path=_pt(tmp_path),
+            deployment_mode="single_opt",
+            gpu_groups=((0,),),
+            runtime_dir=tmp_path / "rt-bad",
+            llm_cache=32768,
+            placement="nope",
+        )
