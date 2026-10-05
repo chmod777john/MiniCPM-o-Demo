@@ -25,7 +25,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
 from enum import Enum
-from typing import FrozenSet, Iterable, Optional, Union
+from typing import FrozenSet, Iterable, Literal, Optional, Union
 
 from minicpm_o5_sdk.protocols.duplex.special_tokens import O5SpecialTokenKey as K
 
@@ -76,6 +76,7 @@ class SpokenStep(str, Enum):
     SPEAK_NO_TEXT = "speak_no_text"  # 刚出 <|speak|>，还没正文
     SPEAK_TEXT = "speak_text"        # <|speak|> 之后已有正文
     AFTER_TURN_EOS = "after_turn_eos"
+    AFTER_PAD = "after_pad"          # 刚出 <|tts_pad|>（speak_first 形态；只能再出 slot_eos）
 
 
 Wrapper = Optional[str]  # None / "think" / "tool_call"
@@ -104,9 +105,21 @@ class FsmConfig:
         （``<think>…</think><tool_call>…</tool_call>``）。SDK 序列化器与规范 case 都会产出
         （case_3_03 并行查询、no-think 模式的「空 think + 动作」），但 SDK parser 不接受，
         当前推理服务也会把它报成 ``aggregate_kind_changed``。默认按训练形态允许。
+    pad_form: ``<|tts_pad|>`` 格的形态，**取决于 ckpt 是用哪版 SDK 的数据训的**：
+
+        - ``speak_first``（默认，SDK **≥ 0.0.6a4**）：``<|speak|> <|tts_pad|> <|spoken_slot_eos|>``。
+          slot 首步恒为 ``listen`` / ``speak`` 二选一；pad 是 speak 之后与正文并列的内容分支，
+          且**不允许出现在 turn 的第一个 unit**（那等于开口却整段不发声）。
+        - ``bare``（SDK ≤ 0.0.6a3 训出来的存量 ckpt）：``<|tts_pad|>`` 独占整个 slot，
+          前面没有 ``<|speak|>``，出了就直接关 slot。
+
+        🔴 **给存量 ckpt 跑约束解码必须用 ``bare``**。实测 A iter8000 的 tau 录制里，
+        40 个会话有 21 个出现模型自己吐的 ``response.spoken.end reason=tts_pad``，
+        单个会话最多 21 次 —— 拿 ``speak_first`` 去卡它们会大面积误判协议错误。
     """
 
     allow_multi_wrapper_per_slot: bool = True
+    pad_form: Literal["speak_first", "bare"] = "speak_first"
 
 
 @dataclass(frozen=True)
@@ -167,6 +180,8 @@ class _State:
     eos_owed: bool = False       # E：上个 unit 在 wrapper 刚闭合时被 budget 截断，EOS 欠到本 unit
     # —— slot 局部 ——
     spoken: SpokenStep = SpokenStep.FIRST
+    turn_open_at_slot_start: bool = False   # 进入本 spoken slot 之前 turn 是否已经开着
+                                            # （speak_first 下用它禁止 turn 首个 unit 出 pad）
     ns: _SlotLocal = field(default_factory=_SlotLocal)
 
 
@@ -205,7 +220,10 @@ class O5ProtocolFsm:
             "wrapper": s.wrapper,
             "wrapper_payload": s.wrapper_payload,
             "eos_owed": s.eos_owed,
+            "pad_form": self.config.pad_form,
         }
+        if s.phase == Phase.SPOKEN:
+            d["turn_open_at_slot_start"] = s.turn_open_at_slot_start
         if s.phase == Phase.SPOKEN:
             d["spoken_step"] = s.spoken.value
         if s.phase == Phase.NON_SPOKEN:
@@ -217,14 +235,25 @@ class O5ProtocolFsm:
         """当前状态的一句人话解释（为什么下一步只能是这些）。"""
         s = self._s
         if s.phase == Phase.SPOKEN:
+            bare = self.config.pad_form == "bare"
             if s.spoken == SpokenStep.FIRST:
                 if s.turn_open:
-                    return "spoken 首步 · turn 已打开未结束：只能继续说（speak）或本 unit 无新正文（tts_pad），不能 listen"
+                    if bare:
+                        return "spoken 首步 · turn 已打开未结束：继续说（speak），或本 unit 无新正文（tts_pad）；不能 listen"
+                    return "spoken 首步 · turn 已打开未结束：只能 speak（pad 要排在 speak 之后）；不能 listen"
                 return "spoken 首步 · 没有打开的 turn：listen 或 speak 二选一"
             if s.spoken == SpokenStep.SPEAK_NO_TEXT:
+                if not bare and s.turn_open_at_slot_start:
+                    return ("刚出 speak、还没正文：写正文 / 本 unit 无新正文（tts_pad）/ 结束本 turn；"
+                            "不能空着关 slot")
+                if not bare:
+                    return ("刚出 speak、还没正文：写正文，或直接结束本 turn；"
+                            "**本 unit 是这个 turn 的第一格，不能发 tts_pad**（开口却整段不发声）")
                 return "刚出 speak、还没正文：写正文，或直接结束本 turn（spoken_turn_eos）；不能空着关 slot"
             if s.spoken == SpokenStep.SPEAK_TEXT:
                 return "speak 正文中：继续写正文 / 结束本 turn / 只结束本 unit 的 slot（turn 延续到下个 unit）"
+            if s.spoken == SpokenStep.AFTER_PAD:
+                return "刚出 tts_pad：只能 spoken_slot_eos（pad 与 turn_eos 永不同格）"
             return "刚出 spoken_turn_eos：只能 spoken_slot_eos"
         if s.phase == Phase.NON_SPOKEN:
             ns = s.ns
@@ -284,14 +313,25 @@ class O5ProtocolFsm:
 
     def _spoken_model_options(self) -> FrozenSet[Symbol]:
         s = self._s
+        bare = self.config.pad_form == "bare"
         if s.spoken == SpokenStep.FIRST:
-            # tts_pad 只用于 turn 中间没有新正文的 unit（必须先有 speak 打开 turn）；turn 开着时不能 listen
-            return frozenset({K.SPEAK, K.TTS_PAD}) if s.turn_open else frozenset({K.LISTEN, K.SPEAK})
+            if bare:
+                # 存量形态：pad 独占 slot，所以它和 listen/speak 一样是首步的决策之一；
+                # turn 开着时不能 listen（listen 会让未收尾的 turn 断掉）
+                return frozenset({K.SPEAK, K.TTS_PAD}) if s.turn_open else frozenset({K.LISTEN, K.SPEAK})
+            # speak_first：首步恒为二选一，pad 推迟到 speak 之后
+            return frozenset({K.SPEAK} if s.turn_open else {K.LISTEN, K.SPEAK})
         if s.spoken == SpokenStep.SPEAK_NO_TEXT:
             # 训练里 speak 之后要么有正文，要么是 turn 末尾的 terminal-only（speak + turn_eos）
-            return frozenset({Abstract.ORDINARY, K.SPOKEN_TURN_EOS})
+            base = {Abstract.ORDINARY, K.SPOKEN_TURN_EOS}
+            # speak_first 下 pad 是这里的第三个分支，但**不允许出现在 turn 的第一个 unit**：
+            # 那等于开口却整段不发声，不如下一个 unit 再开口。
+            if not bare and s.turn_open_at_slot_start:
+                base.add(K.TTS_PAD)
+            return frozenset(base)
         if s.spoken == SpokenStep.SPEAK_TEXT:
             return frozenset({Abstract.ORDINARY, K.SPOKEN_TURN_EOS, K.SPOKEN_SLOT_EOS})
+        # AFTER_TURN_EOS / AFTER_PAD 都只能关 slot
         return frozenset({K.SPOKEN_SLOT_EOS})
 
     def _non_spoken_model_options(self) -> FrozenSet[Symbol]:
@@ -318,6 +358,7 @@ class O5ProtocolFsm:
             s.phase = Phase.PREFILLED
         elif symbol == K.AI_SPOKEN_SLOT_START:
             s.spoken = SpokenStep.FIRST
+            s.turn_open_at_slot_start = s.turn_open
             s.phase = Phase.SPOKEN
         elif symbol == K.AI_SPOKEN_SLOT_END:
             s.phase = Phase.SPOKEN_CLOSED
@@ -331,7 +372,9 @@ class O5ProtocolFsm:
 
     def _advance_spoken(self, symbol: object) -> None:
         s = self._s
-        if symbol in (K.LISTEN, K.TTS_PAD, K.SPOKEN_SLOT_EOS):
+        if symbol == K.TTS_PAD and self.config.pad_form != "bare":
+            s.spoken = SpokenStep.AFTER_PAD      # speak_first：pad 之后还要一个 slot_eos
+        elif symbol in (K.LISTEN, K.TTS_PAD, K.SPOKEN_SLOT_EOS):
             s.phase = Phase.SPOKEN_DONE
         elif symbol == K.SPEAK:
             s.turn_open = True
@@ -380,8 +423,15 @@ class O5ProtocolFsm:
         if s.phase == Phase.SPOKEN:
             if symbol == K.LISTEN and s.turn_open:
                 return "listen_during_open_turn"
-            if symbol == K.TTS_PAD and not s.turn_open:
-                return "tts_pad_without_open_turn"
+            if symbol == K.TTS_PAD:
+                if self.config.pad_form == "bare":
+                    if not s.turn_open:
+                        return "tts_pad_without_open_turn"
+                else:
+                    if s.spoken == SpokenStep.FIRST:
+                        return "tts_pad_without_speak"          # 新形态下 pad 必须排在 speak 之后
+                    if not s.turn_open_at_slot_start:
+                        return "tts_pad_at_turn_start"          # turn 第一格不许 pad
         if s.phase == Phase.NON_SPOKEN:
             ns = s.ns
             if symbol == Abstract.ORDINARY and ns.cur is None:
