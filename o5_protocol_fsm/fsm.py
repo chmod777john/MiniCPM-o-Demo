@@ -76,7 +76,7 @@ class SpokenStep(str, Enum):
     SPEAK_NO_TEXT = "speak_no_text"  # 刚出 <|speak|>，还没正文
     SPEAK_TEXT = "speak_text"        # <|speak|> 之后已有正文
     AFTER_TURN_EOS = "after_turn_eos"
-    AFTER_PAD = "after_pad"          # 刚出 <|tts_pad|>（speak_first 形态；只能再出 slot_eos）
+    AFTER_PAD = "after_pad"          # 刚出 <|tts_pad|>（revised 形态；只能再出 slot_eos）
 
 
 Wrapper = Optional[str]  # None / "think" / "tool_call"
@@ -105,21 +105,27 @@ class FsmConfig:
         （``<think>…</think><tool_call>…</tool_call>``）。SDK 序列化器与规范 case 都会产出
         （case_3_03 并行查询、no-think 模式的「空 think + 动作」），但 SDK parser 不接受，
         当前推理服务也会把它报成 ``aggregate_kind_changed``。默认按训练形态允许。
-    pad_form: ``<|tts_pad|>`` 格的形态，**取决于 ckpt 是用哪版 SDK 的数据训的**：
+    tts_pad_protocol: ``<|tts_pad|>`` 格的形态，**取决于 ckpt 是用哪版 SDK 的数据训的**：
 
-        - ``speak_first``（默认，SDK **≥ 0.0.6a4**）：``<|speak|> <|tts_pad|> <|spoken_slot_eos|>``。
+        - ``revised``（默认，SDK **≥ 0.0.6a4**）：``<|speak|> <|tts_pad|> <|spoken_slot_eos|>``。
           slot 首步恒为 ``listen`` / ``speak`` 二选一；pad 是 speak 之后与正文并列的内容分支，
           且**不允许出现在 turn 的第一个 unit**（那等于开口却整段不发声）。
-        - ``bare``（SDK ≤ 0.0.6a3 训出来的存量 ckpt）：``<|tts_pad|>`` 独占整个 slot，
+        - ``legacy``（SDK ≤ 0.0.6a3 训出来的存量 ckpt）：``<|tts_pad|>`` 独占整个 slot，
           前面没有 ``<|speak|>``，出了就直接关 slot。
 
-        🔴 **给存量 ckpt 跑约束解码必须用 ``bare``**。实测 A iter8000 的 tau 录制里，
+        🔴 **给存量 ckpt 跑约束解码必须用 ``legacy``**。实测 A iter8000 的 tau 录制里，
         40 个会话有 21 个出现模型自己吐的 ``response.spoken.end reason=tts_pad``，
-        单个会话最多 21 次 —— 拿 ``speak_first`` 去卡它们会大面积误判协议错误。
+        单个会话最多 21 次 —— 拿 ``revised`` 去卡它们会大面积误判协议错误。
+
+        ⚠️ ``legacy`` 是过渡档，**会被弃用**：存量 ckpt 用新版 SDK 重新 tokenize、重训之后就该切 ``revised``。
+
+        （本类默认 ``revised`` = 协议本身的现行版本；而**推理服务**
+        ``FcSpokenGenerateRequest.tts_pad_protocol`` 默认 ``legacy`` = 当前实际部署的 ckpt 用的那版。
+        两边默认值不同是有意的，别"对齐"成一样。）
     """
 
     allow_multi_wrapper_per_slot: bool = True
-    pad_form: Literal["speak_first", "bare"] = "speak_first"
+    tts_pad_protocol: Literal["revised", "legacy"] = "revised"
 
 
 @dataclass(frozen=True)
@@ -181,7 +187,7 @@ class _State:
     # —— slot 局部 ——
     spoken: SpokenStep = SpokenStep.FIRST
     turn_open_at_slot_start: bool = False   # 进入本 spoken slot 之前 turn 是否已经开着
-                                            # （speak_first 下用它禁止 turn 首个 unit 出 pad）
+                                            # （revised 下用它禁止 turn 首个 unit 出 pad）
     ns: _SlotLocal = field(default_factory=_SlotLocal)
 
 
@@ -220,7 +226,7 @@ class O5ProtocolFsm:
             "wrapper": s.wrapper,
             "wrapper_payload": s.wrapper_payload,
             "eos_owed": s.eos_owed,
-            "pad_form": self.config.pad_form,
+            "tts_pad_protocol": self.config.tts_pad_protocol,
         }
         if s.phase == Phase.SPOKEN:
             d["turn_open_at_slot_start"] = s.turn_open_at_slot_start
@@ -235,18 +241,18 @@ class O5ProtocolFsm:
         """当前状态的一句人话解释（为什么下一步只能是这些）。"""
         s = self._s
         if s.phase == Phase.SPOKEN:
-            bare = self.config.pad_form == "bare"
+            legacy = self.config.tts_pad_protocol == "legacy"
             if s.spoken == SpokenStep.FIRST:
                 if s.turn_open:
-                    if bare:
+                    if legacy:
                         return "spoken 首步 · turn 已打开未结束：继续说（speak），或本 unit 无新正文（tts_pad）；不能 listen"
                     return "spoken 首步 · turn 已打开未结束：只能 speak（pad 要排在 speak 之后）；不能 listen"
                 return "spoken 首步 · 没有打开的 turn：listen 或 speak 二选一"
             if s.spoken == SpokenStep.SPEAK_NO_TEXT:
-                if not bare and s.turn_open_at_slot_start:
+                if not legacy and s.turn_open_at_slot_start:
                     return ("刚出 speak、还没正文：写正文 / 本 unit 无新正文（tts_pad）/ 结束本 turn；"
                             "不能空着关 slot")
-                if not bare:
+                if not legacy:
                     return ("刚出 speak、还没正文：写正文，或直接结束本 turn；"
                             "**本 unit 是这个 turn 的第一格，不能发 tts_pad**（开口却整段不发声）")
                 return "刚出 speak、还没正文：写正文，或直接结束本 turn（spoken_turn_eos）；不能空着关 slot"
@@ -313,20 +319,20 @@ class O5ProtocolFsm:
 
     def _spoken_model_options(self) -> FrozenSet[Symbol]:
         s = self._s
-        bare = self.config.pad_form == "bare"
+        legacy = self.config.tts_pad_protocol == "legacy"
         if s.spoken == SpokenStep.FIRST:
-            if bare:
+            if legacy:
                 # 存量形态：pad 独占 slot，所以它和 listen/speak 一样是首步的决策之一；
                 # turn 开着时不能 listen（listen 会让未收尾的 turn 断掉）
                 return frozenset({K.SPEAK, K.TTS_PAD}) if s.turn_open else frozenset({K.LISTEN, K.SPEAK})
-            # speak_first：首步恒为二选一，pad 推迟到 speak 之后
+            # revised：首步恒为二选一，pad 推迟到 speak 之后
             return frozenset({K.SPEAK} if s.turn_open else {K.LISTEN, K.SPEAK})
         if s.spoken == SpokenStep.SPEAK_NO_TEXT:
             # 训练里 speak 之后要么有正文，要么是 turn 末尾的 terminal-only（speak + turn_eos）
             base = {Abstract.ORDINARY, K.SPOKEN_TURN_EOS}
-            # speak_first 下 pad 是这里的第三个分支，但**不允许出现在 turn 的第一个 unit**：
+            # revised 下 pad 是这里的第三个分支，但**不允许出现在 turn 的第一个 unit**：
             # 那等于开口却整段不发声，不如下一个 unit 再开口。
-            if not bare and s.turn_open_at_slot_start:
+            if not legacy and s.turn_open_at_slot_start:
                 base.add(K.TTS_PAD)
             return frozenset(base)
         if s.spoken == SpokenStep.SPEAK_TEXT:
@@ -372,8 +378,8 @@ class O5ProtocolFsm:
 
     def _advance_spoken(self, symbol: object) -> None:
         s = self._s
-        if symbol == K.TTS_PAD and self.config.pad_form != "bare":
-            s.spoken = SpokenStep.AFTER_PAD      # speak_first：pad 之后还要一个 slot_eos
+        if symbol == K.TTS_PAD and self.config.tts_pad_protocol != "legacy":
+            s.spoken = SpokenStep.AFTER_PAD      # revised：pad 之后还要一个 slot_eos
         elif symbol in (K.LISTEN, K.TTS_PAD, K.SPOKEN_SLOT_EOS):
             s.phase = Phase.SPOKEN_DONE
         elif symbol == K.SPEAK:
@@ -424,7 +430,7 @@ class O5ProtocolFsm:
             if symbol == K.LISTEN and s.turn_open:
                 return "listen_during_open_turn"
             if symbol == K.TTS_PAD:
-                if self.config.pad_form == "bare":
+                if self.config.tts_pad_protocol == "legacy":
                     if not s.turn_open:
                         return "tts_pad_without_open_turn"
                 else:

@@ -79,11 +79,11 @@
   <button id="undo" title="回到上一个决策点（Backspace）">↶ 撤销</button>
   <button id="reset">重置</button>
   <button id="end" title="只有在 unit 之间、且没有被 budget 截断未闭合的 wrapper 时才能结束">结束 Session</button>
-  <label class="toggle" title="决定 <|tts_pad|> 的形态。speak_first = SDK ≥ 0.0.6a4（新协议）；bare = SDK ≤ 0.0.6a3 训出来的存量 ckpt">
+  <label class="toggle" title="决定 <|tts_pad|> 的形态。revised = SDK ≥ 0.0.6a4（新协议）；legacy = SDK ≤ 0.0.6a3 训出来的存量 ckpt">
     tts_pad 形态
-    <select id="padform">
-      <option value="speak_first" selected>speak_first（SDK ≥ 0.0.6a4，新）</option>
-      <option value="bare">bare（≤ 0.0.6a3 存量 ckpt）</option>
+    <select id="padproto">
+      <option value="revised" selected>revised（SDK ≥ 0.0.6a4，新）</option>
+      <option value="legacy">legacy（≤ 0.0.6a3 存量 ckpt）</option>
     </select>
   </label>
   <label class="toggle" title="SDK 序列化器与规范 case 会产出（case_3_03 并行查询、no-think 的空 think + 动作）；SDK parser 不接受，当前推理服务报 aggregate_kind_changed">
@@ -121,7 +121,7 @@
 <script>
 let history = [];
 let multi = true;
-let padForm = "speak_first";
+let ttsPadProtocol = "revised";
 let last = null;
 
 const $ = (id) => document.getElementById(id);
@@ -130,7 +130,7 @@ const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&l
 async function sync(h, note) {
   const r = await fetch("api/replay", {
     method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ history: h, multi, pad_form: padForm }),
+    body: JSON.stringify({ history: h, multi, tts_pad_protocol: ttsPadProtocol }),
   });
   const d = await r.json();
   if (!d.history) { showNotice(`后端错误：${d.error && d.error.message}`); return; }
@@ -226,7 +226,7 @@ function render(d) {
   const s = d.state;
   const rowsS = [
     ["unit", s.unit_index], ["phase", s.phase],
-    ["tts_pad 形态", s.pad_form],
+    ["tts_pad 形态", s.tts_pad_protocol],
     ["T  turn 开着（跨 unit）", s.turn_open], ["W  延续中的 wrapper（跨 unit）", s.wrapper ?? "—"],
     ["E  欠 EOS（跨 unit）", s.eos_owed],
   ];
@@ -242,7 +242,7 @@ $("undo").onclick = undo;
 $("reset").onclick = () => sync([]);
 $("end").onclick = () => choose("SESSION_END", "framework");
 $("multi").onchange = (e) => { multi = e.target.checked; sync(history, "（切换了「多段 wrapper」开关）"); };
-$("padform").onchange = (e) => { padForm = e.target.value; sync(history, `（切换到 tts_pad 形态「${padForm}」）`); };
+$("padproto").onchange = (e) => { ttsPadProtocol = e.target.value; sync(history, `（切换到 tts_pad 形态「${ttsPadProtocol}」）`); };
 document.addEventListener("keydown", (e) => {
   if (e.target.tagName === "INPUT") return;
   if (e.key === "Backspace") { e.preventDefault(); undo(); return; }

@@ -264,6 +264,18 @@ class FcSpokenGenerateRequest(BaseModel):
 
     max_tokens: int = Field(24, ge=1, description="Max spoken tokens for this unit")
     decode_mode: str = Field("greedy", description="Decode mode: greedy or sampling")
+    tts_pad_protocol: Literal["legacy", "revised"] = Field(
+        "legacy",
+        description=(
+            "<|tts_pad|> 格的协议版本，取决于该 ckpt 是用哪版 SDK 的数据训的。"
+            "legacy = SDK 0.0.6a3 及以前（pad 独占 slot、自身即终止符；当前全部存量 ckpt）；"
+            "revised = SDK 0.0.6a4 及以后（<|speak|> <|tts_pad|> <|spoken_slot_eos|>）。"
+            "⚠️ legacy 是过渡档、会被弃用：数据用新版 SDK 重新 tokenize、模型重训之后就该切 revised。"
+            "默认 legacy 是为了匹配当前实际部署的 ckpt —— 对存量 ckpt 用 revised 会让它在 pad 之后"
+            "被迫预测一个训练里从不需要它预测的位置（旧协议下 pad 后面是 runtime 写的 "
+            "</ai_spoken_slot>，loss=0）。由 session preset 按 ckpt 指定，与 prefix / unit_policy 同类。"
+        ),
+    )
 
 
 class FcNonSpokenGenerateRequest(BaseModel):

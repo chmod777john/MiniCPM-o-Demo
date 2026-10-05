@@ -449,10 +449,13 @@ class PyTorchBackend:
         *,
         max_tokens: int = 24,
         decode_mode: str = "greedy",
+        tts_pad_protocol: str = "legacy",
     ) -> Any:
         fc_view = self.processor.set_fc_duplex_mode()
         return fc_view.streaming_spoken_generate(
-            FcSpokenGenerateRequest(max_tokens=max_tokens, decode_mode=decode_mode)
+            FcSpokenGenerateRequest(
+                max_tokens=max_tokens, decode_mode=decode_mode, tts_pad_protocol=tts_pad_protocol
+            )
         )
 
     def fc_duplex_non_spoken_generate(

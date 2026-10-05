@@ -73,10 +73,10 @@ class Explorer:
             "before": {k: before[k] for k in ("turn_open", "wrapper", "eos_owed")},
         }
 
-    def replay(self, history: list[dict], multi: bool, pad_form: str = "speak_first") -> dict:
-        if pad_form not in ("speak_first", "bare"):
-            pad_form = "speak_first"
-        f = O5ProtocolFsm(FsmConfig(allow_multi_wrapper_per_slot=multi, pad_form=pad_form))
+    def replay(self, history: list[dict], multi: bool, tts_pad_protocol: str = "revised") -> dict:
+        if tts_pad_protocol not in ("revised", "legacy"):
+            tts_pad_protocol = "revised"
+        f = O5ProtocolFsm(FsmConfig(allow_multi_wrapper_per_slot=multi, tts_pad_protocol=tts_pad_protocol))
         out: list[dict] = []
         error = None
         for i, h in enumerate(history):
@@ -156,7 +156,7 @@ def make_handler(explorer: Explorer):
                 resp = explorer.replay(
                     req.get("history") or [],
                     bool(req.get("multi", True)),
-                    str(req.get("pad_form") or "speak_first"),
+                    str(req.get("tts_pad_protocol") or "revised"),
                 )
                 self._send(200, json.dumps(resp, ensure_ascii=False).encode(), "application/json")
             except Exception as e:  # noqa: BLE001 —— 页面要看到原因，不能只回 500

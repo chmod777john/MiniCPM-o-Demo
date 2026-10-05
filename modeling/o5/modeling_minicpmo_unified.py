@@ -1155,19 +1155,31 @@ class FcDuplexCapability:
         info["cost_prefill"] = time.time() - prefill_start
         return dict(info)
 
-    def streaming_spoken_generate(self, max_tokens=24, decode_mode="greedy"):
+    def streaming_spoken_generate(self, max_tokens=24, decode_mode="greedy", tts_pad_protocol="legacy"):
+        """解一个 ai_spoken slot。
+
+        ``tts_pad_protocol`` 决定 ``<|tts_pad|>`` 的协议形态（见 FcSpokenGenerateRequest.tts_pad_protocol）：
+
+        - ``legacy``（SDK ≤ 0.0.6a3，**当前全部存量 ckpt**）：pad 独占 slot、自身即终止符。
+          不能对这类 ckpt 用 revised —— 旧协议下 pad 后面是 runtime 写的
+          ``</ai_spoken_slot>``（loss=0），模型从没被训练去预测那个位置。
+        - ``revised``（SDK ≥ 0.0.6a4）：``<|speak|> <|tts_pad|> <|spoken_slot_eos|>``，
+          pad 不终止 slot，由随后的 ``<|spoken_slot_eos|>`` 收尾。
+        """
         if not self._spoken_slot_open:
             raise RuntimeError("spoken slot is not open; call streaming_prefill() first")
         start, logits = time.time(), self._spoken_logits
         ids, text_ids, tts_results = [], [], []
-        is_listen = is_speaking = turn_eos = terminated = False
+        is_listen = is_speaking = turn_eos = terminated = is_pad = False
         reason = term_id = None
+        tts_pad_id = self.sid(self.K.TTS_PAD)
         terms = {
             self.sid(self.K.SPOKEN_SLOT_EOS): "spoken_slot_eos",
             self.sid(self.K.SPOKEN_TURN_EOS): "spoken_turn_eos",
             self.sid(self.K.LISTEN): "listen",
-            self.sid(self.K.TTS_PAD): "tts_pad",
         }
+        if tts_pad_protocol == "legacy":
+            terms[tts_pad_id] = "tts_pad"
         for step_index in range(max_tokens):
             if step_index == 0:
                 self._log_decision_logits(track="spoken", logits=logits)
@@ -1180,10 +1192,16 @@ class FcDuplexCapability:
             is_listen |= tid == self.sid(self.K.LISTEN)
             is_speaking |= tid == self.sid(self.K.SPEAK)
             turn_eos |= tid == self.sid(self.K.SPOKEN_TURN_EOS)
+            is_pad |= tid == tts_pad_id
             if not self.is_special(tid):
                 text_ids.append(tid)
             logits, hidden = self.decoder.feed(self.decoder.embed_token(tid), return_logits=True)
-            if is_speaking and not self.is_special(tid):
+            # pad 格是**要出声**的（turn 中间那一秒的真实波形）：训练侧
+            # minicpm-o `multimodal_common/dataset/o5_agent_duplex/tts.py` 的
+            # condition_special_ids = {spoken_turn_eos, tts_pad} 把 pad 显式留在 TTS condition 里。
+            # 只按 `is_speaking and not is_special` 收的话 pad 永远进不来，于是 pad 格一秒音频都不出，
+            # 与训练不一致。
+            if (is_speaking and not self.is_special(tid)) or tid == tts_pad_id:
                 tts_results.append((tid, hidden, turn_eos))
             if tid in terms:
                 terminated, reason, term_id = True, terms[tid], tid
@@ -1191,7 +1209,8 @@ class FcDuplexCapability:
         self._close_spoken_slot(append_spoken_slot_eos=turn_eos)
         audio = self._spoken_audio(tts_results, turn_eos)
         self._current_unit_info.update(
-            is_listen=bool(is_listen), is_speaking=bool(is_speaking), spoken_ids=ids,
+            is_listen=bool(is_listen), is_speaking=bool(is_speaking), is_tts_pad=bool(is_pad),
+            spoken_ids=ids,
             spoken_slot_terminated=terminated, spoken_termination_reason=reason,
             spoken_termination_token_id=term_id,
             spoken_slot_unterminated=not terminated,

@@ -26,22 +26,22 @@ ORD = Abstract.ORDINARY
 BUDGET = K.NON_SPOKEN_BUDGET_REACHED
 
 
-def _detect_sdk_pad_form() -> str:
+def _detect_sdk_tts_pad_protocol() -> str:
     """当前装的 SDK 产出哪种 pad 形态。
 
-    ``<|tts_pad|>`` 的 ``terminator_next``：0.0.6a3 及以前是 ``</ai_spoken_slot>``（bare），
-    0.0.6a4 起是 ``<|spoken_slot_eos|>``（speak_first）。与 SDK 对接的测试必须按它选 config，
+    ``<|tts_pad|>`` 的 ``terminator_next``：0.0.6a3 及以前是 ``</ai_spoken_slot>``（legacy），
+    0.0.6a4 起是 ``<|spoken_slot_eos|>``（revised）。与 SDK 对接的测试必须按它选 config，
     否则换个环境就红。
     """
     from minicpm_o5_sdk.protocols.duplex.special_tokens import TOKEN_SPECS
 
     for spec in TOKEN_SPECS:
         if spec.key is K.TTS_PAD:
-            return "bare" if spec.terminator_next == "</ai_spoken_slot>" else "speak_first"
+            return "legacy" if spec.terminator_next == "</ai_spoken_slot>" else "revised"
     raise AssertionError("SDK 里找不到 TTS_PAD 的 spec")
 
 
-SDK_PAD_FORM = _detect_sdk_pad_form()
+SDK_TTS_PAD_PROTOCOL = _detect_sdk_tts_pad_protocol()
 
 TOKENIZE_CONFIGS = {
     "default": {},
@@ -76,9 +76,9 @@ def _drive(f: O5ProtocolFsm, *decisions) -> O5ProtocolFsm:
     return f
 
 
-def _fresh(*decisions, multi: bool = True, pad: str = "speak_first") -> O5ProtocolFsm:
+def _fresh(*decisions, multi: bool = True, pad: str = "revised") -> O5ProtocolFsm:
     return _drive(
-        O5ProtocolFsm(FsmConfig(allow_multi_wrapper_per_slot=multi, pad_form=pad)), *decisions
+        O5ProtocolFsm(FsmConfig(allow_multi_wrapper_per_slot=multi, tts_pad_protocol=pad)), *decisions
     )
 
 
@@ -87,12 +87,12 @@ SS, SE = K.AI_SPOKEN_SLOT_START, K.AI_SPOKEN_SLOT_END
 NS, NE = K.AI_NON_SPOKEN_SLOT_START, K.AI_NON_SPOKEN_SLOT_END
 
 
-def _at_spoken_first(pad: str = "speak_first", *, turn_open: bool) -> O5ProtocolFsm:
+def _at_spoken_first(pad: str = "revised", *, turn_open: bool) -> O5ProtocolFsm:
     """精确停在某个 unit 的 spoken slot 首步（不自动填充，避免被 forced 步吃掉）。
 
     turn_open=True 时先完整走一个「speak + 正文 + slot_eos」的 unit 把 turn 打开。
     """
-    f = O5ProtocolFsm(FsmConfig(pad_form=pad))
+    f = O5ProtocolFsm(FsmConfig(tts_pad_protocol=pad))
     f.feed([SYS, K.UNIT_START, UP, SS])
     if turn_open:
         f.feed([K.SPEAK, ORD, K.SPOKEN_SLOT_EOS, SE, NS, K.NO_ACTION, NE, K.UNIT_END,
@@ -119,7 +119,7 @@ def test_sdk_canonical_cases_all_accepted(vocab, config_name):
                 ids = td.tokenize(vocab.tokenizer, **TOKENIZE_CONFIGS[config_name]).tokenized_data.input_ids
             except ValueError:
                 continue  # no-think 不适用于含 think 的 case（SDK 自己拒绝 tokenize）
-            f = O5ProtocolFsm(FsmConfig(pad_form=SDK_PAD_FORM))
+            f = O5ProtocolFsm(FsmConfig(tts_pad_protocol=SDK_TTS_PAD_PROTOCOL))
             f.feed(vocab.symbols_from_token_ids(ids))
             assert f.can_end_session(), f"{case_id.value}/{variant.variant_id} 结束时状态 {f.snapshot()}"
             n += 1
@@ -164,7 +164,7 @@ def test_sdk_tts_pad_forms_accepted(vocab, kw):
     for i, sym in enumerate(syms):
         if sym != K.TTS_PAD:
             continue
-        if SDK_PAD_FORM == "speak_first":
+        if SDK_TTS_PAD_PROTOCOL == "revised":
             # <ai_spoken_slot> <|speak|> <|tts_pad|> <|spoken_slot_eos|> </ai_spoken_slot>
             assert syms[i - 2 : i + 3] == [
                 K.AI_SPOKEN_SLOT_START, K.SPEAK, K.TTS_PAD,
@@ -175,14 +175,14 @@ def test_sdk_tts_pad_forms_accepted(vocab, kw):
             assert syms[i - 1 : i + 2] == [
                 K.AI_SPOKEN_SLOT_START, K.TTS_PAD, K.AI_SPOKEN_SLOT_END,
             ]
-    O5ProtocolFsm(FsmConfig(pad_form=SDK_PAD_FORM)).feed(syms)
+    O5ProtocolFsm(FsmConfig(tts_pad_protocol=SDK_TTS_PAD_PROTOCOL)).feed(syms)
 
 
 def test_turn_leading_tts_pad_rejected_like_sdk_replay(vocab):
     """AI 语音开头静音 > unit_sec + prelook（1.3s）时，SDK 序列化器会在 turn 开头直接出 tts_pad，
     但 SDK 自己的 replay 拒绝它（「孤立 <|tts_pad|>」）。状态机与 replay 一致：tts_pad 必须先有 speak 打开 turn。"""
     td = _case_with_silence(lead=2.5)
-    if SDK_PAD_FORM == "speak_first":
+    if SDK_TTS_PAD_PROTOCOL == "revised":
         # SDK ≥ 0.0.6a4：这种数据在 tokenize 阶段就被 fail-fast 挡掉，根本产不出序列
         with pytest.raises(ValueError, match="首个覆盖 unit 没有正文"):
             td.tokenize(vocab.tokenizer)
@@ -192,7 +192,7 @@ def test_turn_leading_tts_pad_rejected_like_sdk_replay(vocab):
     with pytest.raises(Exception, match="unsupported_replay_pattern"):
         parser.parse(O5DuplexParseRequest(sequence=list(ids), unit_policy=td.unit_policy))
     with pytest.raises(O5ProtocolViolation) as e:
-        O5ProtocolFsm(FsmConfig(pad_form="bare")).feed(vocab.symbols_from_token_ids(ids))
+        O5ProtocolFsm(FsmConfig(tts_pad_protocol="legacy")).feed(vocab.symbols_from_token_ids(ids))
     assert e.value.code == "tts_pad_without_open_turn"
 
 
@@ -200,7 +200,7 @@ def test_turn_leading_tts_pad_rejected_like_sdk_replay(vocab):
 
 
 def _random_walk(rng: random.Random, n_units: int, multi: bool, p_budget: float) -> list:
-    f = O5ProtocolFsm(FsmConfig(allow_multi_wrapper_per_slot=multi, pad_form=SDK_PAD_FORM))
+    f = O5ProtocolFsm(FsmConfig(allow_multi_wrapper_per_slot=multi, tts_pad_protocol=SDK_TTS_PAD_PROTOCOL))
     out = []
     while True:
         if f.can_end_session() and f.snapshot()["unit_index"] >= n_units - 1:
@@ -236,7 +236,7 @@ def test_never_offers_untrained_or_framework_only_tokens():
                    K.AI_NON_SPOKEN_SLOT_END, K.UNIT_END, K.UNIT_START, K.IM_START, K.IM_END}
     rng = random.Random(7)
     for _ in range(200):
-        f = O5ProtocolFsm(FsmConfig(pad_form=SDK_PAD_FORM))
+        f = O5ProtocolFsm(FsmConfig(tts_pad_protocol=SDK_TTS_PAD_PROTOCOL))
         for _step in range(400):
             opts = f.options()
             assert not (opts.model & never_model), (f.snapshot(), opts.model)
@@ -260,38 +260,38 @@ def test_spoken_first_step_listen_or_speak():
     assert f.options().framework == frozenset()
 
 
-# ---- pad_form="bare"（SDK ≤ 0.0.6a3 训出来的存量 ckpt）----
+# ---- tts_pad_protocol="legacy"（SDK ≤ 0.0.6a3 训出来的存量 ckpt）----
 
 
 def test_bare_open_turn_bans_listen_and_allows_tts_pad():
     # unit0: speak + 正文 + slot_eos（turn 延续）→ unit1 spoken 首步
-    f = _fresh(K.SPEAK, ORD, K.SPOKEN_SLOT_EOS, K.NO_ACTION, pad="bare")
+    f = _fresh(K.SPEAK, ORD, K.SPOKEN_SLOT_EOS, K.NO_ACTION, pad="legacy")
     assert f.options().model == {K.SPEAK, K.TTS_PAD}
     assert _code(f, K.LISTEN) == "listen_during_open_turn"
 
 
 def test_bare_tts_pad_requires_open_turn():
-    assert _code(_fresh(pad="bare"), K.TTS_PAD) == "tts_pad_without_open_turn"
+    assert _code(_fresh(pad="legacy"), K.TTS_PAD) == "tts_pad_without_open_turn"
 
 
 def test_bare_tts_pad_keeps_turn_open_until_turn_eos():
-    f = _fresh(K.SPEAK, ORD, K.SPOKEN_SLOT_EOS, K.NO_ACTION, K.TTS_PAD, K.NO_ACTION, pad="bare")
+    f = _fresh(K.SPEAK, ORD, K.SPOKEN_SLOT_EOS, K.NO_ACTION, K.TTS_PAD, K.NO_ACTION, pad="legacy")
     assert f.options().model == {K.SPEAK, K.TTS_PAD}
     f = _drive(f, K.SPEAK, K.SPOKEN_TURN_EOS, K.NO_ACTION)  # terminal-only：speak + turn_eos
     assert f.options().model == {K.LISTEN, K.SPEAK}
 
 
 def test_bare_pad_closes_slot_immediately():
-    """bare 形态下 pad 就是终止符，出完直接关 slot（不再要 slot_eos）。"""
-    f = _fresh(K.SPEAK, ORD, K.SPOKEN_SLOT_EOS, K.NO_ACTION, pad="bare")
+    """legacy 形态下 pad 就是终止符，出完直接关 slot（不再要 slot_eos）。"""
+    f = _fresh(K.SPEAK, ORD, K.SPOKEN_SLOT_EOS, K.NO_ACTION, pad="legacy")
     f.advance(K.TTS_PAD, Actor.MODEL)
     assert f.snapshot()["phase"] == "spoken_done"
 
 
-# ---- pad_form="speak_first"（SDK ≥ 0.0.6a4，默认）----
+# ---- tts_pad_protocol="revised"（SDK ≥ 0.0.6a4，默认）----
 
 
-def test_speak_first_slot_never_starts_with_pad():
+def test_revised_slot_never_starts_with_pad():
     """首步恒为二选一；turn 开着时只剩 speak。pad 在 slot 开头一律非法。"""
     f0 = _at_spoken_first(turn_open=False)
     assert f0.options().model == {K.LISTEN, K.SPEAK}
@@ -302,7 +302,7 @@ def test_speak_first_slot_never_starts_with_pad():
     assert _code(f1, K.LISTEN) == "listen_during_open_turn"
 
 
-def test_speak_first_pad_banned_in_turn_first_unit():
+def test_revised_pad_banned_in_turn_first_unit():
     """turn 的第一格发 pad = 开口却整段不发声，禁止；同一 turn 的后续格允许。"""
     f = _at_spoken_first(turn_open=False)
     f.advance(K.SPEAK, Actor.MODEL)                    # 这一格才打开 turn
@@ -313,7 +313,7 @@ def test_speak_first_pad_banned_in_turn_first_unit():
     assert g.options().model == {ORD, K.TTS_PAD, K.SPOKEN_TURN_EOS}
 
 
-def test_speak_first_pad_then_only_slot_eos():
+def test_revised_pad_then_only_slot_eos():
     """pad 之后只能 slot_eos —— pad 与 turn_eos 永不同格。"""
     f = _at_spoken_first(turn_open=True)
     f.feed([K.SPEAK, K.TTS_PAD])
@@ -323,7 +323,7 @@ def test_speak_first_pad_then_only_slot_eos():
     assert _code(f, ORD) == "not_allowed"
 
 
-def test_speak_first_pad_keeps_turn_open():
+def test_revised_pad_keeps_turn_open():
     """pad 格不收尾 turn：下一格仍然只能 speak。"""
     f = _at_spoken_first(turn_open=True)
     f.feed([K.SPEAK, K.TTS_PAD, K.SPOKEN_SLOT_EOS, SE, NS, K.NO_ACTION, NE, K.UNIT_END,

@@ -117,6 +117,7 @@ class FcDuplexSessionRuntime:
         self._infrastructure_max_non_spoken_steps = 4096
         self._fixed_tool_call_ids: Optional[List[str]] = None
         self._decode_mode = "greedy"
+        self._tts_pad_protocol = "legacy"
         self._sample_rate = 16000
         self._system_prefill: Optional[Dict[str, Any]] = None
         self._input_queue: asyncio.Queue[Dict[str, Any]] = asyncio.Queue()
@@ -277,6 +278,16 @@ class FcDuplexSessionRuntime:
         )
         self._fixed_tool_call_ids = evaluation.fixed_tool_call_ids
         self._decode_mode = str(config.get("decode_mode", params.get("decode_mode", "greedy")) or "greedy")
+        # tts_pad_protocol 是 per-ckpt 训练口径（和 prefix / unit_policy 同类），由 session preset 给。
+        # 默认 legacy = SDK ≤ 0.0.6a3 的存量 ckpt；用 0.0.6a4 数据重训后的 ckpt 要在 preset 里写
+        # "tts_pad_protocol": "revised"。
+        self._tts_pad_protocol = str(
+            config.get("tts_pad_protocol", params.get("tts_pad_protocol", "legacy")) or "legacy"
+        )
+        if self._tts_pad_protocol not in ("legacy", "revised"):
+            raise RuntimeError(
+                f"invalid fc_duplex tts_pad_protocol: {self._tts_pad_protocol!r}（只能是 legacy / revised）"
+            )
         self._sample_rate = int(config.get("sample_rate", params.get("sample_rate", 16000)) or 16000)
         self._tools = list(prepare_request.system.tools)
         prepare_result = await asyncio.to_thread(
@@ -297,6 +308,7 @@ class FcDuplexSessionRuntime:
             {
                 "checkpoint_profile_id": self._checkpoint_profile_id,
                 "unit_policy": self._unit_policy.model_dump(mode="json"),
+                "tts_pad_protocol": self._tts_pad_protocol,
                 "non_spoken_scheduling": self._non_spoken_scheduling,
                 "infrastructure_max_non_spoken_steps": (
                     self._infrastructure_max_non_spoken_steps
@@ -616,6 +628,7 @@ class FcDuplexSessionRuntime:
             self.backend.fc_duplex_spoken_generate,
             max_tokens=self._max_spoken_tokens,
             decode_mode=self._decode_mode,
+            tts_pad_protocol=self._tts_pad_protocol,
         )
         # FcSpokenGenerateResult 的 cost_* 是**秒**（与 FcDuplexStepResult.cost_llm_ms 不同单位）
         self._accumulate_unit_cost("spoken", self._seconds_to_ms(getattr(spoken, "cost_llm", None)))

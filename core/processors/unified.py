@@ -2194,6 +2194,7 @@ class FcDuplexView:
         result = self._adapter.streaming_spoken_generate(
             max_tokens=request.max_tokens,
             decode_mode=request.decode_mode,
+            tts_pad_protocol=request.tts_pad_protocol,
         )
         return self._spoken_result(result)
 
