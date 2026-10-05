@@ -220,13 +220,37 @@ def _random_walk(rng: random.Random, n_units: int, multi: bool, p_budget: float)
         out.append(sym)
 
 
-def test_random_walks_parse_with_sdk_parser(vocab):
+def _sdk_parser_accepts_multi_wrapper(vocab, parser, unit_policy) -> bool:
+    """SDK parser 是否已支持同 slot 多段 wrapper（0.0.6a4 的 FW-09 修复之后才支持）。"""
+    from minicpm_o5_sdk.protocols.duplex.parsing.errors import O5DuplexParsingError
+
+    syms = [Abstract.SYSTEM_PREFILL, K.UNIT_START, Abstract.UNIT_PREFILL, K.AI_SPOKEN_SLOT_START,
+            K.LISTEN, K.AI_SPOKEN_SLOT_END, K.AI_NON_SPOKEN_SLOT_START,
+            K.THINK_START, ORD, K.THINK_END, K.TOOL_CALL_START, ORD, K.TOOL_CALL_END,
+            K.NON_SPOKEN_EOS, K.AI_NON_SPOKEN_SLOT_END, K.UNIT_END]
+    try:
+        parser.validate(O5DuplexParseRequest(sequence=vocab.token_ids_from_symbols(syms),
+                                             unit_policy=unit_policy))
+        return True
+    except O5DuplexParsingError:
+        return False
+
+
+@pytest.mark.parametrize("multi", [False, True])
+def test_random_walks_parse_with_sdk_parser(vocab, multi):
+    """状态机生成的都合法：随机游走 → 展开成 token id → SDK parser 必须全部接受。
+
+    multi=True 只在 SDK parser 支持同 slot 多段 wrapper 时跑（≤0.0.6a3 的 parser 有 FW-09 bug，
+    连自家规范 case 都拒，那时没法拿它比）。
+    """
     parser = O5DuplexParser(O5TokenizerID.O5, tokenizer=vocab.tokenizer)
     unit_policy = sdk.load_case(sdk.list_case_ids()[0]).unit_policy
+    if multi and not _sdk_parser_accepts_multi_wrapper(vocab, parser, unit_policy):
+        pytest.skip("当前 SDK parser 不支持同 slot 多段 wrapper（FW-09，0.0.6a4 修复）")
     audio_slot = [vocab.key_to_id[k] for k in (K.USER_AUDIO_SLOT_START, K.AUDIO_PLACEHOLDER, K.USER_AUDIO_SLOT_END)]
     rng = random.Random(20261005)
     for i in range(300):
-        syms = _random_walk(rng, n_units=rng.randint(1, 8), multi=False, p_budget=0.25)
+        syms = _random_walk(rng, n_units=rng.randint(1, 8), multi=multi, p_budget=0.25)
         ids = vocab.token_ids_from_symbols(syms, unit_prefill_ids=audio_slot if i % 2 else [])
         parser.validate(O5DuplexParseRequest(sequence=ids, unit_policy=unit_policy))
 
