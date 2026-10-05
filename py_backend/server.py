@@ -29,6 +29,7 @@ from py_backend.media import decode_audio_base64, decode_frame_base64_list
 from py_backend.voice import resolve_duplex_voice_refs
 from py_backend.fc_duplex_runtime import FcDuplexSessionRuntime, fc_duplex_enabled
 from core.fc_duplex_resume import FcDuplexResumeError
+from core.fc_duplex.protocol_errors import ModelProtocolError
 from py_backend.chat_util import (
     convert_to_model_msgs,
     parse_raw_messages,
@@ -186,6 +187,20 @@ def _result_metrics(result: Any, base: Optional[Dict[str, Any]] = None) -> Dict[
     return {key: value for key, value in metrics.items() if value is not None}
 
 
+def _fatal_reason(error: BaseException) -> tuple[str, Dict[str, Any]]:
+    """把致命异常映射成 `session.closed` 的 (reason, diagnostic)。
+
+    🔴 模型自身违反 FC 流协议（ModelProtocolError）用独立的 reason
+    `model_protocol_error`，与 OOM / CUDA / 服务 bug 等 `backend_error` 分开 ——
+    评测侧据此把样本判为「模型失败、只跑一次」，而不是可重试的基础设施故障。
+    diagnostic 里带违例类型和模型最近生成的原文，供定位。
+    """
+
+    if isinstance(error, ModelProtocolError):
+        return "model_protocol_error", error.diagnostic()
+    return "backend_error", {"message": str(error)}
+
+
 @dataclass
 class BackendServerState:
     backend: Any
@@ -314,15 +329,23 @@ class BackendProtocolSession:
             await self.ws.close(code=1000, reason=reason)
         await self.state.forget(self.session_id)
 
-    async def fatal(self, reason: str, *, message: Optional[str] = None) -> None:
+    async def fatal(
+        self,
+        reason: str,
+        *,
+        message: Optional[str] = None,
+        diagnostic: Optional[Dict[str, Any]] = None,
+    ) -> None:
         logger.error("fatal backend session termination: session=%s reason=%s message=%s", self.session_id, reason, message)
         self.closed = True
+        if diagnostic is None and message:
+            diagnostic = {"message": message}
         with suppress(Exception):
             await self.send(
                 "session.closed",
                 session_id=self.session_id,
                 reason=reason,
-                diagnostic={"message": message} if message else None,
+                diagnostic=diagnostic,
             )
         with suppress(Exception):
             await self.ws.close(code=1011, reason=reason)
@@ -342,15 +365,16 @@ class BackendProtocolSession:
         if self.closed:
             return
         self.closed = True
+        reason, diagnostic = _fatal_reason(error)
         with suppress(Exception):
             await self.send(
                 "session.closed",
                 session_id=self.session_id,
-                reason="backend_error",
-                diagnostic={"message": str(error)},
+                reason=reason,
+                diagnostic=diagnostic,
             )
         with suppress(Exception):
-            await self.ws.close(code=1011, reason="backend_error")
+            await self.ws.close(code=1011, reason=reason)
         await self.state.forget(self.session_id)
 
     async def _init_duplex(self, params: Dict[str, Any]) -> None:
@@ -776,7 +800,8 @@ async def backend_ws(ws: WebSocket) -> None:
                 await ws.close(code=1008, reason="resume_failed")
     except Exception as exc:
         if session is not None:
-            await session.fatal("backend_error", message=str(exc))
+            reason, diagnostic = _fatal_reason(exc)
+            await session.fatal(reason, message=str(exc), diagnostic=diagnostic)
         else:
             with suppress(Exception):
                 await ws.close(code=1011, reason="backend_error")

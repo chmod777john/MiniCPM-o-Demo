@@ -125,6 +125,8 @@ from core.fc_duplex.model_adapter import (
     create_fc_duplex_model_adapter,
 )
 from core.fc_duplex.system_prefill import FcModelPrepareResult
+from core.fc_duplex.protocol_errors import ModelProtocolError
+from collections import deque
 from core.fc_duplex.system_input import (
     FcAudioPathInput,
     FcSystemAudioInput,
@@ -1402,6 +1404,8 @@ class FcDuplexView:
         self._stream_seq = 0
         self._non_spoken_text_stream: Optional[_FcTextStreamState] = None
         self._spoken_text_stream: Optional[_FcTextStreamState] = None
+        # 最近生成的 (track, token_id)，仅在模型协议违例时渲染成原文附进报错，平时零开销。
+        self._recent_generated: deque = deque(maxlen=self._RECENT_TOKENS)
         self._closed_non_spoken_texts: List[tuple[str, str, bool]] = []
         self._non_spoken_aggregate_kind: Optional[str] = None
         self._non_spoken_aggregate_parts: List[str] = []
@@ -1445,6 +1449,123 @@ class FcDuplexView:
             kind=kind,
             decoder=tokenizer.create_ordinary_text_decode_stream(),
         )
+
+    # 模型协议违例报错里附带的「最近生成原文」窗口大小（token 数，跨 unit 累积）。
+    _RECENT_TOKENS = 256
+    # 出错那一步内，违例 token 之前 / 之后各展示多少个 token。
+    _STEP_BEFORE, _STEP_AFTER = 64, 16
+
+    def _render_token_ids(self, token_ids: List[int], mark: Optional[int] = None) -> str:
+        """把一串 token 渲染成可读原文：连续普通 token 合并解码，特殊 token 显示为
+        `⟨piece⟩`；`mark` 指定的位置用 `⟦…⟧` 包起来标出违例 token。
+
+        只在报错时调用，任何渲染失败都退化为显示 id，**绝不能让定位信息本身抛错**
+        —— 那会把一个模型协议错误伪装成服务故障。
+        """
+
+        tokenizer = self._ensure_protocol_tokenizer()
+        out: List[str] = []
+        run: List[int] = []
+
+        def flush() -> None:
+            if run:
+                try:
+                    out.append(tokenizer.decode_ordinary(list(run)))
+                except Exception:
+                    out.append("".join(f"<{t}>" for t in run))
+                run.clear()
+
+        for i, tid in enumerate(token_ids):
+            tid = int(tid)
+            try:
+                ordinary = tokenizer.is_ordinary_token_id(tid)
+            except Exception:
+                ordinary = False
+            if ordinary and i != mark:
+                run.append(tid)
+                continue
+            flush()
+            try:
+                piece = tokenizer.convert_ids_to_tokens([tid])[0]
+            except Exception:
+                piece = f"#{tid}"
+            if ordinary:
+                try:
+                    piece = tokenizer.decode_ordinary([tid])
+                except Exception:
+                    pass
+            out.append(f"⟦{piece}⟧" if i == mark else f"⟨{piece}⟩")
+        flush()
+        return "".join(out)
+
+    def _protocol_error(
+        self,
+        code: str,
+        message: str,
+        *,
+        track: str,
+        token_id: int,
+        token_ids: List[int],
+        index: int,
+        stream: Optional["_FcTextStreamState"],
+        emitted_parts: List[str],
+    ) -> ModelProtocolError:
+        """构造带定位上下文的 ModelProtocolError（调用方 `raise` 它）。
+
+        context 里放的都是**模型自己生成的原文**，用于事后定位它为什么违例：
+        - `step_text`：出错那一步生成的 token，违例 token 用 ⟦⟧ 标出，前后各留一段；
+        - `recent_text`：同一 track 最近 _RECENT_TOKENS 个 token（跨 unit），末尾就是违例 token；
+        - `recent_text_all_tracks`：两条 track 交错的最近 token，看 spoken / non_spoken 的先后关系；
+        - 当前打开的流、non_spoken 聚合段已经吐出的文本尾部。
+        """
+
+        def tail(text: str, n: int = 600) -> str:
+            return text if len(text) <= n else "…" + text[-n:]
+
+        ctx: Dict[str, Any] = {"step_index": index, "step_token_count": len(token_ids)}
+        try:
+            tokenizer = self._ensure_protocol_tokenizer()
+            try:
+                ctx["token_piece"] = tokenizer.convert_ids_to_tokens([int(token_id)])[0]
+            except Exception:
+                ctx["token_piece"] = None
+            lo = max(0, index - self._STEP_BEFORE)
+            hi = min(len(token_ids), index + 1 + self._STEP_AFTER)
+            ctx["step_text"] = ("…" if lo > 0 else "") + self._render_token_ids(
+                [int(t) for t in token_ids[lo:hi]], mark=index - lo
+            ) + ("…" if hi < len(token_ids) else "")
+            recent = list(self._recent_generated)
+            same = [t for tr, t in recent if tr == track]
+            ctx["recent_text"] = self._render_token_ids(same, mark=len(same) - 1 if same else None)
+            # 交错视图：每段连续同 track 的 token 前缀一个 [track] 标签，末尾那段的最后一个就是违例 token
+            parts: List[str] = []
+            seg_track: Optional[str] = None
+            seg: List[int] = []
+            for tr, t in recent + [(None, None)]:
+                if tr != seg_track and seg:
+                    is_last = tr is None
+                    parts.append(f"[{seg_track}]" + self._render_token_ids(
+                        seg, mark=len(seg) - 1 if is_last else None))
+                    seg = []
+                if tr is not None:
+                    seg_track = tr
+                    seg.append(t)
+            ctx["recent_text_all_tracks"] = "".join(parts)
+            ctx["step_emitted_text"] = tail("".join(emitted_parts))
+            if stream is not None:
+                ctx["active_stream"] = {
+                    "stream_id": stream.stream_id,
+                    "kind": stream.kind,
+                    "emitted_text_tail": tail("".join(stream.emitted_parts)),
+                }
+            if track == "non_spoken":
+                ctx["non_spoken_aggregate"] = {
+                    "kind": self._non_spoken_aggregate_kind,
+                    "text_tail": tail("".join(self._non_spoken_aggregate_parts)),
+                }
+        except Exception as exc:  # 定位信息只是锦上添花，渲染失败不能改变错误性质
+            ctx["context_render_error"] = f"{type(exc).__name__}: {exc}"
+        return ModelProtocolError(code, message, track=track, token_id=int(token_id), context=ctx)
 
     def _semantic_key(self, token_id: int) -> Optional[str]:
         """Resolve a protocol structural token ID to its stable semantic key."""
@@ -1547,8 +1668,9 @@ class FcDuplexView:
             },
         }
 
-        for raw_token_id in token_ids:
+        for index, raw_token_id in enumerate(token_ids):
             token_id = int(raw_token_id)
+            self._recent_generated.append((track, token_id))
             if tokenizer.is_ordinary_token_id(token_id):
                 if stream is None:
                     if (
@@ -1577,9 +1699,11 @@ class FcDuplexView:
                                 )
                             )
                         continue
-                    raise RuntimeError(
-                        f"FC {track} ordinary token arrived before stream opener: "
-                        f"{token_id}"
+                    raise self._protocol_error(
+                        "ordinary_before_opener",
+                        f"FC {track} ordinary token arrived before stream opener: {token_id}",
+                        track=track, token_id=token_id, token_ids=token_ids, index=index,
+                        stream=stream, emitted_parts=emitted_parts,
                     )
                 stream.pending_token_count += 1
                 stream.pending_token_ids.append(token_id)
@@ -1617,16 +1741,22 @@ class FcDuplexView:
 
             semantic_key = self._semantic_key(token_id)
             if semantic_key is None:
-                raise RuntimeError(
-                    f"FC generated non-ordinary token has no semantic key: {token_id}"
+                raise self._protocol_error(
+                    "special_without_semantic_key",
+                    f"FC generated non-ordinary token has no semantic key: {token_id}",
+                    track=track, token_id=token_id, token_ids=token_ids, index=index,
+                    stream=stream, emitted_parts=emitted_parts,
                 )
             stream_kind = start_keys[track].get(semantic_key)
             if stream_kind is not None:
                 if stream is not None:
                     if track != "spoken" or stream.kind != stream_kind:
-                        raise RuntimeError(
+                        raise self._protocol_error(
+                            "stream_opened_before_close",
                             f"FC {track} stream opened before previous stream closed: "
-                            f"{stream.stream_id} -> {stream_kind}"
+                            f"{stream.stream_id} -> {stream_kind}",
+                            track=track, token_id=token_id, token_ids=token_ids, index=index,
+                            stream=stream, emitted_parts=emitted_parts,
                         )
                 else:
                     stream = self._new_text_stream(stream_kind)
@@ -1636,9 +1766,12 @@ class FcDuplexView:
                             None,
                             stream_kind,
                         }:
-                            raise RuntimeError(
+                            raise self._protocol_error(
+                                "aggregate_kind_changed",
                                 "non-spoken opener changed aggregate kind: "
-                                f"{self._non_spoken_aggregate_kind} -> {stream_kind}"
+                                f"{self._non_spoken_aggregate_kind} -> {stream_kind}",
+                                track=track, token_id=token_id, token_ids=token_ids, index=index,
+                                stream=stream, emitted_parts=emitted_parts,
                             )
                         self._non_spoken_aggregate_kind = stream_kind
                     setattr(self, stream_attr, stream)
@@ -1677,9 +1810,12 @@ class FcDuplexView:
             expected_stream_kind = end_keys[track].get(semantic_key)
             if expected_stream_kind is not None:
                 if stream is None or stream.kind != expected_stream_kind:
-                    raise RuntimeError(
+                    raise self._protocol_error(
+                        "end_without_stream",
                         f"FC {track} end token without matching stream: "
-                        f"end={semantic_key}, active={getattr(stream, 'kind', None)}"
+                        f"end={semantic_key}, active={getattr(stream, 'kind', None)}",
+                        track=track, token_id=token_id, token_ids=token_ids, index=index,
+                        stream=stream, emitted_parts=emitted_parts,
                     )
                 warning = self._terminate_text_stream(
                     track=track,
@@ -2023,6 +2159,7 @@ class FcDuplexView:
         self._stream_seq = 0
         self._non_spoken_text_stream = None
         self._spoken_text_stream = None
+        self._recent_generated = deque(maxlen=self._RECENT_TOKENS)
         self._closed_non_spoken_texts = []
         self._non_spoken_aggregate_kind = None
         self._non_spoken_aggregate_parts = []
@@ -2264,6 +2401,7 @@ class FcDuplexView:
         self._stream_seq = 0
         self._non_spoken_text_stream = None
         self._spoken_text_stream = None
+        self._recent_generated = deque(maxlen=self._RECENT_TOKENS)
         self._closed_non_spoken_texts = []
         self._non_spoken_aggregate_kind = None
         self._non_spoken_aggregate_parts = []
