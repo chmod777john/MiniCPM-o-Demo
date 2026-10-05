@@ -216,6 +216,21 @@ class O45FcDuplexModelAdapter(_BasePassthroughFcDuplexModelAdapter):
     supports_stateless_resume = True
     drops_unclassified_non_spoken_tokens = False
 
+    def streaming_spoken_generate(self, **kwargs: Any) -> dict[str, Any]:
+        """O45 只有一种 pad 形态，模型签名里没有 ``tts_pad_protocol``。
+
+        上层（``core/processors/unified.py``）对所有模型无条件传这个参数，所以必须在这里
+        吃掉；否则 O45 部署每个 Session 第一个 unit 就 ``unexpected keyword argument``
+        （同类问题在 O5 外层包装上已经实际发生过一次，见 a8cc956）。
+        """
+
+        protocol = kwargs.pop("tts_pad_protocol", "legacy")
+        if protocol != "legacy":
+            raise ValueError(
+                f"O45 模型不支持 tts_pad_protocol={protocol!r}，只有 legacy 一种 pad 形态"
+            )
+        return super().streaming_spoken_generate(**kwargs)
+
 
 class O5FcDuplexModelAdapter(_BasePassthroughFcDuplexModelAdapter):
     """O5 target 的 MoE/TP2/LLM Graph 模型 Adapter。"""
