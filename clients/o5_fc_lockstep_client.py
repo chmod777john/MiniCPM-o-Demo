@@ -33,6 +33,24 @@ class O5FcSessionError(RuntimeError):
     """Session 被服务端提前结束、报错或事件顺序不符合协议。"""
 
 
+class O5ModelProtocolError(O5FcSessionError):
+    """服务端以 ``reason="model_protocol_error"`` 结束 Session：**被评模型自己**的输出
+    违反了 FC 流协议（例如 opener 之前就吐普通文本）。
+
+    🔴 这是模型能力缺陷，不是基础设施故障 —— 调用方应把该样本判为失败、**只跑一次**，
+    而不是重试（2026-10-05 口径）。``diagnostic`` 里有违例类型 ``violation`` 和模型最近
+    生成的原文 ``context``（服务端 core/fc_duplex/protocol_errors.py）。
+    """
+
+    def __init__(self, event: dict[str, Any]) -> None:
+        self.event = event
+        self.diagnostic: dict[str, Any] = dict(event.get("diagnostic") or {})
+        self.violation: Optional[str] = self.diagnostic.get("violation")
+        super().__init__(
+            f"模型协议错误[{self.violation}]: {self.diagnostic.get('detail') or self.diagnostic.get('message')}"
+        )
+
+
 def build_system(
     *,
     system_audio_path: Optional[str],
@@ -423,5 +441,7 @@ class O5FcLockstepSession:
 
     @staticmethod
     def _raise_if_terminal(event: dict[str, Any]) -> None:
+        if event.get("type") == "session.closed" and event.get("reason") == "model_protocol_error":
+            raise O5ModelProtocolError(event)
         if event.get("type") in {"error", "session.closed"}:
             raise O5FcSessionError(f"Session 被服务端结束: {json.dumps(event, ensure_ascii=False)[:2000]}")
