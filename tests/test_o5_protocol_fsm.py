@@ -88,6 +88,60 @@ def test_sdk_canonical_cases_all_accepted(vocab, config_name):
     assert n >= 10
 
 
+def _case_with_silence(lead: float = 0.0, trail: float = 0.0, mid_gap: float = 0.0):
+    """case_1_01 的 AI 语音改静音分布：开头 / 结尾补零，或在第 8 个字后插停顿；alignment 同步平移。"""
+    import torch
+    from minicpm_o5_sdk import O5Alignment, O5WordInterval
+    from minicpm_o5_sdk.protocols.duplex.training_data.lazy_media import O5LazyAudio
+
+    sr = 16000
+    td = sdk.load_case("case_1_01")
+    seg = td.tracks.ai_spoken.segments[0]
+    wav = seg.audio.get_tensor()
+    words = list(seg.alignment.word_intervals)
+    cut_t = words[7].end_sec
+    if mid_gap:
+        wav = torch.cat([wav[: round(cut_t * sr)], torch.zeros(round(mid_gap * sr)), wav[round(cut_t * sr):]])
+    wav = torch.cat([torch.zeros(round(lead * sr)), wav, torch.zeros(round(trail * sr))]).float()
+
+    def shift(t: float) -> float:
+        return round(t + lead + (mid_gap if mid_gap and t >= cut_t - 1e-9 else 0.0), 4)
+
+    new_seg = seg.model_copy(update={
+        "audio": O5LazyAudio(wav.numel() / sr, lambda: wav),
+        "alignment": O5Alignment(word_intervals=[
+            O5WordInterval(text=w.text, start_sec=shift(w.start_sec), end_sec=shift(w.end_sec)) for w in words]),
+    })
+    spoken = td.tracks.ai_spoken.model_copy(update={"segments": [new_seg]})
+    return td.model_copy(update={"tracks": td.tracks.model_copy(update={"ai_spoken": spoken})})
+
+
+@pytest.mark.parametrize("kw", [{"mid_gap": 2.5}, {"trail": 2.5}, {"trail": 4.0}])
+def test_sdk_tts_pad_forms_accepted(vocab, kw):
+    """序列化器产出 tts_pad 的正常场景：turn 中间停顿、turn 末尾静音。
+    后者的 turn 以 terminal-only「speak + spoken_turn_eos + spoken_slot_eos」收尾，tts_pad 后从不接 turn_eos。"""
+    ids = _case_with_silence(**kw).tokenize(vocab.tokenizer).tokenized_data.input_ids
+    syms = vocab.symbols_from_token_ids(ids)
+    assert K.TTS_PAD in syms
+    for i, s in enumerate(syms):
+        if s == K.TTS_PAD:
+            assert syms[i + 1] == K.AI_SPOKEN_SLOT_END
+    O5ProtocolFsm().feed(syms)
+
+
+def test_turn_leading_tts_pad_rejected_like_sdk_replay(vocab):
+    """AI 语音开头静音 > unit_sec + prelook（1.3s）时，SDK 序列化器会在 turn 开头直接出 tts_pad，
+    但 SDK 自己的 replay 拒绝它（「孤立 <|tts_pad|>」）。状态机与 replay 一致：tts_pad 必须先有 speak 打开 turn。"""
+    td = _case_with_silence(lead=2.5)
+    ids = td.tokenize(vocab.tokenizer).tokenized_data.input_ids
+    parser = O5DuplexParser(O5TokenizerID.O5, tokenizer=vocab.tokenizer)
+    with pytest.raises(Exception, match="unsupported_replay_pattern"):
+        parser.parse(O5DuplexParseRequest(sequence=list(ids), unit_policy=td.unit_policy))
+    with pytest.raises(O5ProtocolViolation) as e:
+        O5ProtocolFsm().feed(vocab.symbols_from_token_ids(ids))
+    assert e.value.code == "tts_pad_without_open_turn"
+
+
 # ---------------------------------------------------------------------- 主验收 2：生成的都合法
 
 
