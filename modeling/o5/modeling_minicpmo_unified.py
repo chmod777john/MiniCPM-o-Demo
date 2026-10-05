@@ -472,10 +472,12 @@ class MiniCPMO(BaseMiniCPMO):
         self,
         max_tokens: int = 24,
         decode_mode: str = "greedy",
+        tts_pad_protocol: str = "legacy",
     ) -> dict:
         return self._require_fc_duplex().streaming_spoken_generate(
             max_tokens=max_tokens,
             decode_mode=decode_mode,
+            tts_pad_protocol=tts_pad_protocol,
         )
 
     def fc_duplex_streaming_non_spoken_generate(
