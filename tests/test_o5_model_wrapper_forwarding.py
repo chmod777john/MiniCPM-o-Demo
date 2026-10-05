@@ -54,4 +54,5 @@ def test_spoken_wrapper_forwards_tts_pad_protocol() -> None:
     MiniCPMO.fc_duplex_streaming_spoken_generate(
         obj, max_tokens=3, decode_mode="greedy", tts_pad_protocol="revised"
     )
-    assert calls == {"max_tokens": 3, "decode_mode": "greedy", "tts_pad_protocol": "revised"}
+    assert calls == {"max_tokens": 3, "decode_mode": "greedy", "tts_pad_protocol": "revised",
+                     "decoding_policy": "raise_protocol_error"}

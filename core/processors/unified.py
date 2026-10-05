@@ -2195,6 +2195,7 @@ class FcDuplexView:
             max_tokens=request.max_tokens,
             decode_mode=request.decode_mode,
             tts_pad_protocol=request.tts_pad_protocol,
+            decoding_policy=request.decoding_policy,
         )
         return self._spoken_result(result)
 
@@ -2203,6 +2204,7 @@ class FcDuplexView:
             decode_mode=request.decode_mode,
             max_tokens=request.max_tokens,
             close_reason=request.close_reason,
+            decoding_policy=request.decoding_policy,
         )
         self._attach_tool_call_ids(result)
         return self._step_result(result)

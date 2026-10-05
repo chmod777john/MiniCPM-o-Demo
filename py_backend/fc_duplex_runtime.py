@@ -118,6 +118,7 @@ class FcDuplexSessionRuntime:
         self._fixed_tool_call_ids: Optional[List[str]] = None
         self._decode_mode = "greedy"
         self._tts_pad_protocol = "legacy"
+        self._decoding_policy = "raise_protocol_error"
         self._sample_rate = 16000
         self._system_prefill: Optional[Dict[str, Any]] = None
         self._input_queue: asyncio.Queue[Dict[str, Any]] = asyncio.Queue()
@@ -284,6 +285,16 @@ class FcDuplexSessionRuntime:
         self._tts_pad_protocol = str(
             config.get("tts_pad_protocol", params.get("tts_pad_protocol", "legacy")) or "legacy"
         )
+        # decoding_policy 是 per-session / per-用途（FDB 用 raise，tau / Demo 用 constrained），不进 ckpt preset
+        self._decoding_policy = str(
+            config.get("decoding_policy", params.get("decoding_policy", "raise_protocol_error"))
+            or "raise_protocol_error"
+        )
+        if self._decoding_policy not in ("raise_protocol_error", "constrained_decoding"):
+            raise RuntimeError(
+                f"invalid fc_duplex decoding_policy: {self._decoding_policy!r}"
+                "（只能是 raise_protocol_error / constrained_decoding）"
+            )
         if self._tts_pad_protocol not in ("legacy", "revised"):
             raise RuntimeError(
                 f"invalid fc_duplex tts_pad_protocol: {self._tts_pad_protocol!r}（只能是 legacy / revised）"
@@ -309,6 +320,7 @@ class FcDuplexSessionRuntime:
                 "checkpoint_profile_id": self._checkpoint_profile_id,
                 "unit_policy": self._unit_policy.model_dump(mode="json"),
                 "tts_pad_protocol": self._tts_pad_protocol,
+                "decoding_policy": self._decoding_policy,
                 "non_spoken_scheduling": self._non_spoken_scheduling,
                 "infrastructure_max_non_spoken_steps": (
                     self._infrastructure_max_non_spoken_steps
@@ -629,6 +641,7 @@ class FcDuplexSessionRuntime:
             max_tokens=self._max_spoken_tokens,
             decode_mode=self._decode_mode,
             tts_pad_protocol=self._tts_pad_protocol,
+            decoding_policy=self._decoding_policy,
         )
         # FcSpokenGenerateResult 的 cost_* 是**秒**（与 FcDuplexStepResult.cost_llm_ms 不同单位）
         self._accumulate_unit_cost("spoken", self._seconds_to_ms(getattr(spoken, "cost_llm", None)))
@@ -920,6 +933,7 @@ class FcDuplexSessionRuntime:
                 self.backend.fc_duplex_non_spoken_generate,
                 max_tokens=1,
                 decode_mode=self._decode_mode,
+                decoding_policy=self._decoding_policy,
             )
             step_durations_ms.append((time.perf_counter() - step_t0) * 1000)
             self._accumulate_unit_cost("non_spoken", getattr(step, "cost_llm_ms", None))

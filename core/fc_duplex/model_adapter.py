@@ -229,7 +229,22 @@ class O45FcDuplexModelAdapter(_BasePassthroughFcDuplexModelAdapter):
             raise ValueError(
                 f"O45 模型不支持 tts_pad_protocol={protocol!r}，只有 legacy 一种 pad 形态"
             )
+        _drop_decoding_policy(kwargs)
         return super().streaming_spoken_generate(**kwargs)
+
+    def streaming_non_spoken_generate(self, **kwargs: Any) -> dict[str, Any]:
+        """同上：O45 模型签名里没有 ``decoding_policy``，必须在这里吃掉。"""
+
+        _drop_decoding_policy(kwargs)
+        return super().streaming_non_spoken_generate(**kwargs)
+
+
+def _drop_decoding_policy(kwargs: dict[str, Any]) -> None:
+    """O45 没有协议状态机，只支持 raise_protocol_error（即不干预解码）。"""
+
+    policy = kwargs.pop("decoding_policy", "raise_protocol_error")
+    if policy != "raise_protocol_error":
+        raise ValueError(f"O45 模型不支持 decoding_policy={policy!r}，只有 raise_protocol_error")
 
 
 class O5FcDuplexModelAdapter(_BasePassthroughFcDuplexModelAdapter):

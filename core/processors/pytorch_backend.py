@@ -450,11 +450,13 @@ class PyTorchBackend:
         max_tokens: int = 24,
         decode_mode: str = "greedy",
         tts_pad_protocol: str = "legacy",
+        decoding_policy: str = "raise_protocol_error",
     ) -> Any:
         fc_view = self.processor.set_fc_duplex_mode()
         return fc_view.streaming_spoken_generate(
             FcSpokenGenerateRequest(
-                max_tokens=max_tokens, decode_mode=decode_mode, tts_pad_protocol=tts_pad_protocol
+                max_tokens=max_tokens, decode_mode=decode_mode,
+                tts_pad_protocol=tts_pad_protocol, decoding_policy=decoding_policy,
             )
         )
 
@@ -464,6 +466,7 @@ class PyTorchBackend:
         max_tokens: int = 1,
         decode_mode: str = "greedy",
         close_reason: Optional[str] = None,
+        decoding_policy: str = "raise_protocol_error",
     ) -> Any:
         fc_view = self.processor.set_fc_duplex_mode()
         return fc_view.streaming_non_spoken_generate(
@@ -471,6 +474,7 @@ class PyTorchBackend:
                 max_tokens=max_tokens,
                 decode_mode=decode_mode,
                 close_reason=close_reason,
+                decoding_policy=decoding_policy,
             )
         )
 

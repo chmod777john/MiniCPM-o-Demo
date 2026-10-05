@@ -144,8 +144,18 @@ class O5FcSessionPreset:
         server_url: str,
         task_prompt: str,
         tools: Optional[list[dict[str, Any]]],
+        decoding_policy: str = "raise_protocol_error",
     ) -> "O5FcSessionSpec":
-        """把 preset 与评测自带的任务 prompt / 工具组合成一个 Session 规格。"""
+        """把 preset 与评测自带的任务 prompt / 工具组合成一个 Session 规格。
+
+        ``decoding_policy`` 是 per-用途 的（FDB 用 raise_protocol_error，tau / Demo 用
+        constrained_decoding），所以不在 preset 里，由调用方按 benchmark 给。
+        """
+
+        if decoding_policy not in ("raise_protocol_error", "constrained_decoding"):
+            raise ValueError(
+                f"decoding_policy 只能是 raise_protocol_error / constrained_decoding，得到 {decoding_policy!r}"
+            )
 
         return O5FcSessionSpec(
             server_url=server_url,
@@ -160,6 +170,7 @@ class O5FcSessionPreset:
             non_spoken_scheduling=self.non_spoken_scheduling,
             decode_mode=self.decode_mode,
             tts_pad_protocol=self.tts_pad_protocol,
+            decoding_policy=decoding_policy,
         )
 
 
@@ -174,6 +185,8 @@ class O5FcSessionSpec:
         tts_prompt_audio_path: TTS 音色 prompt 的服务端可读路径；None 表示不生成音频。
         non_spoken_scheduling: ``quality``（按 budget 完整解码）或 ``latency``。
         decode_mode: ``greedy`` 或 ``sampling``。
+        decoding_policy: ``raise_protocol_error``（不干预解码，违例即报 model_protocol_error）或
+            ``constrained_decoding``（按协议状态机只放行合法 token）。
         tts_pad_protocol: ``legacy``（SDK ≤ 0.0.6a3 训的 ckpt）或 ``revised``（≥ 0.0.6a4）。
             直接构造本类时默认 ``legacy``（与服务端默认一致）；经 preset 时必须显式给。
         queue_timeout_sec: 等待空闲副本的上限（并发 > 副本数时会排队）。
@@ -187,6 +200,7 @@ class O5FcSessionSpec:
     non_spoken_scheduling: str = "quality"
     decode_mode: str = "greedy"
     tts_pad_protocol: str = "legacy"
+    decoding_policy: str = "raise_protocol_error"
     queue_timeout_sec: float = 86400.0
     event_timeout_sec: float = 900.0
 
@@ -207,6 +221,7 @@ class O5FcSessionSpec:
                 "sample_rate": INPUT_SAMPLE_RATE,
                 "non_spoken_scheduling": self.non_spoken_scheduling,
                 "tts_pad_protocol": self.tts_pad_protocol,
+                "decoding_policy": self.decoding_policy,
             },
         }
         if self.tts_prompt_audio_path is not None:

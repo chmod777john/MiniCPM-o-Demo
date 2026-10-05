@@ -201,3 +201,21 @@ def test_step_raises_on_server_error(tmp_path: Path, monkeypatch: pytest.MonkeyP
     session.open()
     with pytest.raises(O5FcSessionError, match="cache full"):
         session.step(np.zeros(16000, np.float32))
+
+
+@pytest.mark.parametrize("policy", ["raise_protocol_error", "constrained_decoding"])
+def test_decoding_policy_reaches_session_init(tmp_path: Path, policy: str) -> None:
+    """decoding_policy 由调用方按 benchmark 给（不在 preset 里），原样进 session.init.config。"""
+
+    spec = O5FcSessionPreset.load(str(_preset(tmp_path))).to_spec(
+        server_url="http://h:1", task_prompt="T", tools=[], decoding_policy=policy
+    )
+    assert spec.session_init_frame()["payload"]["config"]["decoding_policy"] == policy
+
+
+def test_decoding_policy_defaults_to_raise_and_rejects_typos(tmp_path: Path) -> None:
+    preset = O5FcSessionPreset.load(str(_preset(tmp_path)))
+    spec = preset.to_spec(server_url="http://h:1", task_prompt="T", tools=[])
+    assert spec.session_init_frame()["payload"]["config"]["decoding_policy"] == "raise_protocol_error"
+    with pytest.raises(ValueError, match="decoding_policy"):
+        preset.to_spec(server_url="http://h:1", task_prompt="T", tools=[], decoding_policy="constrained")

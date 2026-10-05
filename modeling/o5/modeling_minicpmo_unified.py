@@ -106,6 +106,105 @@ def _plain_duplex_system_prompt(prefix: Optional[str]) -> str:
     return text.strip()
 
 
+
+DECODING_POLICIES = ("raise_protocol_error", "constrained_decoding")
+_ORDINARY_MASK_CACHE: Dict[tuple, torch.Tensor] = {}
+
+
+class _ConstrainedDecoding:
+    """``decoding_policy=constrained_decoding`` 的协议状态机驱动（一个 Session 一个实例）。
+
+    每个解码步之前把 ``output_ids`` 里新增的 token 增量喂给 ``o5_protocol_fsm``（推理侧所有写入
+    —— system 预填、prefill、采样、框架写的 slot / unit 边界、budget —— 都会进 ``output_ids``，
+    所以状态机始终与 KV 里的真实序列一致），然后：
+
+    - 合法集合只有一个具体 token：**直接返回它，不做模型采样**；
+    - 否则返回加了 mask 的 logits（非法 token = -inf），再交给 ``_sample``。
+
+    mask 按合法集合缓存，每步只有一次张量加法。
+
+    推理侧自己写了状态机不认的东西（例如 spoken 撞 ``max_tokens`` 没写终止符就关 slot）时，
+    状态机无法再与序列对齐：本 Session 余下部分退回不约束，原因记在 ``disabled_reason``，
+    并随 unit info 上报 —— 不让基础设施层面的对不齐把一条评测样本整个弄挂。
+    """
+
+    def __init__(self, capability: "FcDuplexCapability", tts_pad_protocol: str) -> None:
+        from o5_protocol_fsm import Actor, FsmConfig, O5ProtocolFsm
+        from o5_protocol_fsm.vocab import IncrementalSymbolizer, O5ProtocolVocab
+
+        self._Actor = Actor
+        self.vocab = O5ProtocolVocab(capability._sdk_tokenizer, capability._registry)
+        self.fsm = O5ProtocolFsm(FsmConfig(tts_pad_protocol=tts_pad_protocol))
+        self.symbolizer = IncrementalSymbolizer(self.vocab, self.fsm)
+        self.tts_pad_protocol = tts_pad_protocol
+        self.disabled_reason: Optional[str] = None
+        self.forced_steps = 0
+        self.masked_steps = 0
+        self._masks: Dict[frozenset, torch.Tensor] = {}
+
+    def _ordinary(self, size: int, device) -> torch.Tensor:
+        key = (size, str(device))
+        cached = _ORDINARY_MASK_CACHE.get(key)
+        if cached is None:
+            flags = []
+            for token_id in range(size):
+                try:
+                    flags.append(bool(self.vocab.is_ordinary(token_id)))
+                except Exception:   # 超出 tokenizer 范围的 id（logits 尾部 padding）一律不是普通 token
+                    flags.append(False)
+            cached = torch.tensor(flags, dtype=torch.bool, device=device)
+            _ORDINARY_MASK_CACHE[key] = cached
+        return cached
+
+    def _mask(self, allowed: frozenset, logits: torch.Tensor) -> torch.Tensor:
+        mask = self._masks.get(allowed)
+        if mask is None:
+            from o5_protocol_fsm import Abstract
+
+            size = int(logits.shape[-1])
+            mask = torch.full((size,), float("-inf"), dtype=torch.float32, device=logits.device)
+            if Abstract.ORDINARY in allowed:
+                mask[self._ordinary(size, logits.device)] = 0.0
+            for sym in allowed:
+                token_id = self.vocab.key_to_id.get(sym)
+                if token_id is not None and token_id < size:
+                    mask[token_id] = 0.0
+            self._masks[allowed] = mask
+        return mask
+
+    def step(self, output_ids: List[int], logits: torch.Tensor):
+        """返回 ``(forced_token_id 或 None, 用于采样的 logits)``。"""
+        if self.disabled_reason is not None:
+            return None, logits
+        from o5_protocol_fsm import O5ProtocolViolation
+
+        try:
+            self.symbolizer.sync(output_ids)
+        except O5ProtocolViolation as exc:
+            self.disabled_reason = f"{exc.code}: {exc}"
+            logger.warning("[constrained_decoding] 状态机与序列失配，本 Session 余下部分退回不约束：%s",
+                           self.disabled_reason)
+            return None, logits
+        opts = self.fsm.options()
+        forced = opts.forced
+        if forced is not None and forced[1] == self._Actor.MODEL:
+            self.forced_steps += 1
+            return self.vocab.key_to_id[forced[0]], logits
+        if not opts.model:
+            self.disabled_reason = f"模型解码位置上状态机没有模型可采的 token：{self.fsm.snapshot()}"
+            logger.warning("[constrained_decoding] %s", self.disabled_reason)
+            return None, logits
+        self.masked_steps += 1
+        return None, logits + self._mask(opts.model, logits)
+
+    def report(self) -> dict:
+        return {
+            "forced_steps": self.forced_steps,
+            "masked_steps": self.masked_steps,
+            "disabled_reason": self.disabled_reason,
+        }
+
+
 class MiniCPMO(BaseMiniCPMO):
     """Vendored MiniCPMO plus the demo runtime facade."""
 
@@ -473,11 +572,13 @@ class MiniCPMO(BaseMiniCPMO):
         max_tokens: int = 24,
         decode_mode: str = "greedy",
         tts_pad_protocol: str = "legacy",
+        decoding_policy: str = "raise_protocol_error",
     ) -> dict:
         return self._require_fc_duplex().streaming_spoken_generate(
             max_tokens=max_tokens,
             decode_mode=decode_mode,
             tts_pad_protocol=tts_pad_protocol,
+            decoding_policy=decoding_policy,
         )
 
     def fc_duplex_streaming_non_spoken_generate(
@@ -485,11 +586,13 @@ class MiniCPMO(BaseMiniCPMO):
         decode_mode: str = "greedy",
         max_tokens: int = 1,
         close_reason: Optional[str] = None,
+        decoding_policy: str = "raise_protocol_error",
     ) -> dict:
         return self._require_fc_duplex().streaming_non_spoken_generate(
             decode_mode=decode_mode,
             max_tokens=max_tokens,
             close_reason=close_reason,
+            decoding_policy=decoding_policy,
         )
 
     def fc_duplex_finalize_unit(self) -> dict:
@@ -747,6 +850,16 @@ class FcDuplexCapability:
         self.decoder.feed(embeds)
         return int(embeds.shape[0])
 
+    def _constrained_for(self, decoding_policy: str) -> Optional[_ConstrainedDecoding]:
+        if decoding_policy not in DECODING_POLICIES:
+            raise ValueError(f"decoding_policy 只能是 {DECODING_POLICIES}，得到 {decoding_policy!r}")
+        if decoding_policy != "constrained_decoding":
+            return None
+        if getattr(self, "_constrained", None) is None:
+            self._ensure_protocol()
+            self._constrained = _ConstrainedDecoding(self, getattr(self, "_tts_pad_protocol", "legacy"))
+        return self._constrained
+
     def _sample(self, logits, mode: str) -> int:
         if mode in ("greedy", "argmax"):
             return int(torch.argmax(logits[0]).item())
@@ -872,6 +985,8 @@ class FcDuplexCapability:
         self._non_spoken_logits = None
         self._non_spoken_mode = None
         self._think_buf, self._tool_call_buf = [], []
+        self._constrained: Optional[_ConstrainedDecoding] = None
+        self._tts_pad_protocol = "legacy"
         self.tts_text_start_pos = 0
         self.tts_past_key_values = None
         self.token2wav_buffer = []
@@ -1157,7 +1272,10 @@ class FcDuplexCapability:
         info["cost_prefill"] = time.time() - prefill_start
         return dict(info)
 
-    def streaming_spoken_generate(self, max_tokens=24, decode_mode="greedy", tts_pad_protocol="legacy"):
+    def streaming_spoken_generate(
+        self, max_tokens=24, decode_mode="greedy", tts_pad_protocol="legacy",
+        decoding_policy="raise_protocol_error",
+    ):
         """解一个 ai_spoken slot。
 
         ``tts_pad_protocol`` 决定 ``<|tts_pad|>`` 的协议形态（见 FcSpokenGenerateRequest.tts_pad_protocol）：
@@ -1170,6 +1288,8 @@ class FcDuplexCapability:
         """
         if not self._spoken_slot_open:
             raise RuntimeError("spoken slot is not open; call streaming_prefill() first")
+        self._tts_pad_protocol = tts_pad_protocol
+        constrained = self._constrained_for(decoding_policy)
         start, logits = time.time(), self._spoken_logits
         ids, text_ids, tts_results = [], [], []
         is_listen = is_speaking = turn_eos = terminated = is_pad = False
@@ -1185,7 +1305,10 @@ class FcDuplexCapability:
         for step_index in range(max_tokens):
             if step_index == 0:
                 self._log_decision_logits(track="spoken", logits=logits)
-            tid = self._sample(logits, decode_mode)
+            forced = None
+            if constrained is not None:
+                forced, logits = constrained.step(self.output_ids, logits)
+            tid = forced if forced is not None else self._sample(logits, decode_mode)
             if tid == self.sid(self.K.AI_SPOKEN_SLOT_END):
                 terminated, reason, term_id = True, "ai_spoken_slot_end", tid
                 break
@@ -1217,6 +1340,7 @@ class FcDuplexCapability:
             spoken_termination_token_id=term_id,
             spoken_slot_unterminated=not terminated,
             spoken_generation_reached_max_tokens=len(ids) >= max_tokens and not terminated,
+            constrained_decoding=constrained.report() if constrained is not None else None,
         )
         text = self._flush(text_ids) if text_ids else ""
         return {
@@ -1255,9 +1379,13 @@ class FcDuplexCapability:
             )
             self._non_spoken_slot_open = True
 
-    def streaming_non_spoken_generate(self, decode_mode="greedy", max_tokens=1, close_reason=None):
+    def streaming_non_spoken_generate(
+        self, decode_mode="greedy", max_tokens=1, close_reason=None,
+        decoding_policy="raise_protocol_error",
+    ):
         non_spoken_start = time.time()
         self._open_non_spoken()
+        constrained = self._constrained_for(decoding_policy) if close_reason is None else None
         close_map = {
             "eos": self.K.NON_SPOKEN_EOS, "no_action": self.K.NO_ACTION,
             "budget_reached": self.K.NON_SPOKEN_BUDGET_REACHED,
@@ -1284,7 +1412,10 @@ class FcDuplexCapability:
                         track="non_spoken",
                         logits=self._non_spoken_logits,
                     )
-                tid = self._sample(self._non_spoken_logits, decode_mode)
+                forced, ns_logits = None, self._non_spoken_logits
+                if constrained is not None:
+                    forced, ns_logits = constrained.step(self.output_ids, ns_logits)
+                tid = forced if forced is not None else self._sample(ns_logits, decode_mode)
                 if tid == self.sid(self.K.AI_NON_SPOKEN_SLOT_END):
                     terminated, reason = True, "eos"
                     break

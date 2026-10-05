@@ -123,3 +123,43 @@ class O5ProtocolVocab:
             Abstract.UNIT_PREFILL: "⟨unit prefill⟩",
             Abstract.SESSION_END: "⟨session end⟩",
         }.get(sym, getattr(sym, "name", str(sym)))
+
+
+class IncrementalSymbolizer:
+    """把一条**不断追加**的 token id 序列，增量翻成状态机符号并推进状态机。
+
+    推理侧所有写入（system 预填、prefill、模型采样、框架写的 slot / unit 边界、budget）都会进
+    ``output_ids``，所以每次解码前调用 :meth:`sync` 把新增部分喂进状态机，状态机就始终和
+    真实写进 KV 的序列一致。prefill 压缩规则与 :meth:`O5ProtocolVocab.symbols_from_token_ids` 相同。
+    """
+
+    def __init__(self, vocab: O5ProtocolVocab, fsm) -> None:
+        self.vocab = vocab
+        self.fsm = fsm
+        self.pos = 0
+        self._unit_start = vocab.key_to_id[K.UNIT_START]
+        self._spoken_start = vocab.key_to_id[K.AI_SPOKEN_SLOT_START]
+        self._system_done = False
+        self._in_unit_prefill = False
+
+    def sync(self, output_ids: list[int]) -> None:
+        """喂入 ``output_ids[self.pos:]``。状态机拒绝时抛 O5ProtocolViolation，pos 停在出错处。"""
+        n = len(output_ids)
+        while self.pos < n:
+            t = int(output_ids[self.pos])
+            if not self._system_done:
+                if t != self._unit_start:
+                    self.pos += 1                      # system 预填段整段压成一个符号
+                    continue
+                self.fsm.advance(Abstract.SYSTEM_PREFILL)
+                self._system_done = True
+            if self._in_unit_prefill:
+                if t != self._spoken_start:
+                    self.pos += 1                      # user_video / user_audio / input_event 整段
+                    continue
+                self.fsm.advance(Abstract.UNIT_PREFILL)
+                self._in_unit_prefill = False
+            self.fsm.advance(self.vocab.symbol_of(t))
+            self.pos += 1
+            if t == self._unit_start:
+                self._in_unit_prefill = True

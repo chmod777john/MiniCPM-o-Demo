@@ -463,3 +463,29 @@ def test_allowed_ids_never_open_ordinary_where_banned(vocab):
     allow_ordinary, ids = vocab.allowed_ids(f.options())
     assert allow_ordinary is False
     assert set(ids) == {vocab.key_to_id[K.LISTEN], vocab.key_to_id[K.SPEAK]}
+
+
+# ---------------------------------------------------------------------- 增量符号化（推理侧用）
+
+
+@pytest.mark.parametrize("config_name", ["default", "no_think", "budget2"])
+def test_incremental_symbolizer_matches_batch(vocab, config_name):
+    """逐 token / 分块喂入与一次性整段喂入，状态机终态一致；切块位置任意。"""
+    from o5_protocol_fsm.vocab import IncrementalSymbolizer
+
+    rng = random.Random(7)
+    for case_id in sdk.list_case_ids()[:6]:
+        td = sdk.load_case(case_id)
+        try:
+            ids = list(td.tokenize(vocab.tokenizer, **TOKENIZE_CONFIGS[config_name]).tokenized_data.input_ids)
+        except ValueError:
+            continue
+        cfg = FsmConfig(tts_pad_protocol=SDK_TTS_PAD_PROTOCOL)
+        batch = O5ProtocolFsm(cfg)
+        batch.feed(vocab.symbols_from_token_ids(ids))
+        inc = IncrementalSymbolizer(vocab, O5ProtocolFsm(cfg))
+        cut = 0
+        while cut < len(ids):
+            cut = min(len(ids), cut + rng.randint(1, 40))
+            inc.sync(ids[:cut])
+        assert inc.fsm.snapshot() == batch.snapshot()

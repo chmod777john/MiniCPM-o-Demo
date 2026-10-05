@@ -276,6 +276,15 @@ class FcSpokenGenerateRequest(BaseModel):
             "</ai_spoken_slot>，loss=0）。由 session preset 按 ckpt 指定，与 prefix / unit_policy 同类。"
         ),
     )
+    decoding_policy: Literal["raise_protocol_error", "constrained_decoding"] = Field(
+        "raise_protocol_error",
+        description=(
+            "raise_protocol_error = 不干预解码，模型吐出违反 FC 流协议的序列就报 model_protocol_error"
+            "（FDB 等测模型基本能力的评测用）；constrained_decoding = 按 o5_protocol_fsm 状态机只放行"
+            "合法 token、唯一确定的 token 直接写入不采样，模型永远采不出会引起协议错误的序列"
+            "（tau-voice 这类长任务与 Demo 部署用）。per-session / per-用途，不进 ckpt preset。"
+        ),
+    )
 
 
 class FcNonSpokenGenerateRequest(BaseModel):
@@ -284,6 +293,15 @@ class FcNonSpokenGenerateRequest(BaseModel):
     max_tokens: int = Field(1, ge=0, description="Max non-spoken tokens to sample")
     decode_mode: str = Field("greedy", description="Decode mode: greedy or sampling")
     close_reason: Optional[FcNonSpokenCloseReason] = Field(None, description="Optional forced close reason")
+    decoding_policy: Literal["raise_protocol_error", "constrained_decoding"] = Field(
+        "raise_protocol_error",
+        description=(
+            "raise_protocol_error = 不干预解码，模型吐出违反 FC 流协议的序列就报 model_protocol_error"
+            "（FDB 等测模型基本能力的评测用）；constrained_decoding = 按 o5_protocol_fsm 状态机只放行"
+            "合法 token、唯一确定的 token 直接写入不采样，模型永远采不出会引起协议错误的序列"
+            "（tau-voice 这类长任务与 Demo 部署用）。per-session / per-用途，不进 ckpt preset。"
+        ),
+    )
 
 
 class FcDecodeOutputRequest(BaseModel):

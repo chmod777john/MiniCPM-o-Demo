@@ -20,19 +20,28 @@ from core.fc_duplex.model_adapter import O45FcDuplexModelAdapter, O5FcDuplexMode
 from modeling.o5.modeling_minicpmo_unified import MiniCPMO as O5MiniCPMO
 
 # core/processors/unified.py 里 streaming_spoken_generate 实际传给 adapter 的参数
-VIEW_KWARGS = {"max_tokens": 24, "decode_mode": "greedy", "tts_pad_protocol": "legacy"}
+VIEW_KWARGS = {"max_tokens": 24, "decode_mode": "greedy", "tts_pad_protocol": "legacy",
+               "decoding_policy": "raise_protocol_error"}
+NS_KWARGS = {"decode_mode": "greedy", "max_tokens": 1, "close_reason": None,
+             "decoding_policy": "raise_protocol_error"}
 
 
 def _recording_model(real_cls: type) -> tuple[Any, dict]:
     """一个按真实类签名校验入参的假模型：签名对不上就抛 TypeError，和线上一样。"""
 
-    sig = inspect.signature(real_cls.fc_duplex_streaming_spoken_generate)
+    sp = inspect.signature(real_cls.fc_duplex_streaming_spoken_generate)
+    ns = inspect.signature(real_cls.fc_duplex_streaming_non_spoken_generate)
     seen: dict = {}
 
     class _Model:
         def fc_duplex_streaming_spoken_generate(self, **kwargs: Any) -> dict:
-            bound = sig.bind(self, **kwargs)  # 多给 / 写错参数名在这里炸
+            bound = sp.bind(self, **kwargs)  # 多给 / 写错参数名在这里炸
             seen.update({k: v for k, v in bound.arguments.items() if k != "self"})
+            return {}
+
+        def fc_duplex_streaming_non_spoken_generate(self, **kwargs: Any) -> dict:
+            bound = ns.bind(self, **kwargs)
+            seen.update({"ns_" + k: v for k, v in bound.arguments.items() if k != "self"})
             return {}
 
     return _Model(), seen
@@ -61,7 +70,7 @@ def test_o45_chain_drops_tts_pad_protocol() -> None:
 
     model, seen = _recording_model(_o45_model_cls())
     O45FcDuplexModelAdapter(model).streaming_spoken_generate(**VIEW_KWARGS)
-    assert "tts_pad_protocol" not in seen
+    assert "tts_pad_protocol" not in seen and "decoding_policy" not in seen
     assert seen == {"max_tokens": 24, "decode_mode": "greedy"}
 
 
@@ -73,3 +82,25 @@ def test_o45_chain_rejects_revised() -> None:
         O45FcDuplexModelAdapter(model).streaming_spoken_generate(
             **{**VIEW_KWARGS, "tts_pad_protocol": "revised"}
         )
+
+
+@pytest.mark.parametrize("policy", ["raise_protocol_error", "constrained_decoding"])
+def test_o5_chain_passes_decoding_policy_both_tracks(policy: str) -> None:
+    model, seen = _recording_model(O5MiniCPMO)
+    adapter = O5FcDuplexModelAdapter(model)
+    adapter.streaming_spoken_generate(**{**VIEW_KWARGS, "decoding_policy": policy})
+    adapter.streaming_non_spoken_generate(**{**NS_KWARGS, "decoding_policy": policy})
+    assert seen["decoding_policy"] == policy and seen["ns_decoding_policy"] == policy
+
+
+def test_o45_chain_drops_decoding_policy_non_spoken() -> None:
+    model, seen = _recording_model(_o45_model_cls())
+    O45FcDuplexModelAdapter(model).streaming_non_spoken_generate(**NS_KWARGS)
+    assert "ns_decoding_policy" not in seen
+
+
+def test_o45_chain_rejects_constrained() -> None:
+    model, _ = _recording_model(_o45_model_cls())
+    with pytest.raises(ValueError, match="decoding_policy"):
+        O45FcDuplexModelAdapter(model).streaming_non_spoken_generate(
+            **{**NS_KWARGS, "decoding_policy": "constrained_decoding"})
