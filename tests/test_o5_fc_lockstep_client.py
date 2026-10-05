@@ -51,6 +51,7 @@ def _preset(tmp_path: Path, **overrides: object) -> Path:
         "unit_policy": POLICY,
         "non_spoken_scheduling": "quality",
         "decode_mode": "greedy",
+        "tts_pad_protocol": "legacy",
         **overrides,
     }
     path = tmp_path / "preset.json"
@@ -85,6 +86,40 @@ def test_preset_requires_every_field(tmp_path: Path) -> None:
         O5FcSessionPreset.load(str(path))
 
 
+def test_preset_requires_explicit_tts_pad_protocol(tmp_path: Path) -> None:
+    """tts_pad_protocol 故意不给默认值：新 ckpt 漏写时必须报错，不能静默按 legacy 跑。"""
+
+    path = _preset(tmp_path)
+    data = json.loads(path.read_text())
+    del data["tts_pad_protocol"]
+    path.write_text(json.dumps(data))
+    with pytest.raises(ValueError, match="缺字段.*tts_pad_protocol"):
+        O5FcSessionPreset.load(str(path))
+
+
+@pytest.mark.parametrize("value", ["revised", "legacy"])
+def test_tts_pad_protocol_reaches_session_init(tmp_path: Path, value: str) -> None:
+    """preset 里写什么，session.init.config 里就发什么（两档都要通）。"""
+
+    path = _preset(tmp_path)
+    data = json.loads(path.read_text())
+    data["tts_pad_protocol"] = value
+    path.write_text(json.dumps(data))
+    spec = O5FcSessionPreset.load(str(path)).to_spec(server_url="http://h:1", task_prompt="T", tools=[])
+    assert spec.session_init_frame()["payload"]["config"]["tts_pad_protocol"] == value
+
+
+def test_preset_rejects_unknown_tts_pad_protocol(tmp_path: Path) -> None:
+    """写错值（例如旧名 speak_first / bare）在 load 时就拦下，不拖到服务端。"""
+
+    path = _preset(tmp_path)
+    data = json.loads(path.read_text())
+    data["tts_pad_protocol"] = "speak_first"
+    path.write_text(json.dumps(data))
+    with pytest.raises(ValueError, match="legacy / revised"):
+        O5FcSessionPreset.load(str(path))
+
+
 def test_session_init_carries_policy_and_scheduling(tmp_path: Path) -> None:
     """session.init 必须显式携带 UnitPolicy、调度策略和 TTS prompt。"""
 
@@ -96,6 +131,7 @@ def test_session_init_carries_policy_and_scheduling(tmp_path: Path) -> None:
     assert payload["unit_policy"] == POLICY
     assert payload["config"]["non_spoken_scheduling"] == "quality"
     assert payload["config"]["decode_mode"] == "greedy"
+    assert payload["config"]["tts_pad_protocol"] == "legacy"
     assert payload["generate_audio"] is True
     assert payload["tts_prompt_audio"]["file_path"].endswith("ref.wav")
 

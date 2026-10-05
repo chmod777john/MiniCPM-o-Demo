@@ -86,7 +86,7 @@ def build_system(
 class O5FcSessionPreset:
     """模型调用口径（per-checkpoint 事实），由最外层调用方用一个 JSON 文件给出。
 
-    JSON 字段与本类字段同名，6 个键都必须出现（缺键、多键都报错），不提供任何默认值；
+    JSON 字段与本类字段同名，7 个键都必须出现（缺键、多键都报错），不提供任何默认值；
     ``prefix_text`` / ``system_audio_path`` / ``tts_prompt_audio_path`` 的值可以是 null::
 
         {
@@ -97,8 +97,14 @@ class O5FcSessionPreset:
                           "non_spoken_budgets_while_listening": [30],
                           "non_spoken_budgets_while_speaking": [15]},
           "non_spoken_scheduling": "quality",
-          "decode_mode": "greedy"
+          "decode_mode": "greedy",
+          "tts_pad_protocol": "legacy"     // 或 "revised"
         }
+
+    ``tts_pad_protocol`` 必须与 ckpt 训练数据所用的 SDK 版本一致：SDK 0.0.6a3 及以前 → ``legacy``
+    （``<|tts_pad|>`` 独占 spoken slot）；0.0.6a4 及以后 → ``revised``
+    （``<|speak|> <|tts_pad|> <|spoken_slot_eos|>``）。``legacy`` 是过渡档、会被弃用。
+    故意不给默认值：新 ckpt 忘了写时宁可报缺字段，也不能静默按旧协议跑。
     """
 
     prefix_text: Optional[str]
@@ -107,6 +113,7 @@ class O5FcSessionPreset:
     unit_policy: dict[str, Any]
     non_spoken_scheduling: str
     decode_mode: str
+    tts_pad_protocol: str
 
     @classmethod
     def load(cls, path: str) -> "O5FcSessionPreset":
@@ -121,6 +128,11 @@ class O5FcSessionPreset:
                 f"session preset {path}: 缺字段 {sorted(missing)}，未知字段 {sorted(unknown)}"
             )
         preset = cls(**data)
+        if preset.tts_pad_protocol not in ("legacy", "revised"):
+            raise ValueError(
+                f"session preset {path}: tts_pad_protocol 只能是 legacy / revised，"
+                f"得到 {preset.tts_pad_protocol!r}"
+            )
         for audio_path in (preset.system_audio_path, preset.tts_prompt_audio_path):
             if audio_path is not None and not os.path.isfile(audio_path):
                 raise FileNotFoundError(f"session preset {path}: 音频不存在 {audio_path}")
@@ -147,6 +159,7 @@ class O5FcSessionPreset:
             tts_prompt_audio_path=self.tts_prompt_audio_path,
             non_spoken_scheduling=self.non_spoken_scheduling,
             decode_mode=self.decode_mode,
+            tts_pad_protocol=self.tts_pad_protocol,
         )
 
 
@@ -161,6 +174,8 @@ class O5FcSessionSpec:
         tts_prompt_audio_path: TTS 音色 prompt 的服务端可读路径；None 表示不生成音频。
         non_spoken_scheduling: ``quality``（按 budget 完整解码）或 ``latency``。
         decode_mode: ``greedy`` 或 ``sampling``。
+        tts_pad_protocol: ``legacy``（SDK ≤ 0.0.6a3 训的 ckpt）或 ``revised``（≥ 0.0.6a4）。
+            直接构造本类时默认 ``legacy``（与服务端默认一致）；经 preset 时必须显式给。
         queue_timeout_sec: 等待空闲副本的上限（并发 > 副本数时会排队）。
         event_timeout_sec: 等待单个服务端事件的上限。
     """
@@ -171,6 +186,7 @@ class O5FcSessionSpec:
     tts_prompt_audio_path: Optional[str]
     non_spoken_scheduling: str = "quality"
     decode_mode: str = "greedy"
+    tts_pad_protocol: str = "legacy"
     queue_timeout_sec: float = 86400.0
     event_timeout_sec: float = 900.0
 
@@ -190,6 +206,7 @@ class O5FcSessionSpec:
                 "decode_mode": self.decode_mode,
                 "sample_rate": INPUT_SAMPLE_RATE,
                 "non_spoken_scheduling": self.non_spoken_scheduling,
+                "tts_pad_protocol": self.tts_pad_protocol,
             },
         }
         if self.tts_prompt_audio_path is not None:
