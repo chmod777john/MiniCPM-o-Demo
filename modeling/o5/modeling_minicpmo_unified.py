@@ -1331,7 +1331,18 @@ class FcDuplexCapability:
             if tid in terms:
                 terminated, reason, term_id = True, terms[tid], tid
                 break
-        self._close_spoken_slot(append_spoken_slot_eos=turn_eos)
+        # 撞 max_tokens 还没出终止符：模型这一秒说得过长，通常不太对，报 warning。
+        # 关 slot 前由 runtime 补 <|spoken_slot_eos|>（「本 unit 结束、turn 延续到下个 unit」），
+        # 让序列仍是 SDK 训练形态 `… <|spoken_slot_eos|> </ai_spoken_slot>`。
+        # 🔴 早先这里直接写 AI_SPOKEN_SLOT_END（跟不上 SDK 版本的旧兜底）：协议状态机判失配，
+        # constrained_decoding 下本 Session 余下部分退回不约束，随后模型采出协议违例
+        # （2026-10-06 cd1005 tau 11 个 run 共 6 次，全部发生在这种失配之后）。
+        reached_max = len(ids) >= max_tokens and not terminated
+        if reached_max:
+            logger.warning(
+                "[spoken] 撞 max_tokens=%d 仍未出终止符，runtime 补 <|spoken_slot_eos|> 后关 slot；"
+                "已生成文本=%r", max_tokens, self._flush(list(text_ids)) if text_ids else "")
+        self._close_spoken_slot(append_spoken_slot_eos=turn_eos or reached_max)
         audio = self._spoken_audio(tts_results, turn_eos)
         self._current_unit_info.update(
             is_listen=bool(is_listen), is_speaking=bool(is_speaking), is_tts_pad=bool(is_pad),
@@ -1339,7 +1350,8 @@ class FcDuplexCapability:
             spoken_slot_terminated=terminated, spoken_termination_reason=reason,
             spoken_termination_token_id=term_id,
             spoken_slot_unterminated=not terminated,
-            spoken_generation_reached_max_tokens=len(ids) >= max_tokens and not terminated,
+            spoken_generation_reached_max_tokens=reached_max,
+            spoken_slot_eos_appended_by_runtime=reached_max,
             constrained_decoding=constrained.report() if constrained is not None else None,
         )
         text = self._flush(text_ids) if text_ids else ""
@@ -1349,7 +1361,7 @@ class FcDuplexCapability:
             "spoken_turn_eos": bool(turn_eos), "end_of_turn": bool(turn_eos),
             "spoken_slot_terminated": terminated,
             "spoken_slot_unterminated": not terminated,
-            "spoken_generation_reached_max_tokens": len(ids) >= max_tokens and not terminated,
+            "spoken_generation_reached_max_tokens": reached_max,
             "spoken_termination_reason": reason, "spoken_termination_token_id": term_id,
             "cost_llm": time.time() - start, **audio,
         }
