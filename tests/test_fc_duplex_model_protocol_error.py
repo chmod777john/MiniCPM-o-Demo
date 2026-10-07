@@ -12,7 +12,7 @@ from typing import Any
 import pytest
 
 from core.fc_duplex.model_adapter import O45FcDuplexModelAdapter
-from core.fc_duplex.protocol_errors import PROTOCOL_VIOLATIONS, ModelProtocolError
+from core.fc_duplex.protocol_errors import PROTOCOL_VIOLATIONS, ConstrainedDecodingError, ModelProtocolError
 from core.fc_duplex.system_input import FcSystemContentInput
 from core.processors.unified import FcDuplexView
 from core.schemas.fc_duplex import FcDuplexPrepareRequest, FcNonSpokenGenerateRequest
@@ -111,3 +111,32 @@ def test_server_maps_protocol_error_to_distinct_reason_with_full_diagnostic() ->
 def test_protocol_error_is_still_runtime_error_for_old_callers() -> None:
     """继承 RuntimeError：没升级的调用方 `except RuntimeError` 照样接得住。"""
     assert issubclass(ModelProtocolError, RuntimeError)
+
+
+def test_violation_under_constrained_decoding_is_infra_error() -> None:
+    """限制解码下仍出现协议违例 = 框架 bug：改抛 ConstrainedDecodingError（→ backend_error，可重试），
+    原违例的完整诊断放进 context，事后按 infra_kind 检索（用户 2026-10-07 定）。"""
+    model = _FakeFcModel()
+    model.non_spoken_results = [{"token_ids": _ids(model, "<think_end>")}]
+    view = _view(model)
+    # 假模型走的是 O45 adapter（不支持 constrained、会直接拒）；这里只测 view 的错误分类，
+    # 把 adapter 换成「吃掉 policy 后照常生成」的样子，等价于 O5 模型侧放过了一个违例 token。
+    orig = view._adapter.streaming_non_spoken_generate
+    view._adapter.streaming_non_spoken_generate = lambda **kw: orig(**{**kw, "decoding_policy": "raise_protocol_error"})
+    with pytest.raises(ConstrainedDecodingError) as ei:
+        view.streaming_non_spoken_generate(FcNonSpokenGenerateRequest(decoding_policy="constrained_decoding"))
+    diag = ei.value.diagnostic()
+    assert diag["infra_kind"] == "constrained_decoding_protocol_violation"
+    assert diag["context"]["violation"] == "end_without_stream"
+    assert diag["context"]["context"]["step_text"] == "⟦</think>⟧"
+    reason, sdiag = _fatal_reason(ei.value)
+    assert reason == "backend_error" and sdiag == diag
+    json.dumps(sdiag, ensure_ascii=False)
+
+
+def test_violation_under_raise_policy_stays_model_error() -> None:
+    model = _FakeFcModel()
+    model.non_spoken_results = [{"token_ids": _ids(model, "<think_end>")}]
+    view = _view(model)
+    with pytest.raises(ModelProtocolError):
+        view.streaming_non_spoken_generate(FcNonSpokenGenerateRequest(decoding_policy="raise_protocol_error"))

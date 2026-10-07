@@ -108,15 +108,23 @@ def test_unique_token_is_forced_without_sampling(cap, vocab_size):
     assert cd.report()["forced_steps"] == 1
 
 
-def test_desync_falls_back_without_crashing(cap, vocab_size):
-    """推理侧写了状态机不认的东西：本 Session 退回不约束，原因记下来，不抛异常。"""
+def test_desync_raises_infra_error_with_context(cap, vocab_size):
+    """推理侧写了状态机不认的东西 = 框架 bug：抛 ConstrainedDecodingError（服务端按 backend_error 关、
+    评测侧重试），不再悄悄退回不约束（用户 2026-10-07 定）。诊断要能进 session.closed 帧。"""
+    import json
+
+    from core.fc_duplex.protocol_errors import ConstrainedDecodingError
+
     cd = _ConstrainedDecoding(cap, "legacy")
     word = cap._sdk_tokenizer.encode_ordinary("hi")[0]
     ids = _prefix(cap) + [_id(cap, K.SPEAK), word, _id(cap, K.AI_SPOKEN_SLOT_END)]   # 撞 max_tokens 直接关 slot
-    logits = _logits_favoring(vocab_size, word)
-    forced, out = cd.step(ids, logits)
-    assert forced is None and out is logits
-    assert cd.report()["disabled_reason"]
+    with pytest.raises(ConstrainedDecodingError) as ei:
+        cd.step(ids, _logits_favoring(vocab_size, word))
+    diag = ei.value.diagnostic()
+    assert diag["infra_kind"] == "constrained_decoding_desync"
+    assert "AI_SPOKEN_SLOT_END" in diag["detail"]
+    assert diag["context"]["tail_token_ids"] and diag["context"]["fsm_snapshot"]
+    json.dumps(diag, ensure_ascii=False)
 
 
 def test_mask_is_cached_and_cheap(cap, vocab_size):

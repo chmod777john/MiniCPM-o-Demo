@@ -29,7 +29,7 @@ from py_backend.media import decode_audio_base64, decode_frame_base64_list
 from py_backend.voice import resolve_duplex_voice_refs
 from py_backend.fc_duplex_runtime import FcDuplexSessionRuntime, fc_duplex_enabled
 from core.fc_duplex_resume import FcDuplexResumeError
-from core.fc_duplex.protocol_errors import ModelProtocolError
+from core.fc_duplex.protocol_errors import ConstrainedDecodingError, ModelProtocolError
 from py_backend.chat_util import (
     convert_to_model_msgs,
     parse_raw_messages,
@@ -198,6 +198,10 @@ def _fatal_reason(error: BaseException) -> tuple[str, Dict[str, Any]]:
 
     if isinstance(error, ModelProtocolError):
         return "model_protocol_error", error.diagnostic()
+    if isinstance(error, ConstrainedDecodingError):
+        # 限制解码下约束失效 = 框架 bug：按基础设施故障关 Session（评测侧重试），
+        # diagnostic.infra_kind = constrained_decoding_<kind>，事后按它检索（用户 2026-10-07 定）。
+        return "backend_error", error.diagnostic()
     return "backend_error", {"message": str(error)}
 
 

@@ -29,6 +29,7 @@ import soundfile as sf
 import torch
 import torch.nn.functional as F
 
+from core.fc_duplex.protocol_errors import ConstrainedDecodingError
 from core.fc_duplex.system_prefill import (
     FcEmbeddingResizeInfo,
     FcModelPrepareResult,
@@ -124,8 +125,10 @@ class _ConstrainedDecoding:
     mask 按合法集合缓存，每步只有一次张量加法。
 
     推理侧自己写了状态机不认的东西（例如 spoken 撞 ``max_tokens`` 没写终止符就关 slot）时，
-    状态机无法再与序列对齐：本 Session 余下部分退回不约束，原因记在 ``disabled_reason``，
-    并随 unit info 上报 —— 不让基础设施层面的对不齐把一条评测样本整个弄挂。
+    状态机无法再与序列对齐 —— 这是**框架 bug**：直接抛 ``ConstrainedDecodingError``，服务端按
+    ``backend_error``（基础设施故障）关 Session，评测侧重试，事后按 ``infra_kind`` 检索修框架
+    （用户 2026-10-07 定）。🔴 早先这里是「本 Session 余下部分退回不约束」：2026-10-06 cd1005 tau
+    35 次失配里 29 次就这样悄悄不受约束地跑完、只在日志里留一行 warning，另 6 次演变成协议错误。
     """
 
     def __init__(self, capability: "FcDuplexCapability", tts_pad_protocol: str) -> None:
@@ -182,9 +185,10 @@ class _ConstrainedDecoding:
             self.symbolizer.sync(output_ids)
         except O5ProtocolViolation as exc:
             self.disabled_reason = f"{exc.code}: {exc}"
-            logger.warning("[constrained_decoding] 状态机与序列失配，本 Session 余下部分退回不约束：%s",
-                           self.disabled_reason)
-            return None, logits
+            ctx = self._context(output_ids)
+            logger.error("[constrained_decoding] 状态机与序列失配（框架 bug，按 infra 报错）：%s | %s",
+                         self.disabled_reason, ctx)
+            raise ConstrainedDecodingError("desync", self.disabled_reason, context=ctx) from exc
         opts = self.fsm.options()
         forced = opts.forced
         if forced is not None and forced[1] == self._Actor.MODEL:
@@ -192,10 +196,30 @@ class _ConstrainedDecoding:
             return self.vocab.key_to_id[forced[0]], logits
         if not opts.model:
             self.disabled_reason = f"模型解码位置上状态机没有模型可采的 token：{self.fsm.snapshot()}"
-            logger.warning("[constrained_decoding] %s", self.disabled_reason)
-            return None, logits
+            ctx = self._context(output_ids)
+            logger.error("[constrained_decoding] %s | %s", self.disabled_reason, ctx)
+            raise ConstrainedDecodingError("no_model_option", self.disabled_reason, context=ctx)
         self.masked_steps += 1
         return None, logits + self._mask(opts.model, logits)
+
+    def _context(self, output_ids: List[int]) -> dict:
+        """失配定位：状态机停在哪个符号、output_ids 末尾 64 个 token（id + 能解出的 piece）。"""
+        pos = int(getattr(self.symbolizer, "pos", 0))
+        tail = [int(t) for t in output_ids[max(0, pos - 48):pos + 16]]
+        pieces = []
+        for t in tail:
+            try:
+                pieces.append(str(self.vocab.symbol_of(t)))
+            except Exception:
+                pieces.append(None)
+        try:
+            snap = str(self.fsm.snapshot())
+        except Exception as e:  # 定位信息渲染失败不能盖掉原错误
+            snap = f"<snapshot failed: {e}>"
+        return {"fsm_pos": pos, "output_len": len(output_ids), "fsm_snapshot": snap,
+                "tail_token_ids": tail, "tail_symbols": pieces,
+                "forced_steps": self.forced_steps, "masked_steps": self.masked_steps,
+                "tts_pad_protocol": self.tts_pad_protocol}
 
     def report(self) -> dict:
         return {

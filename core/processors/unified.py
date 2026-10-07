@@ -125,7 +125,7 @@ from core.fc_duplex.model_adapter import (
     create_fc_duplex_model_adapter,
 )
 from core.fc_duplex.system_prefill import FcModelPrepareResult
-from core.fc_duplex.protocol_errors import ModelProtocolError
+from core.fc_duplex.protocol_errors import ConstrainedDecodingError, ModelProtocolError
 from collections import deque
 from core.fc_duplex.system_input import (
     FcAudioPathInput,
@@ -1509,7 +1509,7 @@ class FcDuplexView:
         index: int,
         stream: Optional["_FcTextStreamState"],
         emitted_parts: List[str],
-    ) -> ModelProtocolError:
+    ) -> "ModelProtocolError | ConstrainedDecodingError":
         """构造带定位上下文的 ModelProtocolError（调用方 `raise` 它）。
 
         context 里放的都是**模型自己生成的原文**，用于事后定位它为什么违例：
@@ -1565,7 +1565,12 @@ class FcDuplexView:
                 }
         except Exception as exc:  # 定位信息只是锦上添花，渲染失败不能改变错误性质
             ctx["context_render_error"] = f"{type(exc).__name__}: {exc}"
-        return ModelProtocolError(code, message, track=track, token_id=int(token_id), context=ctx)
+        err = ModelProtocolError(code, message, track=track, token_id=int(token_id), context=ctx)
+        if getattr(self, "_decoding_policy", None) == "constrained_decoding":
+            # 限制解码下模型不可能采到违例 token：仍出现 = 框架 bug（约束与这里的校验不一致），
+            # 按基础设施故障报（用户 2026-10-07 定），原违例诊断原样带上供事后定位。
+            return ConstrainedDecodingError("protocol_violation", str(err), context=err.diagnostic())
+        return err
 
     def _semantic_key(self, token_id: int) -> Optional[str]:
         """Resolve a protocol structural token ID to its stable semantic key."""
@@ -2191,6 +2196,7 @@ class FcDuplexView:
         return self._prefill_result(result)
 
     def streaming_spoken_generate(self, request: FcSpokenGenerateRequest) -> FcSpokenGenerateResult:
+        self._decoding_policy = request.decoding_policy
         result = self._adapter.streaming_spoken_generate(
             max_tokens=request.max_tokens,
             decode_mode=request.decode_mode,
@@ -2200,6 +2206,7 @@ class FcDuplexView:
         return self._spoken_result(result)
 
     def streaming_non_spoken_generate(self, request: FcNonSpokenGenerateRequest) -> FcNonSpokenGenerateResult:
+        self._decoding_policy = request.decoding_policy
         result = self._adapter.streaming_non_spoken_generate(
             decode_mode=request.decode_mode,
             max_tokens=request.max_tokens,

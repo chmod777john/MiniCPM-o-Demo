@@ -60,3 +60,33 @@ class ModelProtocolError(RuntimeError):
             "token_id": self.token_id,
             "context": self.context,
         }
+
+
+class ConstrainedDecodingError(RuntimeError):
+    """``decoding_policy=constrained_decoding`` 下约束本身失效 —— **推理框架的 bug，不是模型的错**。
+
+    限制解码下模型采不到违反协议的 token，所以这里出现的任何问题都说明框架写进 KV 的序列
+    与协议状态机对不上（例：2026-10-06 spoken 撞 ``max_tokens`` 没补终止符就关 slot）。
+    用户 2026-10-07 定的口径：**按基础设施故障处理** —— 服务端以 ``reason="backend_error"``
+    关闭 Session，评测侧照常重试；``diagnostic.infra_kind`` 以 ``constrained_decoding_`` 开头，
+    事后按它检索、逐个修框架。
+
+    kind:
+        - ``desync``：状态机与 ``output_ids`` 失配（框架写了状态机不认的东西）；
+        - ``no_model_option``：模型解码位置上状态机给不出任何可采 token；
+        - ``protocol_violation``：仍然出现了协议违例（约束本应挡住，说明约束与解码侧校验不一致）。
+    """
+
+    def __init__(self, kind: str, message: str, *, context: Optional[Dict[str, Any]] = None) -> None:
+        super().__init__(f"[constrained_decoding_{kind}] {message}")
+        self.kind = kind
+        self.detail = message
+        self.context = context or {}
+
+    def diagnostic(self) -> Dict[str, Any]:
+        return {
+            "message": str(self),
+            "infra_kind": f"constrained_decoding_{self.kind}",
+            "detail": self.detail,
+            "context": self.context,
+        }
