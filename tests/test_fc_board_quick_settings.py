@@ -21,11 +21,10 @@ def test_quick_settings_cover_family3_and_family4_system_prefixes() -> None:
         / "fc-board"
         / "fc-board-quick-settings.js"
     )
+    # 必须按真实文件路径 import：这个模块有相对 import（./system-prefixes.js），
+    # 走 data: URL 加载会解析不到同目录的兄弟模块。
     script = f"""
-import fs from 'node:fs';
-const source = fs.readFileSync({json.dumps(str(module_path))}, 'utf8');
-const url = 'data:text/javascript;base64,' + Buffer.from(source).toString('base64');
-const module = await import(url);
+const module = await import({json.dumps(module_path.as_uri())});
 const defaults = {{
   segments: [
     {{kind: 'audio', audio: {{source: 'path', file_path: '/ref.wav'}}}},

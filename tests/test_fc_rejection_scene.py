@@ -264,7 +264,17 @@ console.log(JSON.stringify(m.buildRejectionQuickSettings().get({json.dumps(prese
 """)
     audio_segment, text_segment = sample["system"]["segments"]
     expected_audio = str(REJECTION_ROOT / bundle / audio_segment["audio"]["file_path"])
+    # 盘上 bundle 只有 [参考音频, per-case 正文]；第一段统一前缀由训练侧注入，推理侧必须自己补。
+    export_name = {
+        "rejection_zh": "SYSTEM_PREFIX_ZH_THINK",
+        "rejection_en": "SYSTEM_PREFIX_EN_GENERAL",
+    }[preset_id]
+    prefix = run_node(f"""
+const m = await import({json.dumps(module_url('system-prefixes.js'))});
+console.log(JSON.stringify(m[{json.dumps(export_name)}]));
+""")
     assert preset["segments"] == [
+        {"kind": "text", "text": prefix},
         {"kind": "audio", "audio": {"source": "path", "file_path": expected_audio}},
         {"kind": "text", "text": text_segment["text"]},
     ]
@@ -347,3 +357,28 @@ console.log(JSON.stringify({{
     assert result["quiet3s"] is True   # 还没到 5s
     assert result["spoke9s"] is True   # 已经检测到人声
     assert result["idle9s"] is True    # 没开麦
+
+
+@needs_node
+def test_unified_system_prefixes_match_the_spec_verbatim() -> None:
+    """统一前缀必须与飞书《O5 agentduplex 中统一系统提示词前缀》逐字一致（含结尾换行）。
+
+    来源 https://modelbest.feishu.cn/wiki/Bhsow0q70iV4vokfEMtcIG4wnKb
+    #1 中文 think 通用 / #3 英文通用（rejection 的 think 比例 1.000，英文取通用版）。
+    """
+
+    expected_zh = "你处于双工 Agent 模式，时间轴按一秒一个的 unit 组织。你在 user_audio_slot 中接收当前 unit 的用户语音。若你需要说话，则在 ai_spoken_slot 中作出 speak 决策并生成当前 unit 要说的文本；否则作出 listen 决策。你可以在 ai_non_spoken_slot 中生成 think 或 tool_call 内容；若无额外动作，则作出 no_action 决策。你在 input_event_slot 中接收工具返回结果或其他独立事件信息。使用以下音频中的声音说话。\n"
+    expected_en = "You are operating in duplex Agent mode. The timeline is organized into units of approximately one second. In the user_audio_slot, you receive the user's speech for the current unit. When you need to speak, make a speak decision in the ai_spoken_slot and generate the text to be spoken during the current unit; otherwise, make a listen decision. You may generate think or tool_call content in the ai_non_spoken_slot. If no additional action is needed, make a no_action decision. In the input_event_slot, you receive tool results or other independent event information. Speak using the voice in the following audio.\n"
+    got = run_node(f"""
+const m = await import({json.dumps(module_url('system-prefixes.js'))});
+const b = await import({json.dumps(module_url('fc-board-quick-settings.js'))});
+console.log(JSON.stringify({{
+  zh: m.SYSTEM_PREFIX_ZH_THINK, en: m.SYSTEM_PREFIX_EN_GENERAL,
+  boardSharesZh: b.LATEST_MVP_ZH_PREFIX_TEXT === m.SYSTEM_PREFIX_ZH_THINK,
+}}));
+""")
+    assert got["zh"] == expected_zh
+    assert got["en"] == expected_en
+    assert got["zh"].endswith("\n") and got["en"].endswith("\n")
+    # 画板场景必须共用同一份常量，不另存副本（两处漂移过一次就再也对不上）。
+    assert got["boardSharesZh"] is True
