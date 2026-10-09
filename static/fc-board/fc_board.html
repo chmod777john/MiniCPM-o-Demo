@@ -49,6 +49,11 @@
           <li><span class="k">Checkpoint</span><span class="v" id="kvCkpt">—</span></li>
           <li><span class="k">Tools</span><span class="v" id="kvTools">—</span></li>
         </ul>
+        <!-- 当前加载的模型:完整路径原样展示,可选中复制。使用者要靠它确认跑的是哪个 checkpoint。 -->
+        <details class="cfg-group model-identity" open>
+          <summary>Loaded model <span id="kvProfileId" class="model-profile-id">—</span></summary>
+          <dl id="modelIdentity" class="model-paths"></dl>
+        </details>
       </section>
 
       <!-- Ordered v3 system segments and the independent TTS prompt audio.

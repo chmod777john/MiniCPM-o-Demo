@@ -1288,3 +1288,27 @@ body {
   font-size: 12px;
   line-height: 1.5;
 }
+
+/* 当前加载的模型：完整路径原样展示，长路径换行不截断，可选中复制。 */
+.model-identity > summary { display: flex; gap: 8px; align-items: baseline; }
+.model-profile-id {
+  font-size: 11px;
+  color: #666;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  overflow-wrap: anywhere;
+}
+.model-paths {
+  display: grid;
+  grid-template-columns: 92px 1fr;
+  gap: 2px 8px;
+  margin-top: 6px;
+  font-size: 11px;
+}
+.model-paths dt { color: #888; }
+.model-paths dd {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: #2d2d2d;
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+.model-paths dd.placeholder { grid-column: 1 / -1; color: #999; font-family: inherit; }

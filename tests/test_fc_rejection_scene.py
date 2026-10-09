@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -382,3 +383,64 @@ console.log(JSON.stringify({{
     assert got["zh"].endswith("\n") and got["en"].endswith("\n")
     # 画板场景必须共用同一份常量，不另存副本（两处漂移过一次就再也对不上）。
     assert got["boardSharesZh"] is True
+
+
+def test_defaults_expose_full_model_identity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """/api/fc_board/defaults 必须原样给出当前加载模型的完整路径，不缩写、不省略。"""
+
+    import gateway
+
+    profile = tmp_path / "deployment_profile.json"
+    profile.write_text(
+        json.dumps(
+            {
+                "profile_id": "demo-profile",
+                "model_path": "/user/sunweiyue/models/MiniCPM-o-4_6",
+                "pt_path": "/backup/user/someone/ckpt/iter_500.pt",
+                "backbone_dir": "/backup/user/sunweiyue/delivery/ckpt/iter_500/backbone",
+                "checkpoint_sha256": None,
+                "deployment_mode": "tp2",
+                "sdk_version": "0.0.6a3",
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("FC_DEPLOYMENT_PROFILE", str(profile))
+    monkeypatch.delenv("FC_BOARD_CASE_FOLDER", raising=False)
+
+    identity = asyncio.run(gateway.fc_board_defaults())["model_identity"]
+    assert identity["pt_path"] == "/backup/user/someone/ckpt/iter_500.pt"
+    assert identity["backbone_dir"] == "/backup/user/sunweiyue/delivery/ckpt/iter_500/backbone"
+    assert identity["base_model_path"] == "/user/sunweiyue/models/MiniCPM-o-4_6"
+    assert identity["deployment_mode"] == "tp2"
+    assert identity["sdk_version"] == "0.0.6a3"
+    assert identity["checkpoint_sha256"] is None
+    assert identity["profile_path"] == str(profile)
+
+    # Profile 不可读时不能把整个 defaults 拖垮，各项给 None 即可。
+    monkeypatch.setenv("FC_DEPLOYMENT_PROFILE", str(tmp_path / "missing.json"))
+    degraded = asyncio.run(gateway.fc_board_defaults())["model_identity"]
+    assert degraded["pt_path"] is None and degraded["deployment_mode"] is None
+
+
+@needs_node
+def test_model_identity_rows_cover_every_identity_field(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """前端展示的行必须与后端给出的字段逐一对应 —— 后端新增字段不能悄悄不显示。"""
+
+    import gateway
+
+    monkeypatch.setenv("FC_DEPLOYMENT_PROFILE", str(tmp_path / "missing.json"))
+    backend_fields = set(gateway._fc_deployment_model_identity())
+
+    app = (STATIC / "fc-board-app.js").read_text(encoding="utf-8")
+    block_start = app.index("MODEL_IDENTITY_ROWS = [")
+    block = app[block_start:app.index("];", block_start)]
+    shown = re.findall(r"\['(\w+)', '[^']+'\]", block)
+
+    assert len(shown) == len(set(shown)), f"有重复行: {shown}"
+    assert set(shown) == backend_fields
+    assert '<dl id="modelIdentity"' in (STATIC / "fc_board.html").read_text(encoding="utf-8")

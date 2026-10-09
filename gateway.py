@@ -1674,6 +1674,51 @@ async def fc_rejection_page():
     return _fc_scene_page("speakers")
 
 
+def _fc_deployment_model_identity() -> Dict[str, Any]:
+    """从部署 Profile 读出「现在加载的是哪个模型」,给前端原样展示完整路径。
+
+    返回:
+        含 `pt_path` / `backbone_dir` / `base_model_path` / `checkpoint_sha256` /
+        `deployment_mode` / `sdk_version` / `profile_path` 的字典;Profile 不可读时各项为 None。
+        不做任何缩写或省略 —— 使用者要靠它确认跑的到底是哪个 checkpoint。
+    """
+
+    identity: Dict[str, Any] = {
+        "pt_path": None,
+        "backbone_dir": None,
+        "base_model_path": None,
+        "checkpoint_sha256": None,
+        "deployment_mode": None,
+        "sdk_version": None,
+        "profile_path": os.environ.get("FC_DEPLOYMENT_PROFILE"),
+    }
+    profile_path = identity["profile_path"]
+    if not profile_path or not os.path.isfile(profile_path):
+        return identity
+    try:
+        with open(profile_path, encoding="utf-8") as handle:
+            profile = json.load(handle)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "[fc_board_defaults] failed to read deployment profile %s: %s: %s",
+            profile_path,
+            type(exc).__name__,
+            exc,
+        )
+        return identity
+    identity.update(
+        {
+            "pt_path": profile.get("pt_path"),
+            "backbone_dir": profile.get("backbone_dir"),
+            "base_model_path": profile.get("model_path"),
+            "checkpoint_sha256": profile.get("checkpoint_sha256"),
+            "deployment_mode": profile.get("deployment_mode"),
+            "sdk_version": profile.get("sdk_version"),
+        }
+    )
+    return identity
+
+
 @app.get("/api/fc_board/defaults")
 async def fc_board_defaults():
     """Training-aligned defaults for the FC board API demo."""
@@ -1706,6 +1751,7 @@ async def fc_board_defaults():
             else None
         ),
         "checkpoint_profile_id": os.environ.get("CHECKPOINT_PROFILE_ID"),
+        "model_identity": _fc_deployment_model_identity(),
         # 前端 quick setting id；不属于当前页面场景的 id 由前端回退到该场景默认值。
         "default_quick_setting": os.environ.get("FC_BOARD_DEFAULT_QUICK_SETTING"),
         # 部署的 checkpoint 的 tts_pad 训练口径（legacy / revised）；声明了就覆盖 preset 自带值。

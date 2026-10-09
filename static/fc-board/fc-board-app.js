@@ -104,6 +104,8 @@ const el = {
   ttsPadProtocolView: document.getElementById('ttsPadProtocolView'),
   playbackDelayMs: document.getElementById('playbackDelayMs'),
   micSilenceWarn: document.getElementById('micSilenceWarn'),
+  modelIdentity: document.getElementById('modelIdentity'),
+  kvProfileId: document.getElementById('kvProfileId'),
   aiSpeech: document.getElementById('aiSpeech'),
   nsStream: document.getElementById('nonSpokenStream'),
   kvMode: document.getElementById('kvMode'),
@@ -528,6 +530,34 @@ function applyDefaults(defaults) {
     const names = validatedTools().map(tool => tool?.function?.name || tool?.name || 'tool');
     el.kvTools.textContent = names.length ? names.join(', ') : 'none';
   }
+  renderModelIdentity(defaults);
+}
+
+// 当前加载的模型。路径一律完整展示、不截断 —— 截断会让「到底跑的哪个 ckpt」要靠猜。
+const MODEL_IDENTITY_ROWS = [
+  ['pt_path', 'Checkpoint (PT)'],
+  ['backbone_dir', 'TP2 backbone'],
+  ['base_model_path', 'Base model'],
+  ['checkpoint_sha256', 'SHA256'],
+  ['deployment_mode', 'Deployment'],
+  ['sdk_version', 'SDK'],
+  ['profile_path', 'Profile'],
+];
+
+function renderModelIdentity(defaults) {
+  if (el.kvProfileId) el.kvProfileId.textContent = defaults?.checkpoint_profile_id || '—';
+  if (!el.modelIdentity) return;
+  const identity = defaults?.model_identity;
+  if (!identity) {
+    el.modelIdentity.innerHTML = '<dd class="placeholder">部署 Profile 不可读</dd>';
+    return;
+  }
+  el.modelIdentity.innerHTML = MODEL_IDENTITY_ROWS.map(([key, label]) => {
+    const value = identity[key];
+    const shown = (value === null || value === undefined || value === '') ? '—' : String(value);
+    return `<dt>${escapeHtml(label)}</dt>`
+      + `<dd title="${escapeHtml(shown)}">${escapeHtml(shown)}</dd>`;
+  }).join('');
 }
 
 function selectedQuickSetting() {
