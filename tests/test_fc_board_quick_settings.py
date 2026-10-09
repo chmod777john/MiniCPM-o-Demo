@@ -44,6 +44,7 @@ console.log(JSON.stringify({{
   family4Full: presets.get(module.QUICK_SETTING_0808_FAMILY4_FULL),
   family4Short: presets.get(module.QUICK_SETTING_0808_FAMILY4_SHORT),
   latestMvpZh: presets.get(module.QUICK_SETTING_LATEST_MVP_ZH),
+  latestMvpZhRevised: presets.get(module.QUICK_SETTING_LATEST_MVP_ZH_REVISED),
   latestMvpZhPrefix: module.LATEST_MVP_ZH_PREFIX_TEXT,
   f224: module.F224_REF_AUDIO_PATH,
   family3Prefix: module.SYSALIGN_0807_PREFIX_TEXT,
@@ -146,6 +147,12 @@ console.log(JSON.stringify({{
         "nonSpokenBudgetWhileSpeaking": 25,
         "ttsPadProtocol": "legacy",
     }
+
+    # revised 档与 legacy 档只差 tts_pad 形态：system / TTS prompt / budget 必须逐字相同。
+    revised = result["latestMvpZhRevised"]
+    assert revised["segments"] == latest["segments"]
+    assert revised["ttsPromptAudioPath"] == latest["ttsPromptAudioPath"]
+    assert revised["runtime"] == {**latest["runtime"], "ttsPadProtocol": "revised"}
 
 
 def defaults_for_assertion() -> list[dict[str, str | dict[str, str]]]:

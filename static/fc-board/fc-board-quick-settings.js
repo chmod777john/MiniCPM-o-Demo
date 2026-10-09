@@ -11,6 +11,7 @@ export const QUICK_SETTING_0807_SYSALIGN = '0807_sysalign';
 export const QUICK_SETTING_0808_FAMILY4_FULL = '0808_family4_full';
 export const QUICK_SETTING_0808_FAMILY4_SHORT = '0808_family4_short';
 export const QUICK_SETTING_LATEST_MVP_ZH = 'latest_mvp_zh';
+export const QUICK_SETTING_LATEST_MVP_ZH_REVISED = 'latest_mvp_zh_revised';
 
 export const SYSALIGN_0807_PREFIX_TEXT = [
   '扮演一个具有以上声音特征的助手。请认真、高质量地回复用户的问题。',
@@ -66,6 +67,14 @@ const FAMILY4_RUNTIME = Object.freeze({
 
 const LATEST_MVP_ZH_RUNTIME = FAMILY4_RUNTIME;
 
+// 同一份 system / budget，只有 tts_pad 的 token 形态不同 —— 取决于该 ckpt 的训练数据
+// 是用哪版 SDK tokenize 的：0.0.6a3 及以前 legacy，0.0.6a4 及以后 revised。
+// ⚠️ 不能按 ckpt 目录名的日期推断：0930_final_merge 目录名带 0930，实际是 0.0.6a4 训的。
+const LATEST_MVP_ZH_REVISED_RUNTIME = Object.freeze({
+  ...FAMILY4_RUNTIME,
+  ttsPadProtocol: 'revised',
+});
+
 export function buildBoardQuickSettings(
   defaultSystem,
   defaultTtsPromptAudioPath,
@@ -116,17 +125,25 @@ export function buildBoardQuickSettings(
     ],
     [
       QUICK_SETTING_LATEST_MVP_ZH,
-      {
-        segments: [
-          { kind: 'text', text: LATEST_MVP_ZH_PREFIX_TEXT },
-          { kind: 'audio', audio: { source: 'path', file_path: F224_REF_AUDIO_PATH } },
-          ...cloneSegments(dropLeadingAudio(sourceSegments)),
-        ],
-        ttsPromptAudioPath: F224_REF_AUDIO_PATH,
-        runtime: cloneRuntime(LATEST_MVP_ZH_RUNTIME),
-      },
+      buildLatestMvpZhSetting(sourceSegments, LATEST_MVP_ZH_RUNTIME),
+    ],
+    [
+      QUICK_SETTING_LATEST_MVP_ZH_REVISED,
+      buildLatestMvpZhSetting(sourceSegments, LATEST_MVP_ZH_REVISED_RUNTIME),
     ],
   ]);
+}
+
+function buildLatestMvpZhSetting(sourceSegments, runtime) {
+  return {
+    segments: [
+      { kind: 'text', text: LATEST_MVP_ZH_PREFIX_TEXT },
+      { kind: 'audio', audio: { source: 'path', file_path: F224_REF_AUDIO_PATH } },
+      ...cloneSegments(dropLeadingAudio(sourceSegments)),
+    ],
+    ttsPromptAudioPath: F224_REF_AUDIO_PATH,
+    runtime: cloneRuntime(runtime),
+  };
 }
 
 // 与评测控制台一致：case 的 system 必须是 [audio, task-text...]，换掉首个 audio。
