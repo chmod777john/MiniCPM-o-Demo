@@ -2,12 +2,15 @@
 // 0807 source: Family3 SYS-ALIGN-001.
 // 0808 source: https://modelbest.feishu.cn/wiki/FbgHwNQGaiVtp6kQxqYcpulCnHf
 // Family4 presets prepend their prefix and preserve the case's original segments.
+// latest_mvp_zh source: eval console default preset「最新训练前缀」mvp/zh
+// (http://47.97.67.139:18002/api/tools/eval/presets): [prefix, F224 ref audio] + case[1:].
 
 export const QUICK_SETTING_CUSTOM = 'custom';
 export const QUICK_SETTING_0730 = '0730';
 export const QUICK_SETTING_0807_SYSALIGN = '0807_sysalign';
 export const QUICK_SETTING_0808_FAMILY4_FULL = '0808_family4_full';
 export const QUICK_SETTING_0808_FAMILY4_SHORT = '0808_family4_short';
+export const QUICK_SETTING_LATEST_MVP_ZH = 'latest_mvp_zh';
 
 export const SYSALIGN_0807_PREFIX_TEXT = [
   '扮演一个具有以上声音特征的助手。请认真、高质量地回复用户的问题。',
@@ -31,17 +34,37 @@ export const FAMILY4_0808_FULL_PREFIX_TEXT = [
 
 export const FAMILY4_0808_SHORT_PREFIX_TEXT = '使用以下音频中的声音说话。\n';
 
+// 与 0808 Full 的差别：「按一秒一个」（无「约」）、不分句，且参考音频换成 F224 并紧跟 prefix。
+export const LATEST_MVP_ZH_PREFIX_TEXT = [
+  '你处于双工 Agent 模式，时间轴按一秒一个的 unit 组织。',
+  '你在 user_audio_slot 中接收当前 unit 的用户语音。',
+  '若你需要说话，则在 ai_spoken_slot 中作出 speak 决策并生成当前 unit 要说的文本；',
+  '否则作出 listen 决策。',
+  '你可以在 ai_non_spoken_slot 中生成 think 或 tool_call 内容；',
+  '若无额外动作，则作出 no_action 决策。',
+  '你在 input_event_slot 中接收工具返回结果或其他独立事件信息。',
+  '使用以下音频中的声音说话。\n',
+].join('');
+
+// 训练侧中文 system 参考音频（skill o5-ai-spoken-regulation 的 ref_audio_mapping.json → F224）。
+export const F224_REF_AUDIO_PATH = '/user/sunweiyue/lib/swy-dev/.claude/skills/o5-ai-spoken-regulation/media/ref_audio_in_training_data/MB-HT/ref_minicpm_signature_fix.wav';
+
+// ttsPadProtocol 是 per-ckpt 训练口径：SDK 0.0.6a3 及以前训的 ckpt 一律 legacy。
 const FAMILY3_RUNTIME = Object.freeze({
   nonSpokenScheduling: 'quality',
   nonSpokenBudgetWhileListening: 30,
   nonSpokenBudgetWhileSpeaking: 15,
+  ttsPadProtocol: 'legacy',
 });
 
 const FAMILY4_RUNTIME = Object.freeze({
   nonSpokenScheduling: 'quality',
   nonSpokenBudgetWhileListening: 45,
   nonSpokenBudgetWhileSpeaking: 25,
+  ttsPadProtocol: 'legacy',
 });
+
+const LATEST_MVP_ZH_RUNTIME = FAMILY4_RUNTIME;
 
 export function buildBoardQuickSettings(
   defaultSystem,
@@ -91,7 +114,24 @@ export function buildBoardQuickSettings(
         FAMILY4_RUNTIME,
       ),
     ],
+    [
+      QUICK_SETTING_LATEST_MVP_ZH,
+      {
+        segments: [
+          { kind: 'text', text: LATEST_MVP_ZH_PREFIX_TEXT },
+          { kind: 'audio', audio: { source: 'path', file_path: F224_REF_AUDIO_PATH } },
+          ...cloneSegments(dropLeadingAudio(sourceSegments)),
+        ],
+        ttsPromptAudioPath: F224_REF_AUDIO_PATH,
+        runtime: cloneRuntime(LATEST_MVP_ZH_RUNTIME),
+      },
+    ],
   ]);
+}
+
+// 与评测控制台一致：case 的 system 必须是 [audio, task-text...]，换掉首个 audio。
+function dropLeadingAudio(segments) {
+  return segments[0]?.kind === 'audio' ? segments.slice(1) : segments;
 }
 
 export function cloneQuickSetting(setting) {
@@ -128,6 +168,7 @@ function cloneRuntime(runtime = {}) {
     nonSpokenScheduling: runtime.nonSpokenScheduling,
     nonSpokenBudgetWhileListening: runtime.nonSpokenBudgetWhileListening,
     nonSpokenBudgetWhileSpeaking: runtime.nonSpokenBudgetWhileSpeaking,
+    ttsPadProtocol: runtime.ttsPadProtocol || 'legacy',
   };
 }
 

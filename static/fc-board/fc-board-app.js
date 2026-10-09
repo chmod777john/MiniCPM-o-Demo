@@ -65,6 +65,8 @@ let micPeakDbSinceStart = MIC_METER_MIN_DB;
 let fcBoardDefaults = null;
 let systemSegments = [];
 let quickSettings = new Map();
+// 当前 preset 的 tts_pad 协议口径（per-ckpt，没有 UI 控件，随 preset 一起切换）。
+let ttsPadProtocol = 'legacy';
 let micLiveState = 'idle';
 let streamEventSeq = 0;
 const speechQueue = [];
@@ -465,6 +467,9 @@ function buildSessionInitPayload() {
       non_spoken_budget_while_listening: nonSpokenBudgetWhileListening,
       non_spoken_budget_while_speaking: nonSpokenBudgetWhileSpeaking,
       decode_mode: 'greedy',
+      tts_pad_protocol: ttsPadProtocol,
+      // Demo 部署用协议状态机约束解码（FDB 这类测基本能力的评测才用 raise_protocol_error）。
+      decoding_policy: 'constrained_decoding',
     },
   };
   nsView.setBudgets(nonSpokenBudgetWhileListening, nonSpokenBudgetWhileSpeaking);
@@ -495,7 +500,12 @@ function applyDefaults(defaults) {
     nonSpokenBudgetWhileSpeaking: defaults.non_spoken_budget_while_speaking,
   });
   if (el.checkpointProfileId) el.checkpointProfileId.value = defaults.checkpoint_profile_id || '';
-  applyQuickSetting(QUICK_SETTING_0730);
+  // 部署方按 checkpoint 指定启动 preset，避免默认落到别的训练口径。
+  applyQuickSetting(
+    quickSettings.has(defaults.default_quick_setting)
+      ? defaults.default_quick_setting
+      : QUICK_SETTING_0730,
+  );
   if (el.kvCkpt) el.kvCkpt.textContent = defaults.checkpoint_profile_id || 'No checkpoint profile';
   if (el.kvTools) el.kvTools.textContent = validatedTools().map(tool => tool?.function?.name || tool?.name || 'tool').join(', ');
 }
@@ -558,6 +568,7 @@ function applyQuickSetting(settingId) {
       cloned.runtime.nonSpokenBudgetWhileSpeaking ?? ''
     );
   }
+  ttsPadProtocol = cloned.runtime.ttsPadProtocol;
   if (el.quickSetting) el.quickSetting.value = settingId;
   renderSystemSegments();
 }

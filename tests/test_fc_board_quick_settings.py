@@ -43,6 +43,9 @@ console.log(JSON.stringify({{
   aligned: presets.get(module.QUICK_SETTING_0807_SYSALIGN),
   family4Full: presets.get(module.QUICK_SETTING_0808_FAMILY4_FULL),
   family4Short: presets.get(module.QUICK_SETTING_0808_FAMILY4_SHORT),
+  latestMvpZh: presets.get(module.QUICK_SETTING_LATEST_MVP_ZH),
+  latestMvpZhPrefix: module.LATEST_MVP_ZH_PREFIX_TEXT,
+  f224: module.F224_REF_AUDIO_PATH,
   family3Prefix: module.SYSALIGN_0807_PREFIX_TEXT,
   family4FullPrefix: module.FAMILY4_0808_FULL_PREFIX_TEXT,
   family4ShortPrefix: module.FAMILY4_0808_SHORT_PREFIX_TEXT,
@@ -62,6 +65,7 @@ console.log(JSON.stringify({{
         "nonSpokenScheduling": "quality",
         "nonSpokenBudgetWhileListening": 30,
         "nonSpokenBudgetWhileSpeaking": 15,
+        "ttsPadProtocol": "legacy",
     }
     assert [item["kind"] for item in result["aligned"]["segments"]] == [
         "text",
@@ -85,6 +89,7 @@ console.log(JSON.stringify({{
         "nonSpokenScheduling": "quality",
         "nonSpokenBudgetWhileListening": 30,
         "nonSpokenBudgetWhileSpeaking": 15,
+        "ttsPadProtocol": "legacy",
     }
 
     expected_full_prefix = (
@@ -112,7 +117,35 @@ console.log(JSON.stringify({{
             "nonSpokenScheduling": "quality",
             "nonSpokenBudgetWhileListening": 45,
             "nonSpokenBudgetWhileSpeaking": 25,
+            "ttsPadProtocol": "legacy",
         }
+
+
+    # 最新训练前缀（评测控制台 mvp/zh）：[prefix, F224] 替换 case 首个 audio，任务文本原样保留。
+    assert result["latestMvpZhPrefix"] == (
+        "你处于双工 Agent 模式，时间轴按一秒一个的 unit 组织。"
+        "你在 user_audio_slot 中接收当前 unit 的用户语音。"
+        "若你需要说话，则在 ai_spoken_slot 中作出 speak 决策并生成当前 unit 要说的文本；"
+        "否则作出 listen 决策。"
+        "你可以在 ai_non_spoken_slot 中生成 think 或 tool_call 内容；"
+        "若无额外动作，则作出 no_action 决策。"
+        "你在 input_event_slot 中接收工具返回结果或其他独立事件信息。"
+        "使用以下音频中的声音说话。\n"
+    )
+    assert result["f224"].endswith("/MB-HT/ref_minicpm_signature_fix.wav")
+    latest = result["latestMvpZh"]
+    assert latest["segments"] == [
+        {"kind": "text", "text": result["latestMvpZhPrefix"]},
+        {"kind": "audio", "audio": {"source": "path", "file_path": result["f224"]}},
+        {"kind": "text", "text": "board-task"},
+    ]
+    assert latest["ttsPromptAudioPath"] == result["f224"]
+    assert latest["runtime"] == {
+        "nonSpokenScheduling": "quality",
+        "nonSpokenBudgetWhileListening": 45,
+        "nonSpokenBudgetWhileSpeaking": 25,
+        "ttsPadProtocol": "legacy",
+    }
 
 
 def defaults_for_assertion() -> list[dict[str, str | dict[str, str]]]:

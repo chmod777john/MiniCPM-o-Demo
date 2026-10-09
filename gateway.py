@@ -1693,6 +1693,8 @@ async def fc_board_defaults():
             else None
         ),
         "checkpoint_profile_id": os.environ.get("CHECKPOINT_PROFILE_ID"),
+        # 前端 quick setting id；未知或未设置时前端回退 0730。
+        "default_quick_setting": os.environ.get("FC_BOARD_DEFAULT_QUICK_SETTING"),
         "non_spoken_scheduling": os.environ.get(
             "FC_DUPLEX_NON_SPOKEN_SCHEDULING"
         ),
