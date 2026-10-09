@@ -11,7 +11,16 @@ import { createScene } from './scenes/index.js';
 import { escapeHtml, textFromSteps } from './ui-utils.js';
 
 const streamEvents = new Map();
-const audioPlayer = new AudioPlayer({ outputSampleRate: 24000 });
+// 首包缓冲:SPEAK turn 开始播之前先攒多少音频,用来吸收单 Unit 处理时间的抖动。
+// 600ms 来自实测回放(服务端说话 Unit p90 ≈1.4s > 1s 预算,200ms 吸收不住);可在 Runtime 面板现调。
+const DEFAULT_PLAYBACK_DELAY_MS = 600;
+const audioPlayer = new AudioPlayer({
+  outputSampleRate: 24000,
+  getPlaybackDelayMs: () => {
+    const raw = Number.parseInt(el.playbackDelayMs?.value ?? '', 10);
+    return Number.isFinite(raw) && raw >= 0 ? raw : DEFAULT_PLAYBACK_DELAY_MS;
+  },
+});
 
 let liveClient = null;
 let micProvider = null;
@@ -86,6 +95,7 @@ const el = {
   scenePanelTitle: document.getElementById('scenePanelTitle'),
   scenePanelHint: document.getElementById('scenePanelHint'),
   ttsPadProtocolView: document.getElementById('ttsPadProtocolView'),
+  playbackDelayMs: document.getElementById('playbackDelayMs'),
   aiSpeech: document.getElementById('aiSpeech'),
   nsStream: document.getElementById('nonSpokenStream'),
   kvMode: document.getElementById('kvMode'),

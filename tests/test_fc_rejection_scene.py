@@ -290,3 +290,25 @@ def test_gateway_serves_scene_pages_and_tts_pad_default(monkeypatch: pytest.Monk
     assert defaults["tts_pad_protocol"] == "revised"
     monkeypatch.delenv("FC_DUPLEX_TTS_PAD_PROTOCOL")
     assert asyncio.run(gateway.fc_board_defaults())["tts_pad_protocol"] is None
+
+
+@needs_node
+def test_playback_buffer_default_and_override() -> None:
+    """首包缓冲默认 600ms（实测 200ms 吸收不住单 Unit 抖动），非法输入回退默认值。"""
+
+    import re
+
+    app = (STATIC / "fc-board-app.js").read_text(encoding="utf-8")
+    assert "const DEFAULT_PLAYBACK_DELAY_MS = 600;" in app
+    assert "getPlaybackDelayMs" in app
+    html = (STATIC / "fc_board.html").read_text(encoding="utf-8")
+    assert re.search(r'id="playbackDelayMs"[^>]*value="600"', html)
+
+    # AudioPlayer 在拿不到合法值时必须回退，而不是把 NaN 交给 setTimeout。
+    result = run_node(f"""
+const src = (await import('node:fs')).readFileSync({json.dumps(str(STATIC / 'fc-board-app.js'))}, 'utf8');
+const body = src.match(/getPlaybackDelayMs: \\(\\) => \\{{([\\s\\S]*?)\\n  \\}},/)[1];
+const make = (value) => new Function('el', 'DEFAULT_PLAYBACK_DELAY_MS', body)({{ playbackDelayMs: {{ value }} }}, 600);
+console.log(JSON.stringify({{ ok: make('250'), empty: make(''), bad: make('abc'), negative: make('-5') }}));
+""")
+    assert result == {"ok": 250, "empty": 600, "bad": 600, "negative": 600}
