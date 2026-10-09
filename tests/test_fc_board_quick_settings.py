@@ -17,9 +17,10 @@ def test_quick_settings_cover_family3_and_family4_system_prefixes() -> None:
     project_root = Path(__file__).resolve().parents[1]
     module_path = (
         project_root
-        / "static"
-        / "fc-board"
-        / "fc-board-quick-settings.js"
+        / "demos"
+        / "board"
+        / "web"
+        / "quick-settings.js"
     )
     # 必须按真实文件路径 import：这个模块有相对 import（./system-prefixes.js），
     # 走 data: URL 加载会解析不到同目录的兄弟模块。

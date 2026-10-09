@@ -341,3 +341,34 @@ def case_saver():
     def _create_saver(case_name: str, processor_type: str) -> CaseSaver:
         return CaseSaver(case_name, processor_type)
     return _create_saver
+
+
+# ===== Demo Gallery 前端模块的 node 测试工具（tests/ 与 demos/*/tests/ 共用）=====
+import json as _json
+import shutil as _shutil
+import subprocess as _subprocess
+from pathlib import Path as _Path
+
+PROJECT_ROOT = _Path(__file__).resolve().parents[1]
+
+needs_node = pytest.mark.skipif(_shutil.which("node") is None, reason="node is unavailable")
+
+
+def repo_module_url(repo_relpath: str) -> str:
+    """仓库相对路径 → file:// URL。
+
+    必须按**真实文件路径** import：模块之间有相对 import（demo → ../../../static/...），
+    走 data: URL 加载会解析不到兄弟模块。
+    """
+
+    return (PROJECT_ROOT / repo_relpath).as_uri()
+
+
+def run_node(script: str) -> dict:
+    """在 node 里跑一段 ESM，返回它 console.log 出来的 JSON。"""
+
+    completed = _subprocess.run(
+        ["node", "--no-warnings", "--input-type=module", "--eval", script],
+        check=True, capture_output=True, text=True,
+    )
+    return _json.loads(completed.stdout)

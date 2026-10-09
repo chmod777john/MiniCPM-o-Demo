@@ -91,72 +91,6 @@ from demo_gallery.training_data import (
 logger = logging.getLogger("gateway")
 
 
-_FC_BOARD_CASE_FOLDER_CANDIDATES = [
-    os.environ.get("FC_BOARD_CASE_FOLDER"),
-    "/home/weihongliang/o45_fc_assets/training/delivery_train_data",
-    "/user/weihongliang/o45_fc_assets/training/delivery_train_data",
-]
-
-_FC_BOARD_LIVE_IMAGE_DIR = (
-    Path(__file__).resolve().parent
-    / "demos"
-    / "board"
-    / "tools"
-    / "display_object_on_board"
-    / "live_image_downloads"
-)
-_FC_BOARD_TOOL_SERVICE = None
-
-
-def _fc_board_tool_service():
-    global _FC_BOARD_TOOL_SERVICE
-    if _FC_BOARD_TOOL_SERVICE is None:
-        from demos.board.tools.display_object_on_board.service import (
-            DisplayObjectOnBoardService,
-        )
-
-        _FC_BOARD_TOOL_SERVICE = DisplayObjectOnBoardService(download_dir=_FC_BOARD_LIVE_IMAGE_DIR)
-    return _FC_BOARD_TOOL_SERVICE
-
-
-# Board 的 defaults 逻辑已下沉到 Gallery core（通用部分）+ demos/board（专属部分）。
-# 这里保留同名薄别名，避免现有调用点与测试一次性全改；Step 6 会随旧路由一起删除。
-FcBoardDefaults = TrainingDataDefaults
-_load_fc_board_case_structure = load_training_data_structure
-_default_fc_board_case_path = pick_default_case
-
-
-def _display_object_tool_default() -> OpenAIToolDefinition:
-    """返回 Board 默认工具的 SDK 强类型定义。"""
-
-    return OpenAIToolDefinition(
-        function=OpenAIFunctionDefinition(
-            name="display_object_on_board",
-            description=(
-                "Display a named concrete object on the visual board so the user can see it. "
-                "Use only for concrete, visualizable objects mentioned in user speech."
-            ),
-            parameters={
-                "type": "object",
-                "properties": {"name": {"type": "string"}},
-                "required": ["name"],
-            },
-        )
-    )
-
-
-def _extract_fc_board_defaults_from_case(case_path: str) -> TrainingDataDefaults:
-    """从训练 case 提取 FC Board 使用的 v3 默认值（委派给 Gallery core）。"""
-
-    return extract_defaults_from_case(
-        case_path, fallback_tools=(_display_object_tool_default(),)
-    )
-
-
-def _fc_board_case_folder() -> Optional[str]:
-    return resolve_case_folder(*_FC_BOARD_CASE_FOLDER_CANDIDATES)
-
-
 _optional_environment_number = optional_environment_number
 
 
@@ -1445,14 +1379,6 @@ if os.path.exists(static_dir):
 # 加一个 demo 不改这两行。
 install_gallery(app)
 
-_FC_BOARD_LIVE_IMAGE_DIR.mkdir(parents=True, exist_ok=True)
-app.mount(
-    "/live-image-downloads",
-    StaticFiles(directory=str(_FC_BOARD_LIVE_IMAGE_DIR)),
-    name="fc_board_live_image_downloads",
-)
-
-
 @app.get("/", response_class=HTMLResponse)
 async def index():
     """首页：模式选择（Turn-based / Omni Duplex / Audio Duplex）"""
@@ -1526,112 +1452,6 @@ async def fc_demo_page():
         return FileResponse(page_path)
     return HTMLResponse("<h1>FC Demo</h1><p>Page not found</p>")
 
-
-def _fc_scene_page(scene: str) -> HTMLResponse:
-    """同一份 FC Realtime 页面骨架，通过 <body data-scene> 选择右侧主面板场景（见 static/fc-board/scenes/）。"""
-    page_path = os.path.join(static_dir, "fc-board", "fc_board.html")
-    if not os.path.exists(page_path):
-        return HTMLResponse("<h1>FC Board</h1><p>Page not found</p>")
-    with open(page_path, encoding="utf-8") as handle:
-        html = handle.read()
-    return HTMLResponse(html.replace("<body>", f'<body data-scene="{scene}">', 1))
-
-
-@app.get("/fc_board", response_class=HTMLResponse)
-async def fc_board_page():
-    """FC tool-calling board demo over the formal Realtime API."""
-    return _fc_scene_page("board")
-
-
-@app.get("/fc_rejection", response_class=HTMLResponse)
-async def fc_rejection_page():
-    """Rejection（拒识）demo：无工具，think 里识别到的说话人建卡 / 高亮。"""
-    return _fc_scene_page("speakers")
-
-
-_fc_deployment_model_identity = deployment_model_identity
-
-
-@app.get("/api/fc_board/defaults")
-async def fc_board_defaults():
-    """Training-aligned defaults for the FC board API demo."""
-    case_folder = _fc_board_case_folder()
-    default_case_path = None
-    defaults = FcBoardDefaults(
-        default_system=FcSystemContentInput(
-            tools=[_display_object_tool_default()]
-        )
-    )
-    if case_folder:
-        default_case_path = _default_fc_board_case_path(case_folder)
-        if default_case_path is not None:
-            try:
-                defaults = _extract_fc_board_defaults_from_case(default_case_path)
-            except Exception as exc:  # noqa: BLE001
-                logger.warning(
-                    "[fc_board_defaults] failed to extract defaults from %s: %s: %s",
-                    default_case_path,
-                    type(exc).__name__,
-                    exc,
-                )
-    return {
-        "case_folder": case_folder,
-        "default_case_path": default_case_path,
-        "default_system": defaults.default_system.model_dump(mode="json"),
-        "default_tts_prompt_audio": (
-            defaults.default_tts_prompt_audio.model_dump(mode="json")
-            if defaults.default_tts_prompt_audio is not None
-            else None
-        ),
-        "checkpoint_profile_id": os.environ.get("CHECKPOINT_PROFILE_ID"),
-        "model_identity": _fc_deployment_model_identity(),
-        # 前端 quick setting id；不属于当前页面场景的 id 由前端回退到该场景默认值。
-        "default_quick_setting": os.environ.get("FC_BOARD_DEFAULT_QUICK_SETTING"),
-        # 部署的 checkpoint 的 tts_pad 训练口径（legacy / revised）；声明了就覆盖 preset 自带值。
-        "tts_pad_protocol": os.environ.get("FC_DUPLEX_TTS_PAD_PROTOCOL") or None,
-        "non_spoken_scheduling": os.environ.get(
-            "FC_DUPLEX_NON_SPOKEN_SCHEDULING"
-        ),
-        "non_spoken_budget_while_listening": _optional_environment_number(
-            "FC_DUPLEX_NON_SPOKEN_BUDGET_WHILE_LISTENING",
-            value_type=int,
-        ),
-        "non_spoken_budget_while_speaking": _optional_environment_number(
-            "FC_DUPLEX_NON_SPOKEN_BUDGET_WHILE_SPEAKING",
-            value_type=int,
-        ),
-        "unit_sec": _optional_environment_number(
-            "FC_DUPLEX_UNIT_SEC",
-            value_type=float,
-        ),
-    }
-
-
-@app.post("/api/fc_board/tools/display_object_on_board")
-async def fc_board_display_object_tool(payload: Dict[str, Any] = Body(...)):
-    """Execute the board display tool outside the model runtime."""
-
-    query = str(payload.get("name") or payload.get("query") or "").strip()
-    tool_call_id = payload.get("tool_call_id")
-    if not query:
-        raise HTTPException(status_code=400, detail="display_object_on_board requires name/query")
-
-    from demos.board.tools.display_object_on_board.service import (
-        board_image_result_from_tool_result,
-    )
-
-    result = await asyncio.to_thread(_fc_board_tool_service().search, query)
-    image = board_image_result_from_tool_result(result, tool_call_id=str(tool_call_id or query))
-    image_payload = image.model_dump() if hasattr(image, "model_dump") else image.dict()
-    return {
-        "query": result.query,
-        "image": image_payload,
-        "error": result.error,
-        "tool_response_content": result.tool_response_content,
-    }
-
-
-# ============ Docs Hosting ============
 
 docs_static_dir = os.path.join(static_dir, "docs")
 

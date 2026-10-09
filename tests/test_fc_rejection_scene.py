@@ -12,7 +12,11 @@ from pathlib import Path
 import pytest
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-STATIC = PROJECT_ROOT / "static" / "fc-board"
+CORE = PROJECT_ROOT / "static" / "demo-gallery" / "core"
+SHELL = PROJECT_ROOT / "static" / "demo-gallery" / "shell"
+BOARD_WEB = PROJECT_ROOT / "demos" / "board" / "web"
+REJECTION_WEB = PROJECT_ROOT / "demos" / "rejection" / "web"
+SHELL_HTML = PROJECT_ROOT / "demo_gallery" / "templates" / "shell.html"
 REJECTION_ROOT = Path("/user/sunweiyue/dataset/o5_sdk_training_data/rejection")
 
 needs_node = pytest.mark.skipif(shutil.which("node") is None, reason="node is unavailable")
@@ -31,7 +35,12 @@ def run_node(script: str) -> dict:
 
 
 def module_url(name: str) -> str:
-    return (STATIC / name).as_uri()
+    """共享 core 模块的 file:// URL。"""
+    return (CORE / name).as_uri()
+
+
+def demo_module_url(demo: str, name: str) -> str:
+    return (PROJECT_ROOT / "demos" / demo / "web" / name).as_uri()
 
 
 # 每种训练数据模板各一条（数字换成真实编号）：句子 → (kind, speakerKey, action, reason)
@@ -111,7 +120,7 @@ def test_parser_covers_every_training_template_and_never_flips_while_streaming()
 
     texts = [case[0] for case in THINK_CASES]
     result = run_node(f"""
-const m = await import({json.dumps(module_url('speaker-think-parser.js'))});
+const m = await import({json.dumps(demo_module_url('rejection', 'think-parser.js'))});
 const texts = {json.dumps(texts, ensure_ascii=False)};
 const out = texts.map((text) => {{
   const final = m.parseSpeakerThink(text, {{ final: true }});
@@ -140,7 +149,7 @@ def test_registry_creates_once_highlights_latest_and_merges_streaming_updates() 
     """同一 think 块流式多次 apply 只记一次；新人建卡、老人只刷新；高亮跟随最新识别。"""
 
     result = run_node(f"""
-const m = await import({json.dumps(module_url('speaker-think-parser.js'))});
+const m = await import({json.dumps(demo_module_url('rejection', 'think-parser.js'))});
 const reg = new m.SpeakerRegistry();
 const p = m.parseSpeakerThink;
 reg.apply(p('这是第一个对我说话的人，按照规则，我将这位说话人登记为用户'), {{ unitIndex: 1, blockKey: 1 }});
@@ -175,13 +184,18 @@ console.log(JSON.stringify({{
 
 @needs_node
 def test_speaker_scene_renders_cards_from_think_events_without_tools() -> None:
-    """场景只吃 think 事件：建卡、高亮、未识别 think 进记录；session.init 不带工具。"""
+    """走真实入口：import demos/rejection/web/index.js 的副作用就是自注册。
+
+    场景只吃 think 事件：建卡、高亮、未识别 think 进记录；session.init 不带工具。
+    """
 
     result = run_node(f"""
-const {{ createScene }} = await import({json.dumps(module_url('scenes/index.js'))});
+await import({json.dumps(demo_module_url('rejection', 'index.js'))});
+const reg = await import({json.dumps(module_url('registry.js'))});
+const ids = reg.registeredDemoIds();
 const classes = new Set();
 const stage = {{ innerHTML: '', classList: {{ add: (c) => classes.add(c), remove: (c) => classes.delete(c) }} }};
-const scene = createScene('speakers', {{ stageEl: stage, getClient: () => null }});
+const scene = reg.getRegisteredDemo('rejection').createScene({{ stageEl: stage, getClient: () => null }});
 scene.reset();
 const empty = stage.innerHTML;
 const think = (unit, chunks) => {{
@@ -192,23 +206,23 @@ const think = (unit, chunks) => {{
 think(2, ['这是第一个对我说话的人，', '按照规则，我将这位说话人登记为用户。']);
 think(9, ['这不是用户的声音，是一位新的说话人，', '我记为说话人 1，我不回应。']);
 think(14, ['用户刚才好像', '在问天气。']);
-const html = stage.innerHTML;
-const quick = scene.buildQuickSettings({{}});
 console.log(JSON.stringify({{
-  empty, html, classes: [...classes],
+  ids, empty, html: stage.innerHTML, classes: [...classes],
   tools: scene.tools({{}}),
-  presets: [...quick.keys()],
+  presets: [...scene.buildQuickSettings({{}}).keys()],
   fallback: scene.fallbackQuickSetting,
 }}));
 """)
+    assert result["ids"] == ["rejection"], "入口模块必须且只注册自己"
     assert "先由你开口说第一句" in result["empty"]
     html = result["html"]
     assert html.count('class="speaker-card') == 2
     assert 'data-speaker="speaker:1"' in html
-    assert 'speaker-card is-other active' in html  # 最新识别的是说话人 1
+    assert "speaker-card is-other active" in html  # 最新识别的是说话人 1
     assert "说话人 1" in html and "用户" in html
     assert "未识别的 think" in html and "在问天气" in html
-    assert "speaker-mode" in result["classes"]
+    # 场景不再靠改 stage 的 class 解除骨架布局（speaker-mode 补丁已废），只用通用的 is-empty。
+    assert "speaker-mode" not in result["classes"]
     assert result["tools"] == []
     assert result["presets"] == ["rejection_zh", "rejection_en"]
     assert result["fallback"] == "rejection_zh"
@@ -216,18 +230,23 @@ console.log(JSON.stringify({{
 
 @needs_node
 def test_board_scene_keeps_mvp_presets_and_tools() -> None:
-    """画板场景迁出后行为不变：preset 列表、默认值和工具都与改造前一致。"""
+    """画板场景迁进 demo 文件夹后行为不变：preset 列表、默认值和工具都与改造前一致。"""
 
     result = run_node(f"""
-const {{ createScene }} = await import({json.dumps(module_url('scenes/index.js'))});
+await import({json.dumps(demo_module_url('board', 'index.js'))});
+const reg = await import({json.dumps(module_url('registry.js'))});
 const stage = {{ innerHTML: '', classList: {{ add() {{}}, remove() {{}} }} }};
-const scene = createScene('board', {{ stageEl: stage, getClient: () => null }});
+const scene = reg.getRegisteredDemo('board').createScene({{
+  stageEl: stage, getClient: () => null,
+  api: {{ base: '/api/demos/board', url: (p) => `/api/demos/board/${{p}}` }},
+}});
 const defaults = {{
   default_system: {{ segments: [{{ kind: 'audio', audio: {{ source: 'path', file_path: '/ref.wav' }} }}],
                      tools: [{{ type: 'function', function: {{ name: 'display_object_on_board' }} }}] }},
   non_spoken_budget_while_listening: 45, non_spoken_budget_while_speaking: 25,
 }};
 console.log(JSON.stringify({{
+  ids: reg.registeredDemoIds(),
   options: scene.presetOptions.map((o) => o.id),
   built: [...scene.buildQuickSettings(defaults).keys()],
   tools: scene.tools(defaults).map((t) => t.function.name),
@@ -235,6 +254,7 @@ console.log(JSON.stringify({{
   fallback: scene.fallbackQuickSetting,
 }}));
 """)
+    assert result["ids"] == ["board"]
     assert result["options"] == result["built"]
     assert "latest_mvp_zh_revised" in result["built"]
     assert result["tools"] == ["display_object_on_board"]
@@ -260,7 +280,7 @@ def test_rejection_presets_match_training_data_system(preset_id: str, bundle: st
         if len(row["system"]["segments"]) == 2 and len(row["system"]["segments"][1]["text"]) > 40
     )
     preset = run_node(f"""
-const m = await import({json.dumps(module_url('rejection-quick-settings.js'))});
+const m = await import({json.dumps(demo_module_url('rejection', 'quick-settings.js'))});
 console.log(JSON.stringify(m.buildRejectionQuickSettings().get({json.dumps(preset_id)})));
 """)
     audio_segment, text_segment = sample["system"]["segments"]
@@ -285,22 +305,31 @@ console.log(JSON.stringify(m[{json.dumps(export_name)}]));
     assert preset["runtime"]["nonSpokenBudgetWhileSpeaking"] == sample["unit_policy"]["non_spoken_budgets_while_speaking"][0]
 
 
-def test_gateway_serves_scene_pages_and_tts_pad_default(monkeypatch: pytest.MonkeyPatch) -> None:
-    """同一份页面骨架：/fc_board → board 场景，/fc_rejection → speakers 场景；tts_pad 由部署声明。"""
+def test_gallery_serves_demo_pages_with_injected_entry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """每个 demo 页面都由同一份骨架渲染，注入自己的 data-demo / 入口 URL / 样式。"""
 
     import gateway
+    from fastapi.testclient import TestClient
 
-    board = asyncio.run(gateway.fc_board_page()).body.decode("utf-8")
-    rejection = asyncio.run(gateway.fc_rejection_page()).body.decode("utf-8")
-    assert '<body data-scene="board">' in board
-    assert '<body data-scene="speakers">' in rejection
+    client = TestClient(gateway.app)
+    for demo_id in ("board", "rejection"):
+        page = client.get(f"/demos/{demo_id}").text
+        assert f'<body data-demo="{demo_id}">' in page
+        assert f'/demos/{demo_id}/web/index.js' in page      # 入口被注入
+        assert f'/demos/{demo_id}/web/{demo_id}.css' in page  # 样式被注入
+        assert "gallery-bootstrap" in page
+    # 索引页自动列出全部 demo，新增 demo 不需要改任何页面。
+    index = client.get("/demos").text
+    assert "/demos/board" in index and "/demos/rejection" in index
 
     monkeypatch.setenv("FC_DUPLEX_TTS_PAD_PROTOCOL", "revised")
-    monkeypatch.delenv("FC_BOARD_CASE_FOLDER", raising=False)
-    defaults = asyncio.run(gateway.fc_board_defaults())
-    assert defaults["tts_pad_protocol"] == "revised"
+    from demo_gallery.deployment import gallery_runtime
+
+    assert gallery_runtime()["tts_pad_protocol"] == "revised"
     monkeypatch.delenv("FC_DUPLEX_TTS_PAD_PROTOCOL")
-    assert asyncio.run(gateway.fc_board_defaults())["tts_pad_protocol"] is None
+    assert gallery_runtime()["tts_pad_protocol"] is None
 
 
 @needs_node
@@ -330,7 +359,7 @@ console.log(JSON.stringify({{
     }
 
     # HTML 里 input 的默认值必须与模块常量一致（两处各写 600 → 升级成两处必须相等）。
-    html = (STATIC / "fc_board.html").read_text(encoding="utf-8")
+    html = (SHELL_HTML).read_text(encoding="utf-8")
     shown = re.search(r'id="playbackDelayMs"[^>]*value="(\d+)"', html)
     assert shown and int(shown.group(1)) == got["dflt"]
 
@@ -363,7 +392,7 @@ console.log(JSON.stringify({{
     assert got["atLimit"] is False      # 必须「超过」才提示，等于不提示
     assert got["spoke9s"] is False      # 已经检测到人声
     assert got["idle9s"] is False       # 没开麦
-    assert '<div id="micSilenceWarn"' in (STATIC / "fc_board.html").read_text(encoding="utf-8")
+    assert '<div id="micSilenceWarn"' in (SHELL_HTML).read_text(encoding="utf-8")
 
 
 @needs_node
@@ -378,7 +407,7 @@ def test_unified_system_prefixes_match_the_spec_verbatim() -> None:
     expected_en = "You are operating in duplex Agent mode. The timeline is organized into units of approximately one second. In the user_audio_slot, you receive the user's speech for the current unit. When you need to speak, make a speak decision in the ai_spoken_slot and generate the text to be spoken during the current unit; otherwise, make a listen decision. You may generate think or tool_call content in the ai_non_spoken_slot. If no additional action is needed, make a no_action decision. In the input_event_slot, you receive tool results or other independent event information. Speak using the voice in the following audio.\n"
     got = run_node(f"""
 const m = await import({json.dumps(module_url('system-prefixes.js'))});
-const b = await import({json.dumps(module_url('fc-board-quick-settings.js'))});
+const b = await import({json.dumps(demo_module_url('board', 'quick-settings.js'))});
 console.log(JSON.stringify({{
   zh: m.SYSTEM_PREFIX_ZH_THINK, en: m.SYSTEM_PREFIX_EN_GENERAL,
   boardSharesZh: b.LATEST_MVP_ZH_PREFIX_TEXT === m.SYSTEM_PREFIX_ZH_THINK,
@@ -394,9 +423,9 @@ console.log(JSON.stringify({{
 def test_defaults_expose_full_model_identity(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """/api/fc_board/defaults 必须原样给出当前加载模型的完整路径，不缩写、不省略。"""
+    """部署信息必须原样给出当前加载模型的完整路径，不缩写、不省略。"""
 
-    import gateway
+    from demo_gallery.deployment import deployment_model_identity
 
     profile = tmp_path / "deployment_profile.json"
     profile.write_text(
@@ -414,9 +443,8 @@ def test_defaults_expose_full_model_identity(
         encoding="utf-8",
     )
     monkeypatch.setenv("FC_DEPLOYMENT_PROFILE", str(profile))
-    monkeypatch.delenv("FC_BOARD_CASE_FOLDER", raising=False)
 
-    identity = asyncio.run(gateway.fc_board_defaults())["model_identity"]
+    identity = deployment_model_identity()
     assert identity["pt_path"] == "/backup/user/someone/ckpt/iter_500.pt"
     assert identity["backbone_dir"] == "/backup/user/sunweiyue/delivery/ckpt/iter_500/backbone"
     assert identity["base_model_path"] == "/user/sunweiyue/models/MiniCPM-o-4_6"
@@ -427,7 +455,7 @@ def test_defaults_expose_full_model_identity(
 
     # Profile 不可读时不能把整个 defaults 拖垮，各项给 None 即可。
     monkeypatch.setenv("FC_DEPLOYMENT_PROFILE", str(tmp_path / "missing.json"))
-    degraded = asyncio.run(gateway.fc_board_defaults())["model_identity"]
+    degraded = deployment_model_identity()
     assert degraded["pt_path"] is None and degraded["deployment_mode"] is None
 
 
@@ -440,10 +468,10 @@ def test_model_identity_rows_cover_every_identity_field(
     前端侧直接 import `model-identity.js`，不再从 app.js 正则抠数组字面量。
     """
 
-    import gateway
+    from demo_gallery.deployment import deployment_model_identity
 
     monkeypatch.setenv("FC_DEPLOYMENT_PROFILE", str(tmp_path / "missing.json"))
-    backend_fields = set(gateway._fc_deployment_model_identity())
+    backend_fields = set(deployment_model_identity())
 
     got = run_node(f"""
 const m = await import({json.dumps(module_url('model-identity.js'))});
@@ -458,4 +486,4 @@ console.log(JSON.stringify({{
     assert all(isinstance(label, str) and label for label in got["labels"])
     # 悬停说明只能挂在真实存在的行上。
     assert set(got["hintKeys"]) <= set(got["keys"])
-    assert '<dl id="modelIdentity"' in (STATIC / "fc_board.html").read_text(encoding="utf-8")
+    assert '<dl id="modelIdentity"' in (SHELL_HTML).read_text(encoding="utf-8")

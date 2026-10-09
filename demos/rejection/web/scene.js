@@ -5,13 +5,13 @@ import {
   QUICK_SETTING_REJECTION_ZH,
   REJECTION_PRESET_OPTIONS,
   buildRejectionQuickSettings,
-} from '../rejection-quick-settings.js';
+} from './quick-settings.js';
 import {
   SpeakerRegistry,
   detectThinkLanguage,
   parseSpeakerThink,
-} from '../speaker-think-parser.js';
-import { escapeHtml, textFromSteps } from '../ui-utils.js';
+} from './think-parser.js';
+import { escapeHtml, textFromSteps } from '../../../static/demo-gallery/core/ui-utils.js';
 
 const LABELS = {
   zh: {
@@ -124,8 +124,7 @@ export function createSpeakerScene({ stageEl }) {
     const L = t();
     const speakers = registry.orderedSpeakers();
     if (!speakers.length && !unparsed.length) {
-      stageEl.classList.remove('speaker-mode');
-      stageEl.classList.add('empty-board');
+      stageEl.classList.add('is-empty');
       stageEl.innerHTML = `<div class="empty-state">
         <strong>先由你开口说第一句</strong>（如「小钢炮，我来啦」/「Hi Mini, I'm here」）。<br />
         模型会在你开口约 0.9 秒后，在 think 里把你登记为<b>用户</b>。<br />
@@ -135,9 +134,7 @@ export function createSpeakerScene({ stageEl }) {
       </div>`;
       return;
     }
-    stageEl.classList.remove('empty-board');
-    // .board 默认是画板的 6 列卡片网格；说话人面板自己排版。
-    stageEl.classList.add('speaker-mode');
+    stageEl.classList.remove('is-empty');
 
     const lastEvent = registry.events[registry.events.length - 1] || null;
     const active = registry.activeKey ? registry.speakers.get(registry.activeKey) : null;
@@ -205,8 +202,6 @@ export function createSpeakerScene({ stageEl }) {
   }
 
   return {
-    id: 'speakers',
-    pageTitle: 'MiniCPM-o · Rejection',
     panelTitle: 'Speakers · think 中识别到的说话人',
     panelHint: '新出现的人建卡 · 已登记的人高亮',
     liveStatus: 'Listening via /v1/realtime · 先由你开口登记为用户，再让其他人插话',

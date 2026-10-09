@@ -1,21 +1,18 @@
-import { decodeFileToChunks, float32ToBase64 } from './file-audio-provider.js';
-import { FcRealtimeClient } from './fc-realtime-client.js';
-import { LiveMicProvider } from './live-mic-provider.js';
-import { AudioPlayer } from './audio-player.js';
-import { NsSegmentView } from './ns-segment-view.js';
-import {
-  QUICK_SETTING_CUSTOM,
-  cloneQuickSetting,
-} from './fc-board-quick-settings.js';
-import { createScene } from './scenes/index.js';
-import { DEFAULT_PLAYBACK_DELAY_MS, resolvePlaybackDelayMs } from './playback-policy.js';
-import {
-  MIC_OPENING_SILENCE_LIMIT_MS,
-  MIC_SPEECH_DB,
-  openingSilenceWarning,
-} from './mic-policy.js';
-import { MODEL_IDENTITY_HINTS, MODEL_IDENTITY_ROWS } from './model-identity.js';
-import { escapeHtml, textFromSteps } from './ui-utils.js';
+import { decodeFileToChunks, float32ToBase64 } from '../core/file-audio-provider.js';
+import { FcRealtimeClient } from '../core/realtime-client.js';
+import { LiveMicProvider } from '../core/live-mic-provider.js';
+import { AudioPlayer } from '../core/audio-player.js';
+import { NsSegmentView } from '../core/ns-segment-view.js';
+import { QUICK_SETTING_CUSTOM, cloneQuickSetting } from '../core/quick-settings.js';
+import { getRegisteredDemo } from '../core/registry.js';
+import { normalizeScene } from '../core/scene-contract.js';
+import { DEFAULT_PLAYBACK_DELAY_MS, resolvePlaybackDelayMs } from '../core/playback-policy.js';
+import { MIC_SPEECH_DB, openingSilenceWarning } from '../core/mic-policy.js';
+import { MODEL_IDENTITY_HINTS, MODEL_IDENTITY_ROWS } from '../core/model-identity.js';
+import { escapeHtml, textFromSteps } from '../core/ui-utils.js';
+
+// 后端注入的当前 demo 元信息（入口模块 URL / API 前缀 / 标题）。
+const bootstrap = JSON.parse(document.getElementById('gallery-bootstrap').textContent);
 
 const streamEvents = new Map();
 const audioPlayer = new AudioPlayer({
@@ -95,7 +92,7 @@ const el = {
   streamDialog: document.getElementById('streamDialog'),
   streamModalCount: document.getElementById('streamModalCount'),
   streamModalList: document.getElementById('streamModalList'),
-  board: document.getElementById('board'),
+  stage: document.getElementById('demoStage'),
   pageTitle: document.getElementById('pageTitle'),
   scenePanelTitle: document.getElementById('scenePanelTitle'),
   scenePanelHint: document.getElementById('scenePanelHint'),
@@ -131,11 +128,21 @@ const el = {
 // non-spoken segment 的 3 轨审计视图（think / tool_call 渲染）
 const nsView = new NsSegmentView(el.nsStream);
 
-// 右上主面板由场景负责（画板 / 说话人 …），其余页面骨架共用。见 scenes/index.js。
-const scene = createScene(document.body.dataset.scene || 'board', {
-  stageEl: el.board,
-  getClient: () => liveClient,
-});
+// 动态 import 当前 demo 的入口模块 —— import 的副作用就是自注册（见 core/registry.js）。
+await import(bootstrap.entry);
+
+const demoUrl = (base) => (path) => `${base}/${String(path).replace(/^\//, '')}`;
+const scene = normalizeScene(
+  getRegisteredDemo(bootstrap.demoId).createScene({
+    demoId: bootstrap.demoId,
+    stageEl: el.stage,
+    getClient: () => liveClient,
+    api: { base: bootstrap.api.base, url: demoUrl(bootstrap.api.base) },
+    assets: { base: bootstrap.assetsBase, url: demoUrl(bootstrap.assetsBase) },
+    shell: { setStatus },
+  }),
+  { demoId: bootstrap.demoId, title: bootstrap.title },
+);
 
 initPage();
 
@@ -501,13 +508,13 @@ function buildSessionInitPayload() {
 
 async function loadFcBoardDefaults() {
   try {
-    const response = await fetch('/api/fc_board/defaults', { cache: 'no-store' });
+    const response = await fetch(bootstrap.api.defaults, { cache: 'no-store' });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     fcBoardDefaults = await response.json();
     applyDefaults(fcBoardDefaults);
     setStatus('Click Start to begin.');
   } catch (err) {
-    console.warn('[fc-board] failed to load defaults:', err);
+    console.warn('[gallery] failed to load defaults:', err);
     fcBoardDefaults = null;
     applyDefaults({});
     setStatus('Click Start to begin. Defaults endpoint unavailable; using fallback prompt.');

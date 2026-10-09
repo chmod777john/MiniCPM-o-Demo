@@ -20,7 +20,7 @@ class DisplayObjectOnBoardToolResult(BaseModel):
 
     Args:
         query: 模型 tool call 的 name 字段，既是搜图 query 也是 board 上展示的字段。
-        image_url: 前端可加载的图片 URL（live 命中时是 `/live-image-downloads/...` 静态路径，
+        image_url: 前端可加载的图片 URL（live 命中时是 `/demos/board/tools/.../live_image_downloads/...` 静态路径，
             fallback 是 SVG data URL）。
         source_url: 图片在原搜索源上的页面 URL，前端可加 "查看出处" 链接。
         title: 搜索结果标题，前端可作为悬浮文案；fallback 时同 query。

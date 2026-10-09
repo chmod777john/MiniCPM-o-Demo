@@ -1,12 +1,12 @@
 // MVP 画板场景：display_object_on_board 工具 → 搜图 → 画板卡片 → 回 tool result。
 // 逻辑从 fc-board-app.js 原样迁出，行为不变。
 
-import { BoardState } from '../board-state.js';
+import { BoardState } from './board-state.js';
 import {
   QUICK_SETTING_0730,
   buildBoardQuickSettings,
-} from '../fc-board-quick-settings.js';
-import { escapeHtml } from '../ui-utils.js';
+} from './quick-settings.js';
+import { escapeHtml } from '../../../static/demo-gallery/core/ui-utils.js';
 
 const DEFAULT_SYSTEM_TEXT = `你是一个可以一边听用户说话、一边思考并调用工具的语音助手。用户让你把故事或描述中出现的动物、植物或具体物体放到画板上时，使用 display_object_on_board 工具。不要等用户完全讲完才思考；在你确认具体对象后，可以调用工具把对象放到画板。`;
 
@@ -34,7 +34,7 @@ const PRESET_OPTIONS = [
   { id: 'latest_mvp_zh_revised', label: '最新训练前缀 · MVP 中文 (F224, 45/25, tts_pad revised)' },
 ];
 
-export function createBoardScene({ stageEl, getClient }) {
+export function createBoardScene({ stageEl, getClient, api }) {
   const state = new BoardState({ maxCards: 6 });
 
   function defaultSystem(defaults) {
@@ -56,7 +56,7 @@ export function createBoardScene({ stageEl, getClient }) {
 
   function render() {
     if (!state.cards.length) {
-      stageEl.classList.add('empty-board');
+      stageEl.classList.add('is-empty');
       stageEl.innerHTML = `<div class="empty-state">
         <strong>先说一句指令</strong>（约 6-8 秒），比如：<br />
         <em>「我等下讲讲故事里出现的动物，提到的你就帮我放到画板上。」</em><br />
@@ -66,7 +66,7 @@ export function createBoardScene({ stageEl, getClient }) {
       </div>`;
       return;
     }
-    stageEl.classList.remove('empty-board');
+    stageEl.classList.remove('is-empty');
     stageEl.innerHTML = state.cards.map((card) => {
       const image = card.image?.image_url
         ? `<img src="${escapeHtml(card.image.image_url)}" alt="${escapeHtml(card.query)}" />`
@@ -84,7 +84,7 @@ export function createBoardScene({ stageEl, getClient }) {
   async function executeDisplayObjectOnBoard({ query, toolCallId }) {
     let result;
     try {
-      const response = await fetch('/api/fc_board/tools/display_object_on_board', {
+      const response = await fetch(api.url('tools/display_object_on_board'), {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ name: query, tool_call_id: toolCallId }),
@@ -142,8 +142,6 @@ export function createBoardScene({ stageEl, getClient }) {
   }
 
   return {
-    id: 'board',
-    pageTitle: 'MiniCPM-o · FC Board',
     panelTitle: 'Board · display_object_on_board',
     panelHint: '1 × 6 cards · FIFO',
     liveStatus: 'Listening via /v1/realtime · mention concrete objects for the board',

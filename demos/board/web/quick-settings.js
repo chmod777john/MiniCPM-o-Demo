@@ -1,13 +1,18 @@
-// FC Board quick settings are UI projection templates, not protocol defaults.
+// Board demo 的 quick setting：UI 投影模板，不是协议默认值。
 // 0807 source: Family3 SYS-ALIGN-001.
 // 0808 source: https://modelbest.feishu.cn/wiki/FbgHwNQGaiVtp6kQxqYcpulCnHf
 // Family4 presets prepend their prefix and preserve the case's original segments.
 // latest_mvp_zh source: eval console default preset「最新训练前缀」mvp/zh
 // (http://47.97.67.139:18002/api/tools/eval/presets): [prefix, F224 ref audio] + case[1:].
 
-import { SYSTEM_PREFIX_ZH_THINK } from './system-prefixes.js';
+import {
+  buildPrependedSetting,
+  cloneRuntime,
+  cloneSegments,
+  firstAudioPath,
+} from '../../../static/demo-gallery/core/quick-settings.js';
+import { SYSTEM_PREFIX_ZH_THINK } from '../../../static/demo-gallery/core/system-prefixes.js';
 
-export const QUICK_SETTING_CUSTOM = 'custom';
 export const QUICK_SETTING_0730 = '0730';
 export const QUICK_SETTING_0807_SYSALIGN = '0807_sysalign';
 export const QUICK_SETTING_0808_FAMILY4_FULL = '0808_family4_full';
@@ -143,47 +148,4 @@ function buildLatestMvpZhSetting(sourceSegments, runtime) {
 // 与评测控制台一致：case 的 system 必须是 [audio, task-text...]，换掉首个 audio。
 function dropLeadingAudio(segments) {
   return segments[0]?.kind === 'audio' ? segments.slice(1) : segments;
-}
-
-export function cloneQuickSetting(setting) {
-  return {
-    segments: cloneSegments(setting?.segments || []),
-    ttsPromptAudioPath: setting?.ttsPromptAudioPath || '',
-    runtime: cloneRuntime(setting?.runtime),
-  };
-}
-
-function cloneSegments(segments) {
-  return JSON.parse(JSON.stringify(segments));
-}
-
-function buildPrependedSetting(
-  prefixText,
-  sourceSegments,
-  defaultTtsPromptAudioPath,
-  runtime,
-) {
-  return {
-    segments: [
-      { kind: 'text', text: prefixText },
-      ...cloneSegments(sourceSegments),
-    ],
-    ttsPromptAudioPath:
-      defaultTtsPromptAudioPath || firstAudioPath(sourceSegments),
-    runtime: cloneRuntime(runtime),
-  };
-}
-
-function cloneRuntime(runtime = {}) {
-  return {
-    nonSpokenScheduling: runtime.nonSpokenScheduling,
-    nonSpokenBudgetWhileListening: runtime.nonSpokenBudgetWhileListening,
-    nonSpokenBudgetWhileSpeaking: runtime.nonSpokenBudgetWhileSpeaking,
-    ttsPadProtocol: runtime.ttsPadProtocol || 'legacy',
-  };
-}
-
-function firstAudioPath(segments) {
-  const audio = segments.find((segment) => segment.kind === 'audio');
-  return audio?.audio?.file_path || '';
 }

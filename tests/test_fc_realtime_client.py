@@ -18,8 +18,9 @@ def test_audio_cannot_overtake_session_init() -> None:
     module_path = (
         project_root
         / "static"
-        / "fc-board"
-        / "fc-realtime-client.js"
+        / "demo-gallery"
+        / "core"
+        / "realtime-client.js"
     )
     script = f"""
 import fs from 'node:fs';

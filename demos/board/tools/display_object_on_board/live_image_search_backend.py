@@ -555,7 +555,8 @@ def build_live_result(
     return LiveImageSearchResult(
         query_text=query_text,
         asset_id=asset_id,
-        asset_url=f"/live-image-downloads/{quote(file_name)}",
+        # 静态前缀由 demo 自己的 StaticMount 声明（demos/board/demo.py），与磁盘路径同构。
+        asset_url=f"/demos/board/tools/display_object_on_board/live_image_downloads/{quote(file_name)}",
         local_path=downloaded.file_path,
         source_url=downloaded.candidate.image_url,
         source=downloaded.candidate.source,

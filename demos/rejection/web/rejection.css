@@ -1,1 +1,149 @@
-/* Step 5 会把场景专属样式搬进来（选择器一律 [data-demo="rejection"] 开头）。 */
+
+/* Rejection demo 专属样式。选择器一律以 [data-demo="rejection"] 开头。 */
+[data-demo="rejection"] .stage {
+  display: block;
+  overflow: auto;
+}
+[data-demo="rejection"] .speaker-stage {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 100%;
+}
+[data-demo="rejection"] .speaker-now {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: #f7f7f2;
+  border: 1px solid #e5e5e0;
+  font-size: 13px;
+}
+[data-demo="rejection"] .speaker-now.is-user { background: #eef7ee; border-color: #8cc58c; }
+[data-demo="rejection"] .speaker-now.is-other { background: #fdf2e6; border-color: #e6a85c; }
+[data-demo="rejection"] .speaker-now-label { color: #888; font-size: 12px; }
+[data-demo="rejection"] .speaker-now-action { color: #444; }
+[data-demo="rejection"] .speaker-now-unit { margin-left: auto; color: #999; font-size: 12px; font-variant-numeric: tabular-nums; }
+
+[data-demo="rejection"] .speaker-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 10px;
+}
+[data-demo="rejection"] .speaker-card {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 10px;
+  border-radius: 12px;
+  background: #fff;
+  border: 2px solid #e5e5e0;
+  opacity: 0.72;
+  transition: opacity 0.25s, border-color 0.25s, box-shadow 0.25s;
+}
+[data-demo="rejection"] .speaker-card.active {
+  opacity: 1;
+  animation: rejection-hit 1.2s ease-out;
+}
+[data-demo="rejection"] .speaker-card.is-user.active { border-color: #3f9b3f; box-shadow: 0 0 0 4px rgba(63, 155, 63, 0.18); }
+[data-demo="rejection"] .speaker-card.is-other.active { border-color: #d9822b; box-shadow: 0 0 0 4px rgba(217, 130, 43, 0.18); }
+@keyframes rejection-hit {
+  0% { transform: scale(1.04); }
+  100% { transform: scale(1); }
+}
+[data-demo="rejection"] .speaker-avatar {
+  flex-shrink: 0;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-weight: 700;
+  font-size: 15px;
+  color: #fff;
+  background: #b0b0a8;
+}
+[data-demo="rejection"] .speaker-avatar.small { width: 24px; height: 24px; font-size: 12px; }
+.is-user .speaker-avatar { background: #3f9b3f; }
+.is-other .speaker-avatar { background: #d9822b; }
+[data-demo="rejection"] .speaker-body { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+[data-demo="rejection"] .speaker-body strong { font-size: 14px; }
+[data-demo="rejection"] .speaker-meta { font-size: 11px; color: #888; }
+[data-demo="rejection"] .speaker-action { font-size: 12px; color: #444; }
+[data-demo="rejection"] .speaker-badge {
+  align-self: flex-start;
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 6px;
+  background: #f0f0ea;
+  color: #666;
+}
+[data-demo="rejection"] .speaker-badge.warn { background: #fff4d6; color: #8a6200; }
+
+[data-demo="rejection"] .speaker-log { display: flex; flex-direction: column; gap: 6px; min-height: 0; }
+[data-demo="rejection"] .speaker-log-title { font-size: 12px; color: #888; }
+[data-demo="rejection"] .speaker-log ol { list-style: none; display: flex; flex-direction: column; gap: 4px; }
+[data-demo="rejection"] .speaker-log-row {
+  display: grid;
+  grid-template-columns: 44px 110px 190px 1fr;
+  gap: 8px;
+  align-items: baseline;
+  font-size: 12px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: #fafaf6;
+  border-left: 3px solid #ccc;
+}
+[data-demo="rejection"] .speaker-log-row.is-user { border-left-color: #3f9b3f; }
+[data-demo="rejection"] .speaker-log-row.is-other { border-left-color: #d9822b; }
+[data-demo="rejection"] .speaker-log-row.unparsed { border-left-color: #b33; background: #fdf0f0; }
+[data-demo="rejection"] .speaker-log-row .unit { color: #999; font-variant-numeric: tabular-nums; }
+[data-demo="rejection"] .speaker-log-row .who em { font-style: normal; font-size: 10px; color: #fff; background: #3a7bd5; border-radius: 4px; padding: 0 4px; }
+[data-demo="rejection"] .speaker-log-row .text { color: #777; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+@media (max-width: 900px) {
+  .speaker-log-row { grid-template-columns: 40px 1fr; }
+  .speaker-log-row .what, .speaker-log-row .text { grid-column: 1 / -1; }
+}
+
+/* 开场长静音提示：训练分布外的输入会让模型乱生成，提前告诉使用者。 */
+.mic-silence-warn {
+  margin-top: 8px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #fff4d6;
+  border: 1px solid #e6c15c;
+  color: #8a6200;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+/* 当前加载的模型：完整路径原样展示，长路径换行不截断，可选中复制。 */
+.model-identity > summary { display: flex; gap: 8px; align-items: baseline; }
+.model-profile-id {
+  font-size: 11px;
+  color: #666;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  overflow-wrap: anywhere;
+}
+.model-paths {
+  display: grid;
+  grid-template-columns: 92px 1fr;
+  gap: 2px 8px;
+  margin-top: 6px;
+  font-size: 11px;
+}
+.model-paths dt { color: #888; }
+.model-paths dd {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: #2d2d2d;
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+.model-paths dd.placeholder { grid-column: 1 / -1; color: #999; font-family: inherit; }
+.model-paths dt .hint-mark {
+  display: inline-block;
+  width: 12px; height: 12px; line-height: 12px;
+  text-align: center; border-radius: 50%;
+  background: #ddd; color: #666; font-size: 9px; cursor: help;
+}

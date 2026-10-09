@@ -10,7 +10,7 @@
 import {
   SYSTEM_PREFIX_EN_GENERAL,
   SYSTEM_PREFIX_ZH_THINK,
-} from './system-prefixes.js';
+} from '../../../static/demo-gallery/core/system-prefixes.js';
 
 export const QUICK_SETTING_REJECTION_ZH = 'rejection_zh';
 export const QUICK_SETTING_REJECTION_EN = 'rejection_en';

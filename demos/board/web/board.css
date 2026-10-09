@@ -1,1 +1,90 @@
-/* Step 5 会把场景专属样式搬进来（选择器一律 [data-demo="board"] 开头）。 */
+/* Board demo 专属样式。选择器一律以 [data-demo="board"] 开头，避免污染 shell 与别的 demo。 */
+
+[data-demo="board"] .stage {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  grid-template-rows: 1fr;
+  gap: 10px;
+  flex: 1;
+  min-height: 0;
+}
+
+[data-demo="board"] .stage.is-empty {
+  display: grid;
+  grid-template-columns: 1fr;
+  grid-template-rows: 1fr;
+  place-items: center;
+}
+
+[data-demo="board"] .stage .empty-state {
+  color: #999;
+  font-size: 13px;
+  text-align: center;
+  padding: 24px;
+}
+
+[data-demo="board"] .card {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid #e5e5e0;
+  border-radius: 6px;
+  background: #fafaf5;
+  overflow: hidden;
+  min-height: 0;
+}
+
+.card img,
+[data-demo="board"] .card .placeholder {
+  width: 100%;
+  flex: 1;
+  min-height: 0;
+  object-fit: cover;
+  background: #f0f0eb;
+}
+
+[data-demo="board"] .card .placeholder {
+  display: grid;
+  place-items: center;
+  color: #999;
+  font-size: 11px;
+  font-style: italic;
+}
+
+[data-demo="board"] .card.searching {
+  border-color: #f0d878;
+  background: #fffceb;
+}
+
+[data-demo="board"] .card.searching .placeholder { color: #b8860b; background: #fff8d6; }
+
+[data-demo="board"] .card.error {
+  border-color: #f5b5b5;
+  background: #fff5f5;
+}
+
+[data-demo="board"] .card-body {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px;
+  gap: 8px;
+  border-top: 1px solid #e5e5e0;
+  background: #fff;
+}
+
+[data-demo="board"] .card-body strong {
+  font-size: 12px;
+  color: #2d2d2d;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+[data-demo="board"] .card-body span {
+  font-size: 10px;
+  color: #999;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  flex-shrink: 0;
+}
