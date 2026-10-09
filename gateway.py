@@ -1690,6 +1690,9 @@ def _fc_deployment_model_identity() -> Dict[str, Any]:
         "checkpoint_sha256": None,
         "deployment_mode": None,
         "sdk_version": None,
+        # 训练侧口径:≤0.0.6a3 训的 ckpt 用 legacy,≥0.0.6a4 用 revised。
+        # 与上面的 sdk_version(推理侧装的包)是两回事,放在一起正是为了让人看出差别。
+        "tts_pad_protocol": os.environ.get("FC_DUPLEX_TTS_PAD_PROTOCOL") or None,
         "profile_path": os.environ.get("FC_DEPLOYMENT_PROFILE"),
     }
     profile_path = identity["profile_path"]

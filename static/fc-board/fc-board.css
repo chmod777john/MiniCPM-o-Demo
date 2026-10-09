@@ -1312,3 +1312,9 @@ body {
   user-select: all;
 }
 .model-paths dd.placeholder { grid-column: 1 / -1; color: #999; font-family: inherit; }
+.model-paths dt .hint-mark {
+  display: inline-block;
+  width: 12px; height: 12px; line-height: 12px;
+  text-align: center; border-radius: 50%;
+  background: #ddd; color: #666; font-size: 9px; cursor: help;
+}
