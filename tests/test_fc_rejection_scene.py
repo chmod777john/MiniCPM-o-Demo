@@ -90,6 +90,17 @@ THINK_CASES = [
         "speaker_claims_user", "speaker:1", None, None,
     ),
     ("这不是用户的语音，是一位新的说话人，我记为说话人 2，我不停下。", "new_speaker", "speaker:2", "no_stop", None),
+    (
+        "This is the first person speaking to me, so by the rule, this user is the one I should respond to. "
+        "I need to register them as the user and remember their voice.",
+        "register_user", "user", "respond", "first_speaker",
+    ),
+    # 不是用户但没编号：只在整块结束时判成「其他人（未编号）」，流式前缀一律不判。
+    (
+        "This is not the user's voice. It is a child's voice, so mark it as [Child's voice] and do not respond.",
+        "other_unnumbered", "other", "no_respond", None,
+    ),
+    ("This is the user's voice. Respond normally.", "user", "user", "respond", None),
 ]
 
 

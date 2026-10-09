@@ -17,6 +17,7 @@ const LABELS = {
   zh: {
     user: '用户',
     speaker: (no) => `说话人 ${no}`,
+    other: '其他人（未编号）',
     now: '当前识别',
     nobody: '还没有识别到说话人',
     registeredAt: (unit) => `登记于 Unit ${unit}`,
@@ -43,6 +44,7 @@ const LABELS = {
   en: {
     user: 'User',
     speaker: (no) => `Speaker ${no}`,
+    other: 'Someone else (unnumbered)',
     now: 'Now identified',
     nobody: 'No speaker identified yet',
     registeredAt: (unit) => `registered @ Unit ${unit}`,
@@ -82,11 +84,13 @@ export function createSpeakerScene({ stageEl }) {
   }
 
   function speakerName(speaker) {
-    return speaker.isUser ? t().user : t().speaker(speaker.speakerNo);
+    if (speaker.isUser) return t().user;
+    return speaker.speakerNo === null ? t().other : t().speaker(speaker.speakerNo);
   }
 
   function avatarText(speaker) {
     if (speaker.isUser) return lang === 'zh' ? '用' : 'U';
+    if (speaker.speakerNo === null) return '?';
     return `${lang === 'zh' ? '' : 'S'}${speaker.speakerNo}`;
   }
 

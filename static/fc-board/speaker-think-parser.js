@@ -14,7 +14,9 @@
 //            'new_speaker'         判定为新的干扰说话人，编号 speakerNo
 //            'known_speaker'       判定为已编号的干扰说话人
 //            'speaker_claims_user' 干扰说话人要求成为唯一对象，被拒
-//   speakerKey  'user' 或 'speaker:<N>'
+//            'other_unnumbered'    判定「不是用户」但没给编号（真实模型会写「是孩子的声音」这类训练里
+//                                  没有的说法）；只在整块结束时判，避免流式中途编号还没写出来就误建卡
+//   speakerKey  'user' / 'speaker:<N>' / 'other'
 //   speakerNo   干扰说话人编号（user 为 null）
 //   reason   register_user 时：'first_speaker' | 'requested'
 //   action   'respond' | 'interrupt_listen' | 'backchannel_continue' | 'no_respond' | 'no_stop' | null
@@ -41,7 +43,7 @@ const PATTERNS = {
     noRespond: /不(回应|回复|理会|搭理|作答)/,
   },
   en: {
-    register: /register(?:ed|ing)?\s+(?:this|the)\s+(?:speaker|person)\s+as\s+(?:the\s+)?user/i,
+    register: /register(?:ed|ing)?\s+(?:this\s+\w+|the\s+\w+|them|him|her)\s+as\s+(?:the\s+)?user/i,
     registerRequested: /asked me to (?:talk|speak|respond) only/i,
     user: /^\s*This is (?:still |also )?the user/i,
     notUser: /not the user/i,
@@ -91,6 +93,15 @@ export function parseSpeakerThink(text, { final = false } = {}) {
   if (p.notUser.test(source)) {
     match = source.match(p.speakerNo);
     if (match) kind = p.claim.test(source) ? 'speaker_claims_user' : (p.newSpeaker.test(source) ? 'new_speaker' : 'known_speaker');
+    else if (final) {
+      return {
+        kind: 'other_unnumbered',
+        speakerKey: 'other',
+        speakerNo: null,
+        reason: null,
+        action: otherSpeakerAction(source, p),
+      };
+    }
   } else {
     match = source.match(p.knownLead);
     if (match) kind = p.claim.test(source) ? 'speaker_claims_user' : 'known_speaker';
@@ -114,7 +125,8 @@ function otherSpeakerAction(source, p) {
 
 // 模型在这几类 think 里给说话人建立身份（「要求成为唯一对象」那句可以是该说话人第一次出现，
 // 训练数据里 382 例，它本身就在编号）。
-const MODEL_REGISTERING_KINDS = ['register_user', 'new_speaker', 'speaker_claims_user'];
+// 「其他人（未编号）」没有可以先登记的编号，也不算「未登记就引用」。
+const MODEL_REGISTERING_KINDS = ['register_user', 'new_speaker', 'speaker_claims_user', 'other_unnumbered'];
 
 // 说话人登记表：只由解析结果驱动。新出现的 key 创建，已存在的只刷新「最近识别」。
 export class SpeakerRegistry {
@@ -178,7 +190,8 @@ export class SpeakerRegistry {
   orderedSpeakers() {
     return [...this.speakers.values()].sort((a, b) => {
       if (a.isUser !== b.isUser) return a.isUser ? -1 : 1;
-      return (a.speakerNo ?? 0) - (b.speakerNo ?? 0);
+      // 未编号的「其他人」排在编号说话人之后。
+      return (a.speakerNo ?? Infinity) - (b.speakerNo ?? Infinity);
     });
   }
 }
