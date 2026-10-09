@@ -75,6 +75,7 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
+from demo_gallery import install_gallery
 from demo_gallery.deployment import (
     deployment_model_identity,
     optional_environment_number,
@@ -99,7 +100,7 @@ _FC_BOARD_CASE_FOLDER_CANDIDATES = [
 _FC_BOARD_LIVE_IMAGE_DIR = (
     Path(__file__).resolve().parent
     / "demos"
-    / "fc_board"
+    / "board"
     / "tools"
     / "display_object_on_board"
     / "live_image_downloads"
@@ -110,7 +111,7 @@ _FC_BOARD_TOOL_SERVICE = None
 def _fc_board_tool_service():
     global _FC_BOARD_TOOL_SERVICE
     if _FC_BOARD_TOOL_SERVICE is None:
-        from demos.fc_board.tools.display_object_on_board.service import (
+        from demos.board.tools.display_object_on_board.service import (
             DisplayObjectOnBoardService,
         )
 
@@ -1439,6 +1440,11 @@ static_dir = os.path.join(os.path.dirname(__file__), "static")
 if os.path.exists(static_dir):
     app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
+# ============ Demo Gallery ============
+# demos/ 下每个子包各管各的页面 / 静态资源 / API 前缀；本文件不认识任何具体 demo。
+# 加一个 demo 不改这两行。
+install_gallery(app)
+
 _FC_BOARD_LIVE_IMAGE_DIR.mkdir(parents=True, exist_ok=True)
 app.mount(
     "/live-image-downloads",
@@ -1610,7 +1616,7 @@ async def fc_board_display_object_tool(payload: Dict[str, Any] = Body(...)):
     if not query:
         raise HTTPException(status_code=400, detail="display_object_on_board requires name/query")
 
-    from demos.fc_board.tools.display_object_on_board.service import (
+    from demos.board.tools.display_object_on_board.service import (
         board_image_result_from_tool_result,
     )
 

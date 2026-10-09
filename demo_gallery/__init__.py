@@ -6,6 +6,7 @@
 规范见 ``demos/README.md``。
 """
 
+from demo_gallery.mounting import install_gallery
 from demo_gallery.registry import DemoSpec, StaticMount, demo, registry
 
-__all__ = ["DemoSpec", "StaticMount", "demo", "registry"]
+__all__ = ["DemoSpec", "StaticMount", "demo", "install_gallery", "registry"]
