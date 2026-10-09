@@ -75,6 +75,18 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
+from demo_gallery.deployment import (
+    deployment_model_identity,
+    optional_environment_number,
+)
+from demo_gallery.training_data import (
+    TrainingDataDefaults,
+    extract_defaults_from_case,
+    load_training_data_structure,
+    pick_default_case,
+    resolve_case_folder,
+)
+
 logger = logging.getLogger("gateway")
 
 
@@ -106,13 +118,11 @@ def _fc_board_tool_service():
     return _FC_BOARD_TOOL_SERVICE
 
 
-class FcBoardDefaults(BaseModel):
-    """Board 可编辑的 v3 system 与独立 TTS prompt 默认值。"""
-
-    default_system: FcSystemContentInput = Field(
-        default_factory=FcSystemContentInput
-    )
-    default_tts_prompt_audio: FcAudioPathInput | None = None
+# Board 的 defaults 逻辑已下沉到 Gallery core（通用部分）+ demos/board（专属部分）。
+# 这里保留同名薄别名，避免现有调用点与测试一次性全改；Step 6 会随旧路由一起删除。
+FcBoardDefaults = TrainingDataDefaults
+_load_fc_board_case_structure = load_training_data_structure
+_default_fc_board_case_path = pick_default_case
 
 
 def _display_object_tool_default() -> OpenAIToolDefinition:
@@ -134,160 +144,19 @@ def _display_object_tool_default() -> OpenAIToolDefinition:
     )
 
 
-def _extract_fc_board_defaults_from_case(case_path: str) -> FcBoardDefaults:
-    """从训练 case 提取 FC Board 使用的 Semantic Realtime API v3 默认值。
+def _extract_fc_board_defaults_from_case(case_path: str) -> TrainingDataDefaults:
+    """从训练 case 提取 FC Board 使用的 v3 默认值（委派给 Gallery core）。"""
 
-    参数:
-        case_path: 训练 case JSON 文件路径。
-
-    返回:
-        包含有序 ``default_system`` 与独立
-        ``default_tts_prompt_audio`` 的前端默认值。
-    """
-
-    structure = _load_fc_board_case_structure(case_path)
-
-    data_root = os.path.dirname(case_path)
-    system_segments: list[FcSystemTextInput | FcSystemAudioInput] = []
-    first_system_audio: FcAudioPathInput | None = None
-    for segment in (structure.get("system", {}) or {}).get("segments", []) or []:
-        kind = segment.get("kind")
-        if kind == "text":
-            text = segment.get("text")
-            if isinstance(text, str):
-                system_segments.append(FcSystemTextInput(text=text))
-        elif kind == "audio":
-            file_path = (segment.get("audio") or {}).get("file_path")
-            if isinstance(file_path, str) and file_path:
-                audio_input = FcAudioPathInput(
-                    file_path=os.path.realpath(
-                        os.path.join(data_root, file_path)
-                    )
-                )
-                system_segments.append(FcSystemAudioInput(audio=audio_input))
-                if first_system_audio is None:
-                    first_system_audio = audio_input
-
-    source_system = structure.get("system", {}) or {}
-    tools = source_system.get("tools")
-    if not isinstance(tools, list) or not tools:
-        tools = structure.get("tools")
-    if not isinstance(tools, list) or not tools:
-        typed_tools = [_display_object_tool_default()]
-    else:
-        typed_tools = [
-            OpenAIToolDefinition.model_validate(tool)
-            for tool in tools
-        ]
-
-    source_tts_prompt_audio = structure.get("tts_prompt_audio")
-    tts_file_path = (
-        source_tts_prompt_audio.get("file_path")
-        if isinstance(source_tts_prompt_audio, dict)
-        else None
+    return extract_defaults_from_case(
+        case_path, fallback_tools=(_display_object_tool_default(),)
     )
-    default_tts_prompt_audio: FcAudioPathInput | None = None
-    if isinstance(tts_file_path, str) and tts_file_path:
-        default_tts_prompt_audio = FcAudioPathInput(
-            file_path=os.path.realpath(os.path.join(data_root, tts_file_path))
-        )
-    elif first_system_audio is not None:
-        default_tts_prompt_audio = first_system_audio
-
-    return FcBoardDefaults(
-        default_system=FcSystemContentInput(
-            segments=system_segments,
-            tools=typed_tools,
-        ),
-        default_tts_prompt_audio=default_tts_prompt_audio,
-    )
-
-
-def _load_fc_board_case_structure(case_path: str) -> Dict[str, Any]:
-    """读取单文件 JSON case 或 canonical Bundle 的首条 JSONL。
-
-    参数:
-        case_path: ``*.json`` case 或 ``traindata.jsonl`` 路径。
-
-    返回:
-        一条 TrainingData 的结构化字典。
-    """
-
-    path = Path(case_path)
-    if path.suffix != ".jsonl":
-        with path.open("r", encoding="utf-8") as file:
-            structure = json.load(file)
-    else:
-        structure = None
-        with path.open("r", encoding="utf-8") as file:
-            for raw_line in file:
-                line = raw_line.strip()
-                if line:
-                    structure = json.loads(line)
-                    break
-        if structure is None:
-            raise ValueError(f"TrainingData JSONL 为空: {case_path}")
-    if not isinstance(structure, dict):
-        raise ValueError(f"TrainingData 必须是 JSON object: {case_path}")
-    return structure
-
-
-def _default_fc_board_case_path(case_folder: str) -> str | None:
-    """选择 Board 默认 case，canonical ``traindata.jsonl`` 优先。
-
-    参数:
-        case_folder: TrainingData case 目录或 canonical Bundle 根目录。
-
-    返回:
-        默认 case 路径；目录没有可用 case 时返回 ``None``。
-    """
-
-    training_data_path = Path(case_folder) / "traindata.jsonl"
-    if training_data_path.is_file():
-        return str(training_data_path)
-    cases = sorted(
-        str(path)
-        for path in Path(case_folder).iterdir()
-        if (
-            path.is_file()
-            and path.suffix == ".json"
-            and path.name != "selection_manifest.json"
-        )
-    )
-    return cases[0] if cases else None
 
 
 def _fc_board_case_folder() -> Optional[str]:
-    for candidate in _FC_BOARD_CASE_FOLDER_CANDIDATES:
-        if candidate and os.path.isdir(candidate):
-            return candidate
-    return None
+    return resolve_case_folder(*_FC_BOARD_CASE_FOLDER_CANDIDATES)
 
 
-def _optional_environment_number(
-    name: str,
-    *,
-    value_type: type[int] | type[float],
-) -> int | float | None:
-    """读取部署 Profile 投影的可选数值。
-
-    参数:
-        name: 环境变量名。
-        value_type: 目标数值类型。
-
-    返回:
-        环境变量缺失时返回 None，否则返回目标数值。
-    """
-
-    raw = os.environ.get(name)
-    if raw is None or raw == "":
-        return None
-    try:
-        return value_type(raw)
-    except ValueError as exc:
-        raise RuntimeError(
-            f"{name} must be a valid {value_type.__name__}"
-        ) from exc
+_optional_environment_number = optional_environment_number
 
 
 def _ws_debug_enabled() -> bool:
@@ -1674,52 +1543,7 @@ async def fc_rejection_page():
     return _fc_scene_page("speakers")
 
 
-def _fc_deployment_model_identity() -> Dict[str, Any]:
-    """从部署 Profile 读出「现在加载的是哪个模型」,给前端原样展示完整路径。
-
-    返回:
-        含 `pt_path` / `backbone_dir` / `base_model_path` / `checkpoint_sha256` /
-        `deployment_mode` / `sdk_version` / `profile_path` 的字典;Profile 不可读时各项为 None。
-        不做任何缩写或省略 —— 使用者要靠它确认跑的到底是哪个 checkpoint。
-    """
-
-    identity: Dict[str, Any] = {
-        "pt_path": None,
-        "backbone_dir": None,
-        "base_model_path": None,
-        "checkpoint_sha256": None,
-        "deployment_mode": None,
-        "sdk_version": None,
-        # 训练侧口径:≤0.0.6a3 训的 ckpt 用 legacy,≥0.0.6a4 用 revised。
-        # 与上面的 sdk_version(推理侧装的包)是两回事,放在一起正是为了让人看出差别。
-        "tts_pad_protocol": os.environ.get("FC_DUPLEX_TTS_PAD_PROTOCOL") or None,
-        "profile_path": os.environ.get("FC_DEPLOYMENT_PROFILE"),
-    }
-    profile_path = identity["profile_path"]
-    if not profile_path or not os.path.isfile(profile_path):
-        return identity
-    try:
-        with open(profile_path, encoding="utf-8") as handle:
-            profile = json.load(handle)
-    except Exception as exc:  # noqa: BLE001
-        logger.warning(
-            "[fc_board_defaults] failed to read deployment profile %s: %s: %s",
-            profile_path,
-            type(exc).__name__,
-            exc,
-        )
-        return identity
-    identity.update(
-        {
-            "pt_path": profile.get("pt_path"),
-            "backbone_dir": profile.get("backbone_dir"),
-            "base_model_path": profile.get("model_path"),
-            "checkpoint_sha256": profile.get("checkpoint_sha256"),
-            "deployment_mode": profile.get("deployment_mode"),
-            "sdk_version": profile.get("sdk_version"),
-        }
-    )
-    return identity
+_fc_deployment_model_identity = deployment_model_identity
 
 
 @app.get("/api/fc_board/defaults")
