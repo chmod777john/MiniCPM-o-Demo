@@ -312,3 +312,38 @@ const make = (value) => new Function('el', 'DEFAULT_PLAYBACK_DELAY_MS', body)({{
 console.log(JSON.stringify({{ ok: make('250'), empty: make(''), bad: make('abc'), negative: make('-5') }}));
 """)
     assert result == {"ok": 250, "empty": 600, "bad": 600, "negative": 600}
+
+
+@needs_node
+def test_opening_silence_warning_threshold_matches_training_data() -> None:
+    """开场静音提示的阈值必须对齐训练数据（最长 5s 开口），且只在开麦后无人声时出现。"""
+
+    app = (STATIC / "fc-board-app.js").read_text(encoding="utf-8")
+    assert "const MIC_OPENING_SILENCE_LIMIT_MS = 5000;" in app
+    assert "const MIC_SPEECH_DB = -35;" in app
+    assert '<div id="micSilenceWarn"' in (STATIC / "fc_board.html").read_text(encoding="utf-8")
+
+    result = run_node(f"""
+const src = (await import('node:fs')).readFileSync({json.dumps(str(STATIC / 'fc-board-app.js'))}, 'utf8');
+const body = src.match(/function updateOpeningSilenceWarning\\(\\) \\{{([\\s\\S]*?)\\n\\}}/)[1];
+const run = (state, seen, waitedMs) => {{
+  const warn = {{ hidden: null, textContent: '' }};
+  new Function('el', 'micLiveState', 'micSpeechSeen', 'micLiveStartedAt', 'micPeakDbSinceStart',
+               'MIC_OPENING_SILENCE_LIMIT_MS', 'MIC_SPEECH_DB', 'Date', body)(
+    {{ micSilenceWarn: warn }}, state, seen, 1, -48,
+    5000, -35, {{ now: () => 1 + waitedMs }});
+  return warn;
+}};
+console.log(JSON.stringify({{
+  quiet9s: run('live', false, 9000),
+  quiet3s: run('live', false, 3000).hidden,
+  spoke9s: run('live', true, 9000).hidden,
+  idle9s: run('idle', false, 9000).hidden,
+}}));
+""")
+    assert result["quiet9s"]["hidden"] is False
+    assert "9s" in result["quiet9s"]["textContent"]
+    assert "-48" in result["quiet9s"]["textContent"]
+    assert result["quiet3s"] is True   # 还没到 5s
+    assert result["spoke9s"] is True   # 已经检测到人声
+    assert result["idle9s"] is True    # 没开麦

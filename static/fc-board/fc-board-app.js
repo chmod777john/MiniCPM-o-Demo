@@ -51,7 +51,14 @@ function rmsToDb(rms) {
   return Math.max(MIC_METER_MIN_DB, db);   // 静音底
 }
 
+// 训练数据里「开麦到用户第一次开口」最长 5.0s（rejection zh / mvp 两域各抽 400 条，中位 2.2s）。
+// 超过这个时长还只有环境底噪，就已经在训练分布之外了 —— 实测该 ckpt 会开始胡乱生成
+// （循环复读、在无工具的 preset 里幻觉工具调用）。这里只做提示，不碰送给模型的音频。
+const MIC_OPENING_SILENCE_LIMIT_MS = 5000;
+const MIC_SPEECH_DB = -35;       // 高于它才算「有人在说话」，低于它是底噪
 let micPeakDbSinceStart = MIC_METER_MIN_DB;
+let micLiveStartedAt = 0;
+let micSpeechSeen = false;
 let fcBoardDefaults = null;
 let systemSegments = [];
 let quickSettings = new Map();
@@ -96,6 +103,7 @@ const el = {
   scenePanelHint: document.getElementById('scenePanelHint'),
   ttsPadProtocolView: document.getElementById('ttsPadProtocolView'),
   playbackDelayMs: document.getElementById('playbackDelayMs'),
+  micSilenceWarn: document.getElementById('micSilenceWarn'),
   aiSpeech: document.getElementById('aiSpeech'),
   nsStream: document.getElementById('nonSpokenStream'),
   kvMode: document.getElementById('kvMode'),
@@ -924,14 +932,32 @@ function updateMicLevel(level) {
   // 太狠 / 权限没给 / 硬件哑了）。session peak 让用户一眼就能判断音频真的
   // 有没有进来：peak < -50 dB 基本可以断定是静音。
   if (db > micPeakDbSinceStart) micPeakDbSinceStart = db;
+  if (db >= MIC_SPEECH_DB) micSpeechSeen = true;
   if (el.micLevelText) {
     const inTarget = (db >= MIC_TARGET_LO_DB && db <= MIC_TARGET_HI_DB) ? '✓' : ' ';
     el.micLevelText.textContent = `${db.toFixed(1)} dB ${inTarget}  (peak ${micPeakDbSinceStart.toFixed(1)}, target ${MIC_TARGET_LO_DB}~${MIC_TARGET_HI_DB} ≈ -23 LUFS)`;
+  }
+  updateOpeningSilenceWarning();
+}
+
+function updateOpeningSilenceWarning() {
+  if (!el.micSilenceWarn) return;
+  const waited = micLiveStartedAt ? Date.now() - micLiveStartedAt : 0;
+  const stale = micLiveState === 'live' && !micSpeechSeen && waited > MIC_OPENING_SILENCE_LIMIT_MS;
+  el.micSilenceWarn.hidden = !stale;
+  if (stale) {
+    el.micSilenceWarn.textContent = `⚠️ 已开麦 ${Math.round(waited / 1000)}s 仍未检测到说话声`
+      + `（峰值 ${micPeakDbSinceStart.toFixed(0)} dB，需高于 ${MIC_SPEECH_DB} dB）。`
+      + `训练数据里开场静音最长 5s，超出后模型输出不可预期（会复读或幻觉工具调用）。`
+      + `请现在开口说话，或检查浏览器选的是哪个麦克风输入。`;
   }
 }
 
 function resetMicPeak() {
   micPeakDbSinceStart = MIC_METER_MIN_DB;
+  micLiveStartedAt = Date.now();
+  micSpeechSeen = false;
+  if (el.micSilenceWarn) el.micSilenceWarn.hidden = true;
 }
 
 function updateStats() {

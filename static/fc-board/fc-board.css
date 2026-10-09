@@ -1276,3 +1276,15 @@ body {
   .speaker-log-row { grid-template-columns: 40px 1fr; }
   .speaker-log-row .what, .speaker-log-row .text { grid-column: 1 / -1; }
 }
+
+/* 开场长静音提示：训练分布外的输入会让模型乱生成，提前告诉使用者。 */
+.mic-silence-warn {
+  margin-top: 8px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #fff4d6;
+  border: 1px solid #e6c15c;
+  color: #8a6200;
+  font-size: 12px;
+  line-height: 1.5;
+}
