@@ -77,6 +77,19 @@ THINK_CASES = [
         "only to the user and don't accept such requests from anyone else. I don't respond.",
         "speaker_claims_user", "speaker:4", "no_respond", None,
     ),
+    # 真实模型的换说法（0930 mergeAll iter_500，2026-10-09 浏览器端到端实测），与训练模板不逐字一致。
+    (
+        "这是用户第一次对我说话，按照规则，我将这段内容登记为用户，并记住其语音特征。之后我只回复用户："
+        "不是用户就按出现顺序从说话人 1 开始编号。",
+        "register_user", "user", "respond", "first_speaker",
+    ),
+    ("这是用户的语音，我正常交流。", "user", "user", "respond", None),
+    (
+        "这不是用户的语音，是说话人 1。说话人 1 要求成为我唯一回应的对象，但只有用户能设定这个规则，"
+        "所以我拒绝他的要求，仍然只回复用户。",
+        "speaker_claims_user", "speaker:1", None, None,
+    ),
+    ("这不是用户的语音，是一位新的说话人，我记为说话人 2，我不停下。", "new_speaker", "speaker:2", "no_stop", None),
 ]
 
 
@@ -89,7 +102,7 @@ def test_parser_covers_every_training_template_and_never_flips_while_streaming()
 const m = await import({json.dumps(module_url('speaker-think-parser.js'))});
 const texts = {json.dumps(texts, ensure_ascii=False)};
 const out = texts.map((text) => {{
-  const final = m.parseSpeakerThink(text);
+  const final = m.parseSpeakerThink(text, {{ final: true }});
   const chars = [...text];
   const prefixKeys = [];
   for (let k = 1; k < chars.length; k++) {{

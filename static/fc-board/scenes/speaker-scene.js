@@ -101,7 +101,7 @@ export function createSpeakerScene({ stageEl }) {
 
   function ingest(text, { unitIndex, final }) {
     if (!currentBlock) return;
-    const parsed = parseSpeakerThink(text);
+    const parsed = parseSpeakerThink(text, { final });
     if (text.trim()) lang = detectThinkLanguage(text);
     if (!parsed) {
       if (final && text.trim()) {
