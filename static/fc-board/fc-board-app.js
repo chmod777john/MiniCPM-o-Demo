@@ -1,34 +1,15 @@
-import { BoardState } from './board-state.js';
 import { decodeFileToChunks, float32ToBase64 } from './file-audio-provider.js';
 import { FcRealtimeClient } from './fc-realtime-client.js';
 import { LiveMicProvider } from './live-mic-provider.js';
 import { AudioPlayer } from './audio-player.js';
 import { NsSegmentView } from './ns-segment-view.js';
 import {
-  QUICK_SETTING_0730,
   QUICK_SETTING_CUSTOM,
-  buildBoardQuickSettings,
   cloneQuickSetting,
 } from './fc-board-quick-settings.js';
+import { createScene } from './scenes/index.js';
+import { escapeHtml, textFromSteps } from './ui-utils.js';
 
-const DEFAULT_SYSTEM_TEXT = `你是一个可以一边听用户说话、一边思考并调用工具的语音助手。用户让你把故事或描述中出现的动物、植物或具体物体放到画板上时，使用 display_object_on_board 工具。不要等用户完全讲完才思考；在你确认具体对象后，可以调用工具把对象放到画板。`;
-
-const DISPLAY_OBJECT_TOOL = {
-  type: 'function',
-  function: {
-    name: 'display_object_on_board',
-    description: 'Display a named concrete object on the visual board.',
-    parameters: {
-      type: 'object',
-      properties: {
-        name: { type: 'string', description: 'The object name to display on the board.' },
-      },
-      required: ['name'],
-    },
-  },
-};
-
-const state = new BoardState({ maxCards: 6 });
 const streamEvents = new Map();
 const audioPlayer = new AudioPlayer({ outputSampleRate: 24000 });
 
@@ -101,6 +82,10 @@ const el = {
   streamModalCount: document.getElementById('streamModalCount'),
   streamModalList: document.getElementById('streamModalList'),
   board: document.getElementById('board'),
+  pageTitle: document.getElementById('pageTitle'),
+  scenePanelTitle: document.getElementById('scenePanelTitle'),
+  scenePanelHint: document.getElementById('scenePanelHint'),
+  ttsPadProtocolView: document.getElementById('ttsPadProtocolView'),
   aiSpeech: document.getElementById('aiSpeech'),
   nsStream: document.getElementById('nonSpokenStream'),
   kvMode: document.getElementById('kvMode'),
@@ -128,6 +113,12 @@ const el = {
 // non-spoken segment 的 3 轨审计视图（think / tool_call 渲染）
 const nsView = new NsSegmentView(el.nsStream);
 
+// 右上主面板由场景负责（画板 / 说话人 …），其余页面骨架共用。见 scenes/index.js。
+const scene = createScene(document.body.dataset.scene || 'board', {
+  stageEl: el.board,
+  getClient: () => liveClient,
+});
+
 initPage();
 
 function initPage() {
@@ -135,13 +126,27 @@ function initPage() {
   el.modeBadge.className = 'mode-tag mode-real';
   el.kvMode.textContent = '/v1/realtime?mode=audio';
   el.kvCkpt.textContent = 'No checkpoint';
-  el.kvTools.textContent = DISPLAY_OBJECT_TOOL.function.name;
+  document.title = scene.pageTitle;
+  if (el.pageTitle) el.pageTitle.textContent = scene.pageTitle;
+  if (el.scenePanelTitle) el.scenePanelTitle.textContent = scene.panelTitle;
+  if (el.scenePanelHint) el.scenePanelHint.textContent = scene.panelHint;
+  renderQuickSettingOptions();
   applyDefaults({});
   setWsState('idle');
   setMicLiveState('idle');
   setStatus('Loading defaults…');
-  renderBoard();
+  scene.render();
   loadFcBoardDefaults();
+}
+
+function renderQuickSettingOptions() {
+  if (!el.quickSetting) return;
+  el.quickSetting.innerHTML = [
+    ...scene.presetOptions,
+    { id: QUICK_SETTING_CUSTOM, label: 'Custom' },
+  ].map((option) => (
+    `<option value="${escapeHtml(option.id)}">${escapeHtml(option.label)}</option>`
+  )).join('');
 }
 
 el.addTextSegment?.addEventListener('click', () => {
@@ -250,7 +255,7 @@ el.startMicLive.addEventListener('click', async () => {
     micProvider = createMicProvider(liveClient);
     await micProvider.start();
     setMicLiveState('live');
-    setStatus('Listening via /v1/realtime · mention concrete objects for the board');
+    setStatus(scene.liveStatus);
   } catch (err) {
     setStatus(`Mic live error: ${err.message}`);
     stopMicLive('error');
@@ -492,56 +497,24 @@ async function loadFcBoardDefaults() {
 }
 
 function applyDefaults(defaults) {
-  const defaultSystem = defaultSystemFromDefaults(defaults);
-  const defaultTtsPath = ttsPromptAudioPathFromDefaults(defaults);
-  quickSettings = buildBoardQuickSettings(defaultSystem, defaultTtsPath, {
-    nonSpokenScheduling: defaults.non_spoken_scheduling,
-    nonSpokenBudgetWhileListening: defaults.non_spoken_budget_while_listening,
-    nonSpokenBudgetWhileSpeaking: defaults.non_spoken_budget_while_speaking,
-  });
+  quickSettings = scene.buildQuickSettings(defaults);
   if (el.checkpointProfileId) el.checkpointProfileId.value = defaults.checkpoint_profile_id || '';
-  // 部署方按 checkpoint 指定启动 preset，避免默认落到别的训练口径。
+  // 部署方按 checkpoint 指定启动 preset；不属于本场景的 preset id 回退到场景自己的默认值。
   applyQuickSetting(
     quickSettings.has(defaults.default_quick_setting)
       ? defaults.default_quick_setting
-      : QUICK_SETTING_0730,
+      : scene.fallbackQuickSetting,
   );
   if (el.kvCkpt) el.kvCkpt.textContent = defaults.checkpoint_profile_id || 'No checkpoint profile';
-  if (el.kvTools) el.kvTools.textContent = validatedTools().map(tool => tool?.function?.name || tool?.name || 'tool').join(', ');
-}
-
-function fallbackSystem() {
-  return {
-    segments: [{ kind: 'text', text: DEFAULT_SYSTEM_TEXT }],
-    tools: [DISPLAY_OBJECT_TOOL],
-  };
-}
-
-function defaultSystemFromDefaults(defaults) {
-  const system = defaults?.default_system;
-  if (!system || !Array.isArray(system.segments) || !Array.isArray(system.tools)) {
-    return fallbackSystem();
+  if (el.kvTools) {
+    const names = validatedTools().map(tool => tool?.function?.name || tool?.name || 'tool');
+    el.kvTools.textContent = names.length ? names.join(', ') : 'none';
   }
-  return system;
-}
-
-function defaultSystem() {
-  return defaultSystemFromDefaults(fcBoardDefaults);
-}
-
-function ttsPromptAudioPathFromDefaults(defaults) {
-  const audio = defaults?.default_tts_prompt_audio;
-  if (audio?.source !== 'path' || typeof audio.file_path !== 'string') return '';
-  return audio.file_path;
-}
-
-function defaultTtsPromptAudioPath() {
-  return ttsPromptAudioPathFromDefaults(fcBoardDefaults);
 }
 
 function selectedQuickSetting() {
   const selected = el.quickSetting?.value;
-  return quickSettings.has(selected) ? selected : QUICK_SETTING_0730;
+  return quickSettings.has(selected) ? selected : scene.fallbackQuickSetting;
 }
 
 function applyQuickSetting(settingId) {
@@ -568,7 +541,9 @@ function applyQuickSetting(settingId) {
       cloned.runtime.nonSpokenBudgetWhileSpeaking ?? ''
     );
   }
-  ttsPadProtocol = cloned.runtime.ttsPadProtocol;
+  // tts_pad 形态是 checkpoint 的训练口径：部署方声明了就以部署为准，否则用 preset 自带的。
+  ttsPadProtocol = fcBoardDefaults?.tts_pad_protocol || cloned.runtime.ttsPadProtocol || 'legacy';
+  if (el.ttsPadProtocolView) el.ttsPadProtocolView.value = ttsPadProtocol;
   if (el.quickSetting) el.quickSetting.value = settingId;
   renderSystemSegments();
 }
@@ -578,7 +553,7 @@ function markQuickSettingCustom() {
 }
 
 function validatedTools() {
-  const tools = defaultSystem().tools;
+  const tools = scene.tools(fcBoardDefaults || {});
   if (!Array.isArray(tools)) throw new Error('System tools must be an array');
   return JSON.parse(JSON.stringify(tools));
 }
@@ -679,14 +654,17 @@ function applyApiEvent(event) {
       return;
     case 'response.think.begin':
       nsView.beginSegment('think', event.unit_index);
+      scene.onThinkBegin(event);
       return;
     case 'response.think.delta':
       generationStepCount += (Array.isArray(event.steps) ? event.steps.length : 0);
       nsView.appendSteps(event.unit_index, event.steps);
+      scene.onThinkDelta(event);
       updateStats();
       return;
     case 'response.think.end':
       nsView.endSegment('think', event.unit_index, { fullText: event.full_text });
+      scene.onThinkEnd(event);
       return;
     case 'response.tool_call.begin':
       nsView.beginSegment('tool_call', event.unit_index, { toolCallId: event.tool_call_id });
@@ -705,13 +683,6 @@ function applyApiEvent(event) {
     default:
       return;
   }
-}
-
-function textFromSteps(steps) {
-  return (Array.isArray(steps) ? steps : [])
-    .filter((step) => step?.kind === 'text')
-    .map((step) => step.text || '')
-    .join('');
 }
 
 function handleSpokenDelta(event) {
@@ -772,86 +743,8 @@ function handleDebugEvent(event) {
 }
 
 function handleToolCallDone(event) {
-  const call = event.call || {};
   nsView.endSegment('tool_call', event.unit_index, { fullText: event.full_text || event.error || '' });
-  if (call.name !== 'display_object_on_board' || event.error) return;
-  const args = parseArguments(call.arguments);
-  const query = String(args.name || '').trim();
-  if (!query) return;
-  state.upsert({
-    card_id: cardIdFor(event.tool_call_id),
-    tool_call_id: event.tool_call_id,
-    query,
-    status: 'searching',
-  });
-  renderBoard();
-  executeDisplayObjectOnBoard({ query, toolCallId: event.tool_call_id });
-}
-
-async function executeDisplayObjectOnBoard({ query, toolCallId }) {
-  let result;
-  try {
-    const response = await fetch('/api/fc_board/tools/display_object_on_board', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ name: query, tool_call_id: toolCallId }),
-    });
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    result = await response.json();
-  } catch (err) {
-    result = {
-      query,
-      image: {
-        query,
-        asset_id: `client-tool:${toolCallId || query}`,
-        image_url: placeholderImageDataUrl(query),
-        source_url: null,
-        title: query,
-        elapsed_ms: 0,
-        error: String(err?.message || err),
-      },
-      error: String(err?.message || err),
-      tool_response_content: JSON.stringify({
-        status: 'displayed',
-        name: query,
-        reason: '已在画板显示该对象。',
-      }),
-    };
-  }
-  state.upsert({
-    card_id: cardIdFor(toolCallId),
-    tool_call_id: toolCallId,
-    query: result.query || query,
-    status: result.error ? 'error' : 'ready',
-    image: result.image,
-    error: result.error,
-  });
-  renderBoard();
-  sendDisplayObjectToolResult({
-    toolCallId,
-    query: result.query || query,
-    content: result.tool_response_content,
-  });
-}
-
-function sendDisplayObjectToolResult({ toolCallId, query, content }) {
-  if (!liveClient || !toolCallId) return;
-  let payload = content || {
-    status: 'displayed',
-    name: query,
-    reason: '已在画板显示该对象。',
-  };
-  if (typeof payload === 'string') {
-    try { payload = JSON.parse(payload); } catch (_) { payload = { text: payload }; }
-  }
-  liveClient.sendToolResult({
-    toolCallId,
-    content: payload,
-  });
-}
-
-function cardIdFor(toolCallId) {
-  return `card:${toolCallId || 'pending'}`;
+  scene.onToolCallDone(event);
 }
 
 function handleSpokenOutput({ isListen, isSpeaking, audioBase64, sampleRate }) {
@@ -867,33 +760,6 @@ function handleSpokenOutput({ isListen, isSpeaking, audioBase64, sampleRate }) {
     updateStats();
     appendAiAudio(aiAudioCount, audioBase64, sampleRate || 24000);
   }
-}
-
-function renderBoard() {
-  if (!state.cards.length) {
-    el.board.classList.add('empty-board');
-    el.board.innerHTML = `<div class="empty-state">
-      <strong>先说一句指令</strong>（约 6-8 秒），比如：<br />
-      <em>「我等下讲讲故事里出现的动物，提到的你就帮我放到画板上。」</em><br />
-      <em>「等下我描述房间里的东西，提到的你就帮我展示出来。」</em><br />
-      等 AI 应一声之后，再自由描述具体物体。<br />
-      <span style="color:#999;font-size:11px">句式仿训练数据：\`等下我/我等下…提到 XX 你就 放到画板上\`</span>
-    </div>`;
-    return;
-  }
-  el.board.classList.remove('empty-board');
-  el.board.innerHTML = state.cards.map((card) => {
-    const image = card.image?.image_url
-      ? `<img src="${escapeHtml(card.image.image_url)}" alt="${escapeHtml(card.query)}" />`
-      : `<div class="placeholder">${card.status === 'searching' ? '搜图中…' : (card.error || '—')}</div>`;
-    return `<article class="card ${escapeHtml(card.status)}" title="${escapeHtml(card.tool_call_id || '')}">
-      ${image}
-      <div class="card-body">
-        <strong>${escapeHtml(card.query)}</strong>
-        <span>${escapeHtml(card.status)}</span>
-      </div>
-    </article>`;
-  }).join('');
 }
 
 function enqueueSpeech(text, audioMs) {
@@ -978,12 +844,10 @@ function releaseMicLive(finalState = 'closed') {
 }
 
 function clearViews() {
-  state.cards = [];
+  scene.reset();
   nsView.reset();
   el.timeline.innerHTML = '';
   el.streamFeed.innerHTML = '<div class="placeholder">还没有数据流</div>';
-  el.board.innerHTML = '';
-  renderBoard();
   speechQueue.length = 0;
   if (speechDrainer) { clearTimeout(speechDrainer); speechDrainer = null; }
   el.aiSpeech.innerHTML = '<div class="placeholder">AI 还没开口</div>';
@@ -1254,24 +1118,6 @@ function prettyJson(value) {
   try { return JSON.stringify(value, null, 2); } catch (_) { return String(value); }
 }
 
-function parseArguments(value) {
-  if (!value) return {};
-  if (typeof value === 'object') return value;
-  try { return JSON.parse(value); } catch (_) { return {}; }
-}
-
-function placeholderImageDataUrl(label) {
-  const safeLabel = escapeHtml(label || 'object');
-  const svg = `
-    <svg xmlns="http://www.w3.org/2000/svg" width="640" height="420" viewBox="0 0 640 420">
-      <rect width="640" height="420" fill="#0f172a"/>
-      <rect x="42" y="42" width="556" height="336" rx="18" fill="#1e293b" stroke="#38bdf8" stroke-width="3"/>
-      <text x="320" y="200" fill="#e2e8f0" font-family="sans-serif" font-size="36" font-weight="700" text-anchor="middle">${safeLabel}</text>
-      <text x="320" y="250" fill="#94a3b8" font-family="sans-serif" font-size="20" text-anchor="middle">display_object_on_board</text>
-    </svg>`;
-  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
-}
-
 function float32Base64ToWavBase64(audioBase64, sampleRate) {
   const binary = atob(audioBase64);
   const bytes = new Uint8Array(binary.length);
@@ -1318,13 +1164,4 @@ function formatMaybeNumber(value) {
   if (value === null || value === undefined || value === '') return '—';
   if (typeof value === 'number' && Number.isFinite(value)) return String(Math.round(value));
   return String(value);
-}
-
-function escapeHtml(value) {
-  return String(value ?? '')
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;')
-    .replaceAll("'", '&#039;');
 }

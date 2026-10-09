@@ -1652,13 +1652,26 @@ async def fc_demo_page():
     return HTMLResponse("<h1>FC Demo</h1><p>Page not found</p>")
 
 
+def _fc_scene_page(scene: str) -> HTMLResponse:
+    """同一份 FC Realtime 页面骨架，通过 <body data-scene> 选择右侧主面板场景（见 static/fc-board/scenes/）。"""
+    page_path = os.path.join(static_dir, "fc-board", "fc_board.html")
+    if not os.path.exists(page_path):
+        return HTMLResponse("<h1>FC Board</h1><p>Page not found</p>")
+    with open(page_path, encoding="utf-8") as handle:
+        html = handle.read()
+    return HTMLResponse(html.replace("<body>", f'<body data-scene="{scene}">', 1))
+
+
 @app.get("/fc_board", response_class=HTMLResponse)
 async def fc_board_page():
     """FC tool-calling board demo over the formal Realtime API."""
-    page_path = os.path.join(static_dir, "fc-board", "fc_board.html")
-    if os.path.exists(page_path):
-        return FileResponse(page_path)
-    return HTMLResponse("<h1>FC Board</h1><p>Page not found</p>")
+    return _fc_scene_page("board")
+
+
+@app.get("/fc_rejection", response_class=HTMLResponse)
+async def fc_rejection_page():
+    """Rejection（拒识）demo：无工具，think 里识别到的说话人建卡 / 高亮。"""
+    return _fc_scene_page("speakers")
 
 
 @app.get("/api/fc_board/defaults")
@@ -1693,8 +1706,10 @@ async def fc_board_defaults():
             else None
         ),
         "checkpoint_profile_id": os.environ.get("CHECKPOINT_PROFILE_ID"),
-        # 前端 quick setting id；未知或未设置时前端回退 0730。
+        # 前端 quick setting id；不属于当前页面场景的 id 由前端回退到该场景默认值。
         "default_quick_setting": os.environ.get("FC_BOARD_DEFAULT_QUICK_SETTING"),
+        # 部署的 checkpoint 的 tts_pad 训练口径（legacy / revised）；声明了就覆盖 preset 自带值。
+        "tts_pad_protocol": os.environ.get("FC_DUPLEX_TTS_PAD_PROTOCOL") or None,
         "non_spoken_scheduling": os.environ.get(
             "FC_DUPLEX_NON_SPOKEN_SCHEDULING"
         ),

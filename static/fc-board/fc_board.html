@@ -11,7 +11,7 @@
   <!-- ============ Header (compact) ============ -->
   <header class="header">
     <div class="header-left">
-      <h1>MiniCPM-o · FC Board</h1>
+      <h1 id="pageTitle">MiniCPM-o · FC Board</h1>
       <span id="modeBadge" class="mode-tag">Realtime API</span>
     </div>
     <div class="header-right">
@@ -55,15 +55,8 @@
       <section class="panel settings-edit-panel">
         <div class="quick-settings-row">
           <label for="quickSetting">Quick settings</label>
-          <select id="quickSetting">
-            <option value="0730">0730 · Current</option>
-            <option value="0807_sysalign">0807 · SYS-ALIGN</option>
-            <option value="0808_family4_full">0808 · Family4 Full (T1/T2/T4)</option>
-            <option value="0808_family4_short">0808 · Family4 Short (T3)</option>
-            <option value="latest_mvp_zh">最新训练前缀 · MVP 中文 (F224, 45/25, tts_pad legacy)</option>
-            <option value="latest_mvp_zh_revised">最新训练前缀 · MVP 中文 (F224, 45/25, tts_pad revised)</option>
-            <option value="custom">Custom</option>
-          </select>
+          <!-- 选项由当前场景渲染（scenes/*.js 的 presetOptions + Custom）。 -->
+          <select id="quickSetting"></select>
         </div>
         <details class="cfg-group" open>
           <summary>System segments</summary>
@@ -105,7 +98,12 @@
             <span>Speaking budget</span>
             <input id="nonSpokenBudgetWhileSpeaking" type="number" min="1" max="512" step="1" value="" readonly />
           </label>
-          <p class="hint">Budgets are injected from the selected checkpoint deployment Profile.</p>
+          <label class="field-row">
+            <span>TTS pad protocol</span>
+            <input id="ttsPadProtocolView" type="text" value="" readonly />
+          </label>
+          <p class="hint">Budgets are injected from the selected checkpoint deployment Profile;
+            the TTS pad protocol follows the deployed checkpoint when the deployment declares it.</p>
         </details>
       </section>
 
@@ -161,8 +159,8 @@
 
       <section class="panel board-panel">
         <div class="panel-title">
-          Board · display_object_on_board
-          <span class="hint">1 × 6 cards · FIFO</span>
+          <span id="scenePanelTitle">Board · display_object_on_board</span>
+          <span id="scenePanelHint" class="hint">1 × 6 cards · FIFO</span>
         </div>
         <div id="board" class="board empty-board">
           <div class="empty-state">
