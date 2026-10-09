@@ -33,7 +33,7 @@
   min-height: 0;
 }
 
-.card img,
+[data-demo="board"] .card img,
 [data-demo="board"] .card .placeholder {
   width: 100%;
   flex: 1;

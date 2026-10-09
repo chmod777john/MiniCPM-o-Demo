@@ -145,7 +145,7 @@ body {
 }
 /* 目标 loudness 区间（-28 → -18 dB ≈ 训练集 p5-p95 LUFS）：在 meter 上叠
    一条浅灰竖条，帮用户把说话响度调到"训练数据分布内"。
-   数值来自 fc-board-app.js MIC_TARGET_LO/HI_DB 和 MIC_METER_MIN/MAX_DB：
+   数值来自 core/mic-policy.js 与 shell/app.js 的 MIC_* 常量：
      left  = (-28 - (-50)) / (-10 - (-50)) = 22/40 = 55%
      right = (-18 - (-50)) / (-10 - (-50)) = 32/40 = 80%
      width = 25% */
@@ -1114,3 +1114,46 @@ body.gallery-index { overflow: auto; }
 .demo-card p { margin-top: 6px; font-size: 12px; color: #666; line-height: 1.7; }
 .gallery-back { text-decoration: none; color: #888; font-size: 18px; margin-right: 4px; }
 .gallery-back:hover { color: #3a7bd5; }
+
+/* 开场长静音提示：训练分布外的输入会让模型乱生成，提前告诉使用者。 */
+.mic-silence-warn {
+  margin-top: 8px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #fff4d6;
+  border: 1px solid #e6c15c;
+  color: #8a6200;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+
+/* 当前加载的模型：完整路径原样展示，长路径换行不截断，可选中复制。 */
+.model-identity > summary { display: flex; gap: 8px; align-items: baseline; }
+.model-profile-id {
+  font-size: 11px;
+  color: #666;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  overflow-wrap: anywhere;
+}
+.model-paths {
+  display: grid;
+  grid-template-columns: 92px 1fr;
+  gap: 2px 8px;
+  margin-top: 6px;
+  font-size: 11px;
+}
+.model-paths dt { color: #888; }
+.model-paths dd {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: #2d2d2d;
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+.model-paths dd.placeholder { grid-column: 1 / -1; color: #999; font-family: inherit; }
+.model-paths dt .hint-mark {
+  display: inline-block;
+  width: 12px; height: 12px; line-height: 12px;
+  text-align: center; border-radius: 50%;
+  background: #ddd; color: #666; font-size: 9px; cursor: help;
+}

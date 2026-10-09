@@ -17,7 +17,7 @@
 //   可选 presetOptions [{id,label}]、fallbackQuickSetting、buildQuickSettings(defaults)、tools(defaults)
 //   可选 reset()、onThinkBegin/onThinkDelta/onThinkEnd/onToolCallDone
 //
-// ⚠️ 场景**不得**改 stageEl 的 class 来解除 shell 的布局（旧的 speaker-mode 补丁已废弃）。
+// ⚠️ 场景**不得**改 stageEl 的 class 来解除 shell 给的布局（这类补丁已废弃）。
 //    布局写在 demo 自己的 CSS 里，选择器以 [data-demo="<id>"] 开头。
 
 const NOOP = () => {};
