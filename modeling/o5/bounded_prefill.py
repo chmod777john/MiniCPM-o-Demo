@@ -20,6 +20,12 @@ decode（L=1）只有 32 MiB，速度最快；但一次 ~550 token 的 system pr
 
 分块 prefill 与一次性 prefill 在数学上等价（因果 attention + 递推的线性 attention 状态），
 数值上只有 kernel 切分带来的 BF16 舍入差异。
+
+⚠️ 代价（2026-10-09 定位 Demo 语音卡顿）：``eager`` 是按命中的专家逐个循环（O5 256 专家 × 40 层），
+每次 prefill 上万次小 kernel 启动 + 每层一次 ``nonzero`` 同步。实时 Demo 每个 Unit 都要做几十 token 的
+小 prefill，全部切 eager 后单 Unit 处理从 1 秒内被拖到 1–2 秒，语音一卡一卡。小 prefill 的显存本来就小
+（每 token ~32 MiB，TP2 再减半），所以加 ``O5_PREFILL_EAGER_MIN_TOKENS``：只有 L 达到阈值的 prefill 才切 eager。
+默认 2（= 任何 L>1 都切，与引入时行为一致，离线单卡评测不受影响）；TP2 实时部署显式调大。
 """
 
 from __future__ import annotations
@@ -31,6 +37,7 @@ from typing import Iterator
 import torch
 
 DEFAULT_PREFILL_CHUNK_TOKENS = 512
+DEFAULT_PREFILL_EAGER_MIN_TOKENS = 2
 _MEMORY_HEAVY_EXPERTS_IMPLEMENTATIONS = frozenset({"batched_mm"})
 _PREFILL_EXPERTS_IMPLEMENTATION = "eager"
 _PREFILL_ATTENTION_IMPLEMENTATION = "sdpa"
@@ -52,6 +59,26 @@ def prefill_chunk_tokens() -> int:
     value = int(raw)
     if value <= 0:
         raise ValueError(f"O5_PREFILL_CHUNK_TOKENS 必须为正整数，实际为 {raw!r}")
+    return value
+
+
+def prefill_eager_min_tokens() -> int:
+    """返回「prefill 切 eager MoE」的最小 token 数。
+
+    返回:
+        ``O5_PREFILL_EAGER_MIN_TOKENS`` 的正整数值，未设置时为 2（任何 L>1 的 prefill 都切 eager）。
+        阈值以下的 prefill 保留原实现（``batched_mm``），瞬时显存约为 ``阈值 × 每 token 专家副本``。
+
+    异常:
+        ValueError: 环境变量不是正整数。
+    """
+
+    raw = os.environ.get("O5_PREFILL_EAGER_MIN_TOKENS")
+    if raw is None:
+        return DEFAULT_PREFILL_EAGER_MIN_TOKENS
+    value = int(raw)
+    if value <= 0:
+        raise ValueError(f"O5_PREFILL_EAGER_MIN_TOKENS 必须为正整数，实际为 {raw!r}")
     return value
 
 
@@ -90,16 +117,24 @@ def _experts_configs(model: torch.nn.Module) -> list[object]:
 
 
 @contextmanager
-def prefill_experts_implementation(model: torch.nn.Module) -> Iterator[None]:
+def prefill_experts_implementation(
+    model: torch.nn.Module,
+    length: int | None = None,
+) -> Iterator[None]:
     """prefill 期间把显存随 token 数线性放大的 MoE 实现切到 eager。
 
     参数:
         model: LLM backbone（或包含它的模块）。
+        length: 本次 prefill 的 token 数；小于 ``prefill_eager_min_tokens()`` 时不切换。
+            为 None 时无条件切换（兼容旧调用）。
 
     返回:
         上下文管理器；退出时恢复原实现，decode 路径（含已捕获的 CUDA graph）不受影响。
     """
 
+    if length is not None and length < prefill_eager_min_tokens():
+        yield
+        return
     switched: list[tuple[object, str]] = []
     for config in _experts_configs(model):
         current = getattr(config, "_experts_implementation", None)

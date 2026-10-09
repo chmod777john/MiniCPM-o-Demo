@@ -63,6 +63,11 @@ def main() -> None:
         if profile.backbone_dir is None:
             raise RuntimeError("O5 TP2 Profile 缺少 backbone_dir")
         environment["BACKBONE_DIR"] = profile.backbone_dir
+        # 实时服务每个 Unit 都有几十 token 的小 prefill；有界 prefill 默认会把它们也切到逐专家循环的
+        # eager MoE（~470ms/Unit），超出 1 秒/Unit 的实时预算、语音一卡一卡。TP2 专家已切半，256 token
+        # 以下用 batched_mm 的瞬时显存有限，开场长 system prefill 仍走 eager。显式设置的值优先；
+        # 离线评测副本池不走这里，不受影响。见 modeling/o5/bounded_prefill.py。
+        environment.setdefault("O5_PREFILL_EAGER_MIN_TOKENS", "256")
         entry = project_dir / "scripts" / "start_o5_tp2_cctl_service.sh"
     else:
         entry = project_dir / "scripts" / "start_o5_cctl_service.sh"

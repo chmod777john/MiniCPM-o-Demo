@@ -2339,7 +2339,7 @@ class StreamDecoder:
         from .bounded_prefill import iter_prefill_chunks, prefill_experts_implementation
 
         hidden_chunks = []
-        with prefill_experts_implementation(self.m) if L > 1 else contextlib.nullcontext():
+        with prefill_experts_implementation(self.m, L) if L > 1 else contextlib.nullcontext():
             for chunk_start, chunk_end in iter_prefill_chunks(L):
                 past_len = self.get_cache_length()
                 pos_ids = torch.arange(

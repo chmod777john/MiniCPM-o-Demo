@@ -99,3 +99,31 @@ def test_streaming_prefill_and_non_spoken_report_cost() -> None:
 
     finalize_src = inspect.getsource(mod.FcDuplexCapability.finalize_unit)
     assert 'info["cost_finalize"] = time.time() - finalize_start' in finalize_src
+
+
+def test_prefill_eager_threshold_keeps_small_prefills_on_original_impl(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """阈值以下的小 prefill 不切 eager；默认阈值 2 与引入时行为一致（任何 L>1 都切）。"""
+
+    from modeling.o5.bounded_prefill import prefill_eager_min_tokens
+
+    config = SimpleNamespace(_experts_implementation="batched_mm")
+    model = _Experts(config)
+    monkeypatch.delenv("O5_PREFILL_EAGER_MIN_TOKENS", raising=False)
+    assert prefill_eager_min_tokens() == 2
+    with prefill_experts_implementation(model, 2):
+        assert config._experts_implementation == "eager"
+
+    monkeypatch.setenv("O5_PREFILL_EAGER_MIN_TOKENS", "256")
+    with prefill_experts_implementation(model, 40):
+        assert config._experts_implementation == "batched_mm"
+    with prefill_experts_implementation(model, 256):
+        assert config._experts_implementation == "eager"
+    with prefill_experts_implementation(model):
+        assert config._experts_implementation == "eager"
+    assert config._experts_implementation == "batched_mm"
+
+    monkeypatch.setenv("O5_PREFILL_EAGER_MIN_TOKENS", "0")
+    with pytest.raises(ValueError, match="正整数"):
+        prefill_eager_min_tokens()
