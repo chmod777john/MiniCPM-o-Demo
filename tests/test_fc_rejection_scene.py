@@ -305,59 +305,65 @@ def test_gateway_serves_scene_pages_and_tts_pad_default(monkeypatch: pytest.Monk
 
 @needs_node
 def test_playback_buffer_default_and_override() -> None:
-    """首包缓冲默认 600ms（实测 200ms 吸收不住单 Unit 抖动），非法输入回退默认值。"""
+    """首包缓冲：默认 600ms（实测 200ms 吸收不住单 Unit 抖动），非法输入一律回退、绝不返回 NaN。
 
-    import re
+    直接 import `playback-policy.js` 的公开导出；不再从 app.js 正则抠函数体
+    —— 那种写法对函数名/缩进/字面量格式有隐式要求，文件一动就误报。
+    """
 
-    app = (STATIC / "fc-board-app.js").read_text(encoding="utf-8")
-    assert "const DEFAULT_PLAYBACK_DELAY_MS = 600;" in app
-    assert "getPlaybackDelayMs" in app
-    html = (STATIC / "fc_board.html").read_text(encoding="utf-8")
-    assert re.search(r'id="playbackDelayMs"[^>]*value="600"', html)
-
-    # AudioPlayer 在拿不到合法值时必须回退，而不是把 NaN 交给 setTimeout。
-    result = run_node(f"""
-const src = (await import('node:fs')).readFileSync({json.dumps(str(STATIC / 'fc-board-app.js'))}, 'utf8');
-const body = src.match(/getPlaybackDelayMs: \\(\\) => \\{{([\\s\\S]*?)\\n  \\}},/)[1];
-const make = (value) => new Function('el', 'DEFAULT_PLAYBACK_DELAY_MS', body)({{ playbackDelayMs: {{ value }} }}, 600);
-console.log(JSON.stringify({{ ok: make('250'), empty: make(''), bad: make('abc'), negative: make('-5') }}));
+    got = run_node(f"""
+const m = await import({json.dumps(module_url('playback-policy.js'))});
+console.log(JSON.stringify({{
+  dflt: m.DEFAULT_PLAYBACK_DELAY_MS,
+  ok: m.resolvePlaybackDelayMs('250'),
+  empty: m.resolvePlaybackDelayMs(''),
+  bad: m.resolvePlaybackDelayMs('abc'),
+  negative: m.resolvePlaybackDelayMs('-5'),
+  nullish: m.resolvePlaybackDelayMs(undefined),
+  zero: m.resolvePlaybackDelayMs('0'),
+  custom: m.resolvePlaybackDelayMs('nope', 123),
+}}));
 """)
-    assert result == {"ok": 250, "empty": 600, "bad": 600, "negative": 600}
+    assert got == {
+        "dflt": 600, "ok": 250, "empty": 600, "bad": 600,
+        "negative": 600, "nullish": 600, "zero": 0, "custom": 123,
+    }
+
+    # HTML 里 input 的默认值必须与模块常量一致（两处各写 600 → 升级成两处必须相等）。
+    html = (STATIC / "fc_board.html").read_text(encoding="utf-8")
+    shown = re.search(r'id="playbackDelayMs"[^>]*value="(\d+)"', html)
+    assert shown and int(shown.group(1)) == got["dflt"]
 
 
 @needs_node
 def test_opening_silence_warning_threshold_matches_training_data() -> None:
-    """开场静音提示的阈值必须对齐训练数据（最长 5s 开口），且只在开麦后无人声时出现。"""
+    """开场静音提示：阈值对齐训练数据（最长 5s 开口），且只在开麦后无人声时出现。
 
-    app = (STATIC / "fc-board-app.js").read_text(encoding="utf-8")
-    assert "const MIC_OPENING_SILENCE_LIMIT_MS = 5000;" in app
-    assert "const MIC_SPEECH_DB = -35;" in app
-    assert '<div id="micSilenceWarn"' in (STATIC / "fc_board.html").read_text(encoding="utf-8")
+    `openingSilenceWarning` 是纯函数、不碰 DOM，所以这里直接调它，不再抠源码。
+    """
 
-    result = run_node(f"""
-const src = (await import('node:fs')).readFileSync({json.dumps(str(STATIC / 'fc-board-app.js'))}, 'utf8');
-const body = src.match(/function updateOpeningSilenceWarning\\(\\) \\{{([\\s\\S]*?)\\n\\}}/)[1];
-const run = (state, seen, waitedMs) => {{
-  const warn = {{ hidden: null, textContent: '' }};
-  new Function('el', 'micLiveState', 'micSpeechSeen', 'micLiveStartedAt', 'micPeakDbSinceStart',
-               'MIC_OPENING_SILENCE_LIMIT_MS', 'MIC_SPEECH_DB', 'Date', body)(
-    {{ micSilenceWarn: warn }}, state, seen, 1, -48,
-    5000, -35, {{ now: () => 1 + waitedMs }});
-  return warn;
-}};
+    got = run_node(f"""
+const m = await import({json.dumps(module_url('mic-policy.js'))});
+const call = (micLiveState, speechSeen, waitedMs) =>
+  m.openingSilenceWarning({{ micLiveState, speechSeen, waitedMs, peakDb: -48 }});
 console.log(JSON.stringify({{
-  quiet9s: run('live', false, 9000),
-  quiet3s: run('live', false, 3000).hidden,
-  spoke9s: run('live', true, 9000).hidden,
-  idle9s: run('idle', false, 9000).hidden,
+  limit: m.MIC_OPENING_SILENCE_LIMIT_MS,
+  speechDb: m.MIC_SPEECH_DB,
+  quiet9s: call('live', false, 9000),
+  quiet3s: call('live', false, 3000).visible,
+  atLimit: call('live', false, 5000).visible,
+  spoke9s: call('live', true, 9000).visible,
+  idle9s: call('idle', false, 9000).visible,
 }}));
 """)
-    assert result["quiet9s"]["hidden"] is False
-    assert "9s" in result["quiet9s"]["textContent"]
-    assert "-48" in result["quiet9s"]["textContent"]
-    assert result["quiet3s"] is True   # 还没到 5s
-    assert result["spoke9s"] is True   # 已经检测到人声
-    assert result["idle9s"] is True    # 没开麦
+    assert got["limit"] == 5000 and got["speechDb"] == -35
+    assert got["quiet9s"]["visible"] is True
+    assert "9s" in got["quiet9s"]["text"] and "-48" in got["quiet9s"]["text"]
+    assert got["quiet3s"] is False      # 还没到 5s
+    assert got["atLimit"] is False      # 必须「超过」才提示，等于不提示
+    assert got["spoke9s"] is False      # 已经检测到人声
+    assert got["idle9s"] is False       # 没开麦
+    assert '<div id="micSilenceWarn"' in (STATIC / "fc_board.html").read_text(encoding="utf-8")
 
 
 @needs_node
@@ -429,18 +435,27 @@ def test_defaults_expose_full_model_identity(
 def test_model_identity_rows_cover_every_identity_field(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """前端展示的行必须与后端给出的字段逐一对应 —— 后端新增字段不能悄悄不显示。"""
+    """前端展示行必须与后端字段逐一对应 —— 后端新增字段而前端漏显示会红。
+
+    前端侧直接 import `model-identity.js`，不再从 app.js 正则抠数组字面量。
+    """
 
     import gateway
 
     monkeypatch.setenv("FC_DEPLOYMENT_PROFILE", str(tmp_path / "missing.json"))
     backend_fields = set(gateway._fc_deployment_model_identity())
 
-    app = (STATIC / "fc-board-app.js").read_text(encoding="utf-8")
-    block_start = app.index("MODEL_IDENTITY_ROWS = [")
-    block = app[block_start:app.index("];", block_start)]
-    shown = re.findall(r"\['(\w+)', '[^']+'\]", block)
-
-    assert len(shown) == len(set(shown)), f"有重复行: {shown}"
-    assert set(shown) == backend_fields
+    got = run_node(f"""
+const m = await import({json.dumps(module_url('model-identity.js'))});
+console.log(JSON.stringify({{
+  keys: m.MODEL_IDENTITY_ROWS.map((row) => row[0]),
+  labels: m.MODEL_IDENTITY_ROWS.map((row) => row[1]),
+  hintKeys: Object.keys(m.MODEL_IDENTITY_HINTS),
+}}));
+""")
+    assert len(got["keys"]) == len(set(got["keys"])), f"有重复行: {got['keys']}"
+    assert set(got["keys"]) == backend_fields
+    assert all(isinstance(label, str) and label for label in got["labels"])
+    # 悬停说明只能挂在真实存在的行上。
+    assert set(got["hintKeys"]) <= set(got["keys"])
     assert '<dl id="modelIdentity"' in (STATIC / "fc_board.html").read_text(encoding="utf-8")

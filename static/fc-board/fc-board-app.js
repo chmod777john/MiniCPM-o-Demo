@@ -8,18 +8,21 @@ import {
   cloneQuickSetting,
 } from './fc-board-quick-settings.js';
 import { createScene } from './scenes/index.js';
+import { DEFAULT_PLAYBACK_DELAY_MS, resolvePlaybackDelayMs } from './playback-policy.js';
+import {
+  MIC_OPENING_SILENCE_LIMIT_MS,
+  MIC_SPEECH_DB,
+  openingSilenceWarning,
+} from './mic-policy.js';
+import { MODEL_IDENTITY_HINTS, MODEL_IDENTITY_ROWS } from './model-identity.js';
 import { escapeHtml, textFromSteps } from './ui-utils.js';
 
 const streamEvents = new Map();
-// 首包缓冲:SPEAK turn 开始播之前先攒多少音频,用来吸收单 Unit 处理时间的抖动。
-// 600ms 来自实测回放(服务端说话 Unit p90 ≈1.4s > 1s 预算,200ms 吸收不住);可在 Runtime 面板现调。
-const DEFAULT_PLAYBACK_DELAY_MS = 600;
 const audioPlayer = new AudioPlayer({
   outputSampleRate: 24000,
-  getPlaybackDelayMs: () => {
-    const raw = Number.parseInt(el.playbackDelayMs?.value ?? '', 10);
-    return Number.isFinite(raw) && raw >= 0 ? raw : DEFAULT_PLAYBACK_DELAY_MS;
-  },
+  getPlaybackDelayMs: () => resolvePlaybackDelayMs(
+    el.playbackDelayMs?.value, DEFAULT_PLAYBACK_DELAY_MS,
+  ),
 });
 
 let liveClient = null;
@@ -51,11 +54,6 @@ function rmsToDb(rms) {
   return Math.max(MIC_METER_MIN_DB, db);   // 静音底
 }
 
-// 训练数据里「开麦到用户第一次开口」最长 5.0s（rejection zh / mvp 两域各抽 400 条，中位 2.2s）。
-// 超过这个时长还只有环境底噪，就已经在训练分布之外了 —— 实测该 ckpt 会开始胡乱生成
-// （循环复读、在无工具的 preset 里幻觉工具调用）。这里只做提示，不碰送给模型的音频。
-const MIC_OPENING_SILENCE_LIMIT_MS = 5000;
-const MIC_SPEECH_DB = -35;       // 高于它才算「有人在说话」，低于它是底噪
 let micPeakDbSinceStart = MIC_METER_MIN_DB;
 let micLiveStartedAt = 0;
 let micSpeechSeen = false;
@@ -533,24 +531,6 @@ function applyDefaults(defaults) {
   renderModelIdentity(defaults);
 }
 
-// 当前加载的模型。路径一律完整展示、不截断 —— 截断会让「到底跑的哪个 ckpt」要靠猜。
-const MODEL_IDENTITY_ROWS = [
-  ['pt_path', 'Checkpoint (PT)'],
-  ['backbone_dir', 'TP2 backbone'],
-  ['base_model_path', 'Base model'],
-  ['checkpoint_sha256', 'SHA256'],
-  ['deployment_mode', 'Deployment'],
-  ['sdk_version', 'SDK (推理侧)'],
-  ['tts_pad_protocol', 'tts_pad (训练侧)'],
-  ['profile_path', 'Profile'],
-];
-
-const MODEL_IDENTITY_HINTS = {
-  sdk_version: '推理服务安装的 minicpm-o5-sdk 版本（启动硬门禁），与该 ckpt 训练时用的 SDK 无关',
-  tts_pad_protocol: '按该 ckpt 训练时的 SDK 定：≤0.0.6a3 → legacy，≥0.0.6a4 → revised',
-  pt_path: 'model.pt 常是 symlink，这里是解析后的真实路径（可能在别人目录下）',
-};
-
 function renderModelIdentity(defaults) {
   if (el.kvProfileId) el.kvProfileId.textContent = defaults?.checkpoint_profile_id || '—';
   if (!el.modelIdentity) return;
@@ -981,15 +961,14 @@ function updateMicLevel(level) {
 
 function updateOpeningSilenceWarning() {
   if (!el.micSilenceWarn) return;
-  const waited = micLiveStartedAt ? Date.now() - micLiveStartedAt : 0;
-  const stale = micLiveState === 'live' && !micSpeechSeen && waited > MIC_OPENING_SILENCE_LIMIT_MS;
-  el.micSilenceWarn.hidden = !stale;
-  if (stale) {
-    el.micSilenceWarn.textContent = `⚠️ 已开麦 ${Math.round(waited / 1000)}s 仍未检测到说话声`
-      + `（峰值 ${micPeakDbSinceStart.toFixed(0)} dB，需高于 ${MIC_SPEECH_DB} dB）。`
-      + `训练数据里开场静音最长 5s，超出后模型输出不可预期（会复读或幻觉工具调用）。`
-      + `请现在开口说话，或检查浏览器选的是哪个麦克风输入。`;
-  }
+  const warning = openingSilenceWarning({
+    micLiveState,
+    speechSeen: micSpeechSeen,
+    waitedMs: micLiveStartedAt ? Date.now() - micLiveStartedAt : 0,
+    peakDb: micPeakDbSinceStart,
+  });
+  el.micSilenceWarn.hidden = !warning.visible;
+  if (warning.visible) el.micSilenceWarn.textContent = warning.text;
 }
 
 function resetMicPeak() {
