@@ -75,8 +75,13 @@ git checkout --detach <交付方提供的一键启动 commit>
 HTTP API:  http://<host>:8009
 WebSocket: ws://<host>:8009/v1/realtime
 Health:    http://<host>:8009/health
-FC Board:  http://<host>:8009/fc_board
+Demos:     http://<host>:8009/demos            (Demo Gallery 索引页)
+FC Board:  http://<host>:8009/demos/board
+Rejection: http://<host>:8009/demos/rejection
 ```
+
+Demo 的开发规范（加一个新 Demo 只在一个文件夹里改）见
+[`../demos/README.md`](../demos/README.md)。
 
 TrainingData 驱动的调用样例、事件含义和推理产物说明见
 [`fc-duplex/api-usage.md`](fc-duplex/api-usage.md)。

@@ -1,0 +1,5 @@
+/* 本 Demo 专属样式。
+ * 每条顶层选择器都必须以 [data-demo="<你的 id>"] 开头（有测试强制），否则会污染别的 Demo。
+ * @keyframes 名也要以 <id>- 开头。 */
+
+[data-demo="_template"] .stage { display: block; overflow: auto; }

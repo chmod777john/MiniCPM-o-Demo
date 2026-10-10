@@ -189,3 +189,110 @@ def _top_level_selectors(css: str) -> list[str]:
         else:
             buffer += char
     return [s for s in selectors if s]
+
+
+@needs_node
+def test_shell_tolerates_a_demo_without_any_preset() -> None:
+    """没有任何 quick setting 的 demo 是合法的，shell 不能因此崩。
+
+    脚手架生成的 demo 就没有 preset —— 验收时真的崩过
+    （`Unknown quick setting: null`：拿 fallback=null 去查空表）。
+    """
+
+    got = run_node(f"""
+const contract = await import({json.dumps(repo_module_url('static/demo-gallery/core/scene-contract.js'))});
+const scene = contract.normalizeScene({{ render() {{}} }}, {{ demoId: 'x', title: 'X' }});
+console.log(JSON.stringify({{
+  fallback: scene.fallbackQuickSetting,
+  presets: scene.presetOptions,
+  built: [...scene.buildQuickSettings({{}}).keys()],
+  tools: scene.tools({{}}),
+}}));
+""")
+    assert got["fallback"] is None      # 没有 preset 时 fallback 必须是 null，不是空串
+    assert got["presets"] == [] and got["built"] == [] and got["tools"] == []
+
+    # shell 必须显式处理这种情况，而不是无条件 applyQuickSetting。
+    app_js = (PROJECT_ROOT / "static/demo-gallery/shell/app.js").read_text(encoding="utf-8")
+    assert "quickSettings.has(initialSetting)" in app_js
+
+
+def test_copying_the_template_yields_a_working_demo(tmp_path, monkeypatch) -> None:
+    """「复制 _template、改三处名字」就是一个能用的新 demo —— 规范文档承诺的流程本身。
+
+    脚手架没人日常运行，改坏了不会有人发现；这条用例按 demos/README.md 的步骤
+    逐字做一遍，确保那几步永远是对的。
+    """
+
+    import shutil
+    import sys
+
+    new_id = "scaffold_copy"  # 不能含 "_template" 子串，否则下面的替换会二次命中
+    package = "scaffold_probe_pkg"
+    target = tmp_path / package / new_id
+    shutil.copytree(PROJECT_ROOT / "demos" / "_template", target,
+                    ignore=shutil.ignore_patterns("__pycache__"))
+    (tmp_path / package / "__init__.py").write_text("", encoding="utf-8")
+    # README 的三步：改 id、改 import 路径、改 CSS 文件名与命名空间
+    for path in [*target.rglob("*.py"), *target.rglob("*.js"), *target.rglob("*.css")]:
+        text = path.read_text(encoding="utf-8")
+        text = text.replace("demos._template", f"{package}.{new_id}").replace("_template", new_id)
+        path.write_text(text, encoding="utf-8")
+    (target / "web" / "_template.css").rename(target / "web" / f"{new_id}.css")
+
+    monkeypatch.syspath_prepend(str(tmp_path))
+    saved, saved_paths = registry.all(), list(INSTALLED_PATHS)
+    registry.reset()
+    INSTALLED_PATHS.clear()
+    try:
+        app = FastAPI()
+        specs = install_gallery(app, package=package)
+        assert [s.demo_id for s in specs] == [new_id]
+
+        client = TestClient(app)
+        page = client.get(f"/demos/{new_id}")
+        assert page.status_code == 200
+        assert f'data-demo="{new_id}"' in page.text
+        assert f"/demos/{new_id}/web/{new_id}.css" in page.text
+        for asset in ("index.js", "scene.js", f"{new_id}.css"):
+            assert client.get(f"/demos/{new_id}/web/{asset}").status_code == 200, asset
+        assert client.get(f"/api/demos/{new_id}/example").json() == {"ok": True}
+        assert "model_identity" in client.get(f"/api/demos/{new_id}/defaults").json()
+        assert f"/demos/{new_id}" in client.get("/demos").text
+    finally:
+        registry.reset()
+        for spec in saved:
+            registry.add(spec)
+        INSTALLED_PATHS[:] = saved_paths
+        for name in [m for m in sys.modules if m == package or m.startswith(f"{package}.")]:
+            del sys.modules[name]
+
+
+def test_template_is_hidden_from_the_gallery() -> None:
+    """_template 只是脚手架，不能出现在生产索引页里。"""
+
+    assert "_template" not in [spec.demo_id for spec in registry.all()]
+
+
+@needs_node
+def test_template_scene_satisfies_the_contract() -> None:
+    """脚手架的前端入口本身必须满足场景契约（复制出来的 demo 才能直接跑）。"""
+
+    entry = PROJECT_ROOT / "demos" / "_template" / "web" / "index.js"
+    got = run_node(f"""
+await import({json.dumps(entry.as_uri())});
+const reg = await import({json.dumps(repo_module_url('static/demo-gallery/core/registry.js'))});
+const contract = await import({json.dumps(repo_module_url('static/demo-gallery/core/scene-contract.js'))});
+const stage = {{ innerHTML: '', classList: {{ add() {{}}, remove() {{}} }} }};
+const scene = reg.getRegisteredDemo('_template').createScene({{
+  demoId: '_template', stageEl: stage, getClient: () => null,
+  api: {{ base: '', url: (p) => p }}, assets: {{ base: '', url: (p) => p }}, shell: {{}},
+}});
+scene.render();
+const empty = stage.innerHTML;
+scene.onThinkEnd();
+console.log(JSON.stringify({{ ok: contract.validateScene(scene, '_template'), empty, after: stage.innerHTML }}));
+""")
+    assert got["ok"] is True
+    assert "empty-state" in got["empty"]          # 首帧自己画空状态
+    assert "1" in got["after"]                     # 事件钩子真的接上了

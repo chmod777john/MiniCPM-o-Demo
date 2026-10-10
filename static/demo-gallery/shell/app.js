@@ -192,7 +192,7 @@ el.quickSetting?.addEventListener('change', () => {
 });
 
 el.resetSystemSegments?.addEventListener('click', () => {
-  applyQuickSetting(selectedQuickSetting());
+  if (hasQuickSettings()) applyQuickSetting(selectedQuickSetting());
 });
 
 el.resetTtsPromptAudio?.addEventListener('click', () => {
@@ -525,11 +525,16 @@ function applyDefaults(defaults) {
   quickSettings = scene.buildQuickSettings(defaults);
   if (el.checkpointProfileId) el.checkpointProfileId.value = defaults.checkpoint_profile_id || '';
   // 部署方按 checkpoint 指定启动 preset；不属于本场景的 preset id 回退到场景自己的默认值。
-  applyQuickSetting(
-    quickSettings.has(defaults.default_quick_setting)
-      ? defaults.default_quick_setting
-      : scene.fallbackQuickSetting,
-  );
+  // 没有任何 preset 的 demo（例如脚手架）是合法的：此时跳过 quick setting，不要去查空表。
+  const initialSetting = quickSettings.has(defaults.default_quick_setting)
+    ? defaults.default_quick_setting
+    : scene.fallbackQuickSetting;
+  if (initialSetting !== null && quickSettings.has(initialSetting)) {
+    applyQuickSetting(initialSetting);
+  } else {
+    systemSegments = [];
+    renderSystemSegments();
+  }
   if (el.kvCkpt) el.kvCkpt.textContent = defaults.checkpoint_profile_id || 'No checkpoint profile';
   if (el.kvTools) {
     const names = validatedTools().map(tool => tool?.function?.name || tool?.name || 'tool');
@@ -559,6 +564,11 @@ function renderModelIdentity(defaults) {
 function selectedQuickSetting() {
   const selected = el.quickSetting?.value;
   return quickSettings.has(selected) ? selected : scene.fallbackQuickSetting;
+}
+
+/** 本 demo 有没有可选的 preset。没有 preset 是合法状态（例如纯展示型 demo）。 */
+function hasQuickSettings() {
+  return quickSettings.size > 0;
 }
 
 function applyQuickSetting(settingId) {

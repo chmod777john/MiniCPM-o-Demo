@@ -270,7 +270,7 @@ await edge_tts.Communicate(USER_TEXT, "zh-CN-XiaoxiaoNeural").save(str(path))
 
 ### 来自 `audio_duplex_board/tools/display_object_on_board/service.py`
 
-已迁入当前分支的 demo 层：`demos/fc_board/tools/display_object_on_board/service.py`。
+已迁入当前分支的 demo 层：`demos/board/tools/display_object_on_board/service.py`。
 
 价值：
 
@@ -280,7 +280,7 @@ await edge_tts.Communicate(USER_TEXT, "zh-CN-XiaoxiaoNeural").save(str(path))
 
 注意：
 
-- 下载目录已改到 `demos/fc_board/tools/display_object_on_board/live_image_downloads`，不再落在旧 standalone 目录。
+- 下载目录已改到 `demos/board/tools/display_object_on_board/live_image_downloads`，不再落在旧 standalone 目录。
 - 后续如果正式 API 由 client/runtime 执行工具，则该 service 可以退化为本地 demo tool executor，而不是 backend 必需组件。
 
 ### 来自 `audio_duplex_board/schemas.py` 和 `events.py`
