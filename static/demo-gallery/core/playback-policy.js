@@ -1,10 +1,11 @@
 // 播放缓冲策略（纯函数，无 DOM）。
 //
 // 首包缓冲：SPEAK turn 开始播之前先攒多少音频，用来吸收单 Unit 处理时间的抖动。
-// 600ms 来自实测回放：服务端说话 Unit p90 ≈1.4s > 1s 实时预算，200ms 吸收不住。
+// 默认 200ms（2026-10-10 用户定）。曾为 600ms：当时实测服务端说话 Unit p90 ≈1.4s，
+// 200ms 吸收不住抖动；卡顿时可在页面上调大。
 // 页面 Runtime 面板可现调；HTML 里 input 的默认值必须与此常量一致（有测试对拍）。
 
-export const DEFAULT_PLAYBACK_DELAY_MS = 600;
+export const DEFAULT_PLAYBACK_DELAY_MS = 200;
 
 /**
  * 把输入框的原始字符串解析成首包缓冲毫秒数。

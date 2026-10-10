@@ -334,7 +334,7 @@ def test_gallery_serves_demo_pages_with_injected_entry(
 
 @needs_node
 def test_playback_buffer_default_and_override() -> None:
-    """首包缓冲：默认 600ms（实测 200ms 吸收不住单 Unit 抖动），非法输入一律回退、绝不返回 NaN。
+    """首包缓冲：默认 200ms，非法输入一律回退、绝不返回 NaN。
 
     直接 import `playback-policy.js` 的公开导出；不再从 app.js 正则抠函数体
     —— 那种写法对函数名/缩进/字面量格式有隐式要求，文件一动就误报。
@@ -354,11 +354,11 @@ console.log(JSON.stringify({{
 }}));
 """)
     assert got == {
-        "dflt": 600, "ok": 250, "empty": 600, "bad": 600,
-        "negative": 600, "nullish": 600, "zero": 0, "custom": 123,
+        "dflt": 200, "ok": 250, "empty": 200, "bad": 200,
+        "negative": 200, "nullish": 200, "zero": 0, "custom": 123,
     }
 
-    # HTML 里 input 的默认值必须与模块常量一致（两处各写 600 → 升级成两处必须相等）。
+    # HTML 里 input 的默认值必须与模块常量一致（两处必须相等）。
     html = (SHELL_HTML).read_text(encoding="utf-8")
     shown = re.search(r'id="playbackDelayMs"[^>]*value="(\d+)"', html)
     assert shown and int(shown.group(1)) == got["dflt"]
