@@ -21,7 +21,7 @@ Demo 是模型能力的测量仪器，不是补偿器。**禁止**为了展示�
 
 - **线上 Demo 服务直接跑本目录**：前端文件保存即上线。半成品用 `git worktree` 开发，
   详见 `demos/CLAUDE.md` 末节。
-- **推送远端是 `codehub`**：`git push codehub <分支>`。`origin`（codeup）已禁止推送；
-  分支的 upstream 仍指 `origin/*`，所以 `git status` 里的「ahead N」是假数字，
-  查真实位置用 `git ls-remote codehub <分支>`。
+- **唯一远端是 `codehub`**（华为 codehub），分支 upstream 都指 `codehub/*`，裸 `git push` 即可。
+  原 codeup 远端（`git@codeup-modelbest:modelbest/multi-modal/MiniCPM-o-Demo.git`）
+  已禁止推送，2026-10-10 已从本仓库移除，不要再加回来。
 - 测试 Python 环境：`/user/sunweiyue/runtime/o5_eval/venv-o5-accel/bin/python`。
