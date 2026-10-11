@@ -802,10 +802,26 @@ class FcDuplexCapability:
             return tools
 
     def _event_ids(self, events) -> list:
+        """渲染一个 Unit 的 input_event 槽；事件顺序即调用方给定的顺序。
+
+        事件形态与 SDK ``tokenization/slots/input_event.py`` 逐 token 对齐（对拍测试
+        ``tests/test_fc_standalone_event_alignment.py``）：
+
+        - ``tool_started``：``<tool_response_event><tool_call_id>id</tool_call_id><|tool_started|></tool_response_event>``
+        - ``tool_response``：``… <tool_response>正文</tool_response></tool_response_event>``
+        - ``standalone_event``：``<standalone_event>正文</standalone_event>``——不带
+          tool_call_id，正文按普通文本原样编码（不走 tool response 的 normalize）。
+        """
+
         if not events:
             return []
         ids = [self.sid(self.K.INPUT_EVENT_SLOT_START)]
         for item in events:
+            if isinstance(item, dict) and item.get("type") == "standalone_event":
+                ids.append(self.sid(self.K.STANDALONE_EVENT_START))
+                ids.extend(self.encode_text(str(item["content"])))
+                ids.append(self.sid(self.K.STANDALONE_EVENT_END))
+                continue
             if isinstance(item, dict):
                 call_id = item.get("call_id") or item.get("id") or item.get("tool_call_id")
                 event_type = item.get("type") or item.get("event") or "tool_response"
