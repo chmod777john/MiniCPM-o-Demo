@@ -52,7 +52,7 @@ demos/<id>/
     └── <id>.css       # 本 Demo 专属样式
 ```
 
-现有的两个 Demo 就是活范例：`demos/board/`（带工具 + 额外静态目录）、`demos/rejection/`（纯 think 解析）。
+现有 Demo 就是活范例：`demos/board/`（带工具 + 额外静态目录）、`demos/rejection/`（纯 think 解析）、`demos/standalone/`（输入框注入 standalone_event + Unit 回执 + 按 preset 切换工具）。
 
 ## 3. 后端：`demo.py`
 
@@ -122,9 +122,10 @@ registerDemo({ id: 'my_demo', createScene });
 | `render()` | ✅ | 首帧由场景自己画（**包括空状态**），页面骨架里没有任何场景内容 |
 | `panelTitle` / `panelHint` / `pageTitle` / `liveStatus` | | 面板标题、提示、页面标题、开麦后的状态文案 |
 | `presetOptions` / `buildQuickSettings(defaults)` / `fallbackQuickSetting` | | quick setting 下拉。**没有 preset 是合法的**，shell 会跳过（脚手架就是这样） |
-| `tools(defaults)` | | session 声明的工具列表 |
+| `tools(defaults, presetId)` | | session 声明的工具列表；`presetId` 是当前选中的 preset（选 Custom 时为 `fallbackQuickSetting`）。工具顺序属于训练口径时按 preset 返回各自的工具 |
 | `reset()` | | 新会话开始时清场；缺省等于 `render()` |
 | `onThinkBegin/Delta/End`、`onToolCallDone(event)` | | 模型事件钩子 |
+| `onUnitStarted(event)` | | 每个被处理 Unit 的 `response.unit.started`，含 `tool_events` / `standalone_events` 回执，用来展示事件落在哪个 Unit |
 
 **工具调用的链路**：session 用 `auto_execute_tools=false`，模型只发 tool_call →
 场景在 `onToolCallDone` 里 `fetch(api.url('tools/<name>'))` 调本 Demo 的后端 → 拿到结果后

@@ -39,7 +39,7 @@ static/demo-gallery/        前端 core（shell、realtime client、通用组件
 4. **写 `web/<id>.css`**：每条顶层选择器以 `[data-demo="<id>"]` 开头。
 5. **测试 + 浏览器自检**（见下文「交付前自检」）。
 
-现成范例：`demos/board/`（工具调用 + 搜图 + 额外静态目录）、`demos/rejection/`（纯 think 解析）。
+现成范例：`demos/board/`（工具调用 + 搜图 + 额外静态目录）、`demos/rejection/`（纯 think 解析）、`demos/standalone/`（向模型注入 standalone_event、展示 Unit 回执）。
 做类似功能时先照抄它们的写法。
 
 ## [MUST] 硬约束
