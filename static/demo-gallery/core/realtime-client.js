@@ -116,6 +116,18 @@ export class FcRealtimeClient {
     });
   }
 
+  // 不关联 tool_call 的外部事件（如 subagent 的进度汇报），渲染成 <standalone_event>。
+  // 与工具结果共用一个队列，进入下一个被处理的 Unit；eventId 可选，回执在
+  // response.unit.started.standalone_events 里。content 必须是非空字符串。
+  sendStandaloneEvent({ content, eventId = null }) {
+    if (typeof content !== 'string' || !content) {
+      throw new Error('standalone event content must be a non-empty string');
+    }
+    const frame = { type: 'input.standalone_event', content };
+    if (eventId !== null && eventId !== undefined) frame.event_id = eventId;
+    this._send(frame);
+  }
+
   close(reason = 'client_closed') {
     if (!this.ws) return;
     if (this.ws.readyState === WebSocket.OPEN) {

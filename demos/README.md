@@ -130,6 +130,9 @@ registerDemo({ id: 'my_demo', createScene });
 场景在 `onToolCallDone` 里 `fetch(api.url('tools/<name>'))` 调本 Demo 的后端 → 拿到结果后
 `getClient().sendToolResult(...)` 经 WS 回灌给模型。范例见 `demos/board/web/scene.js`。
 
+不关联工具调用的外部事件（如后台子任务的进度汇报）用 `getClient().sendStandaloneEvent({ content, eventId })`，
+协议见 `docs/fc-duplex/semantic-realtime-api-v2.md` §8.1。
+
 **import 共享模块一律用相对路径** `../../../static/demo-gallery/core/xxx.js`。
 Demo 资源的 URL 与磁盘路径同构（`/demos/<id>/web/` ↔ `demos/<id>/web/`），所以同一条相对路径
 在浏览器和 node 测试里解析到同一个文件 —— **不要改挂载前缀**。

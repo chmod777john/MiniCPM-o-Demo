@@ -157,6 +157,9 @@ Backend 在实际完成 prefill 后发送：
       "type": "tool_result",
       "tool_call_id": "tc_000002"
     }
+  ],
+  "standalone_events": [
+    {"event_id": "progress_1"}
   ]
 }
 ```
@@ -168,12 +171,14 @@ Backend 在实际完成 prefill 后发送：
   "type": "response.unit.started",
   "unit_index": 13,
   "input_id": "input_000016",
-  "tool_events": []
+  "tool_events": [],
+  "standalone_events": []
 }
 ```
 
-`tool_events` 只表达实际 Unit 归属，不重复 tool result 内容；内容从此前
-`input.tool_result` 读取。
+`tool_events` / `standalone_events` 只表达实际 Unit 归属，不重复内容；内容从此前
+`input.tool_result` / `input.standalone_event` 读取。`standalone_events` 按注入顺序
+回显 `event_id`，客户端没给 `event_id` 时为 `null`。
 
 Unit 完成：
 
@@ -353,6 +358,30 @@ Budget 不结束 semantic tool-call，也不更换 `tool_call_id`。只有模型
 
 `response.unit.started.tool_events` 确认结果被某 Unit 消费后，可以重新 available。
 
+### 8.1 Standalone event
+
+不关联任何 tool_call 的外部事件，例如 subagent 边干边推送的进度汇报：
+
+```json
+{
+  "type": "input.standalone_event",
+  "content": "已找到科林斯团队1999年的触发实验报告和后续争议文献",
+  "event_id": "progress_1"
+}
+```
+
+- `content`：必填，非空字符串（SDK `O5StandaloneEvent` 只支持单段文本）。其他形态直接报错。
+- `event_id`：可选，非空字符串，只用于回执，不进入模型输入。
+- 模型输入形态：`<input_event_slot><standalone_event>content</standalone_event></input_event_slot>`，
+  正文按普通文本原样编码，与 SDK `tokenize()` 逐 token 一致。
+- 落点：与 `input.tool_result` 共用一个队列，进入**下一个被处理的音频 Unit**。同一 Unit 内，
+  框架注入的 `tool_started` 在前，其后客户端事件按到达顺序排列（工具结果与 standalone 可交错），
+  对应 SDK「按用户时间排序」的规则。锁步客户端在某 Unit 的 `input.append` 之前发送，事件即落在该 Unit。
+- 归属：由 `response.unit.started.standalone_events` 确认（见第 5 节）。
+- 训练数据中的形态：模型调用 `delegate_task` 后陆续收到若干条 standalone 进度，最终结果仍是
+  `input.tool_result`。
+- 只支持 O5 模型；O45 收到会直接报错。
+
 ## 9. Spoken
 
 同时最多一个 active spoken turn，因此不需要 turn ID。
@@ -423,6 +452,8 @@ Active turn 未 `turn_eos` 就出现 listen，Backend 必须 RuntimeError 并关
 ```
 
 ## 11. Resume
+
+> 只在 O45 实现，O5 不支持；随 O45 停止维护而冻结，不支持含 `input.standalone_event` 的会话。
 
 客户端保存从 `session.init` 到 available `response.unit.committed` 的完整有序历史。
 服务端：

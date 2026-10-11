@@ -60,3 +60,37 @@ console.log(JSON.stringify({{earlyError, sent}}));
         "input.append",
     ]
 
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node is unavailable")
+def test_send_standalone_event_frame_shape() -> None:
+    """sendStandaloneEvent 发 input.standalone_event；event_id 可选；空内容在客户端就拒绝。"""
+
+    project_root = Path(__file__).resolve().parents[1]
+    module_path = project_root / "static" / "demo-gallery" / "core" / "realtime-client.js"
+    script = f"""
+import fs from 'node:fs';
+globalThis.WebSocket = {{ OPEN: 1 }};
+const source = fs.readFileSync({json.dumps(str(module_path))}, 'utf8');
+const module = await import('data:text/javascript;base64,' + Buffer.from(source).toString('base64'));
+const sent = [];
+const client = new module.FcRealtimeClient();
+client.ws = {{ readyState: WebSocket.OPEN, send: (p) => sent.push(JSON.parse(p)) }};
+client.sendStandaloneEvent({{content: '已找到两篇文献', eventId: 'p1'}});
+client.sendStandaloneEvent({{content: '还在核对'}});
+const errors = [];
+for (const bad of [{{content: ''}}, {{content: ['a']}}, {{}}]) {{
+  try {{ client.sendStandaloneEvent(bad); }} catch (e) {{ errors.push(e.message); }}
+}}
+console.log(JSON.stringify({{sent, errors}}));
+"""
+    completed = subprocess.run(
+        ["node", "--input-type=module", "--eval", script],
+        check=True, capture_output=True, text=True,
+    )
+    result = json.loads(completed.stdout)
+    assert result["sent"] == [
+        {"type": "input.standalone_event", "content": "已找到两篇文献", "event_id": "p1"},
+        {"type": "input.standalone_event", "content": "还在核对"},
+    ]
+    assert len(result["errors"]) == 3

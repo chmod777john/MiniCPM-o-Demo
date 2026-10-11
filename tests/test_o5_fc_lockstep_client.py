@@ -219,3 +219,71 @@ def test_decoding_policy_defaults_to_raise_and_rejects_typos(tmp_path: Path) -> 
     assert spec.session_init_frame()["payload"]["config"]["decoding_policy"] == "raise_protocol_error"
     with pytest.raises(ValueError, match="decoding_policy"):
         preset.to_spec(server_url="http://h:1", task_prompt="T", tools=[], decoding_policy="constrained")
+
+
+def test_step_sends_interleaved_input_events_in_order(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """input_events 按给定顺序上行（工具结果与 standalone 交错），回执里的 event_id 被收集。"""
+
+    spec = O5FcSessionPreset.load(str(_preset(tmp_path))).to_spec(
+        server_url="http://h:1", task_prompt="TASK", tools=[]
+    )
+    fake = _FakeWebSocket(
+        [
+            {"type": "session.queue_done"},
+            {"type": "session.created", "session_id": "s", "system_prefill": {"token_count": 9}},
+            {"type": "response.unit.started", "unit_index": 0,
+             "tool_events": [{"type": "tool_result", "tool_call_id": "tc_1"}],
+             "standalone_events": [{"event_id": "p1"}, {"event_id": None}]},
+            {"type": "response.spoken.end", "unit_index": 0, "reason": "listen"},
+            {"type": "response.non_spoken.end", "unit_index": 0, "reason": "no_action"},
+            {"type": "response.unit.committed", "unit_index": 0},
+        ]
+    )
+    monkeypatch.setattr(client, "connect", lambda *a, **k: fake)
+
+    session = O5FcLockstepSession(spec)
+    session.open()
+    unit = session.step(
+        np.zeros(16000, np.float32),
+        input_events=[
+            client.O5FcStandaloneEvent("已找到两篇文献", event_id="p1"),
+            client.O5FcToolResult("tc_1", "最终结论"),
+            client.O5FcStandaloneEvent("还在核对"),
+        ],
+    )
+
+    sent = [frame for frame in fake.sent if frame["type"] != "session.init"]
+    assert [frame["type"] for frame in sent] == [
+        "input.standalone_event", "input.tool_result", "input.standalone_event", "input.append",
+    ]
+    assert sent[0] == {"type": "input.standalone_event", "content": "已找到两篇文献", "event_id": "p1"}
+    assert "event_id" not in sent[2]
+    assert unit.consumed_tool_call_ids == ["tc_1"]
+    assert unit.consumed_standalone_event_ids == ["p1", None]
+
+
+def test_step_rejects_both_tool_results_and_input_events(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """两个参数同时给出就无法确定先后，直接拒绝。"""
+
+    spec = O5FcSessionPreset.load(str(_preset(tmp_path))).to_spec(
+        server_url="http://h:1", task_prompt="TASK", tools=[]
+    )
+    fake = _FakeWebSocket(
+        [
+            {"type": "session.queue_done"},
+            {"type": "session.created", "session_id": "s", "system_prefill": {"token_count": 9}},
+        ]
+    )
+    monkeypatch.setattr(client, "connect", lambda *a, **k: fake)
+    session = O5FcLockstepSession(spec)
+    session.open()
+    with pytest.raises(ValueError, match="二选一"):
+        session.step(
+            np.zeros(16000, np.float32),
+            [("tc_1", "x")],
+            input_events=[client.O5FcStandaloneEvent("y")],
+        )

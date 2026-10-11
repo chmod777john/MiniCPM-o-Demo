@@ -18,7 +18,7 @@ import json
 import os
 import time
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any, Optional, Union
 from urllib.parse import urlsplit, urlunsplit
 
 import numpy as np
@@ -242,6 +242,29 @@ class O5FcToolCall:
     error: Optional[str] = None
 
 
+@dataclass(frozen=True)
+class O5FcToolResult:
+    """客户端回灌的一次工具结果（对应 ``input.tool_result``）。"""
+
+    tool_call_id: str
+    content: Any
+
+
+@dataclass(frozen=True)
+class O5FcStandaloneEvent:
+    """不关联 tool_call 的外部事件（对应 ``input.standalone_event``）。
+
+    训练数据里的典型用法是 subagent 的进度汇报。content 只收非空字符串；
+    event_id 可选，只用于在 ``response.unit.started.standalone_events`` 里核对落在哪个 Unit。
+    """
+
+    content: str
+    event_id: Optional[str] = None
+
+
+O5FcInputEvent = Union[O5FcToolResult, O5FcStandaloneEvent]
+
+
 @dataclass
 class O5FcUnitResult:
     """一个 Unit 的全部输出（按协议事件聚合）。"""
@@ -254,6 +277,7 @@ class O5FcUnitResult:
     audio_sample_rate: Optional[int] = None
     tool_calls: list[O5FcToolCall] = field(default_factory=list)
     consumed_tool_call_ids: list[str] = field(default_factory=list)
+    consumed_standalone_event_ids: list[Optional[str]] = field(default_factory=list)
     is_speaking: bool = False
     is_listen: bool = False
     end_of_turn: bool = False
@@ -361,12 +385,16 @@ class O5FcLockstepSession:
         self,
         audio: np.ndarray,
         tool_results: Optional[list[tuple[str, Any]]] = None,
+        *,
+        input_events: Optional[list[O5FcInputEvent]] = None,
     ) -> O5FcUnitResult:
         """推进一个 Unit。
 
         参数:
             audio: 本 Unit 的 16 kHz 单声道 float32 PCM（长度 = unit_sec * 16000）。
-            tool_results: 本 Unit 之前到达的 ``(tool_call_id, content)``；content 可为任意 JSON。
+            tool_results: 只含工具结果的旧参数，``(tool_call_id, content)``；content 可为任意 JSON。
+            input_events: 本 Unit 之前到达的事件，按到达顺序（工具结果与 standalone 可交错）。
+                与 ``tool_results`` 只能给一个。
 
         返回:
             本 Unit 的聚合输出。
@@ -374,10 +402,22 @@ class O5FcLockstepSession:
 
         if self._ws is None or self._closed:
             raise O5FcSessionError("Session 未打开或已关闭")
-        for tool_call_id, content in tool_results or []:
-            self._send(
-                {"type": "input.tool_result", "tool_call_id": tool_call_id, "content": content}
-            )
+        if tool_results and input_events:
+            raise ValueError("tool_results 与 input_events 只能二选一")
+        ordered: list[O5FcInputEvent] = list(input_events or []) or [
+            O5FcToolResult(tool_call_id, content) for tool_call_id, content in tool_results or []
+        ]
+        for item in ordered:
+            if isinstance(item, O5FcStandaloneEvent):
+                frame: dict[str, Any] = {"type": "input.standalone_event", "content": item.content}
+                if item.event_id is not None:
+                    frame["event_id"] = item.event_id
+                self._send(frame)
+            else:
+                self._send(
+                    {"type": "input.tool_result", "tool_call_id": item.tool_call_id,
+                     "content": item.content}
+                )
         unit_index = self._next_unit
         pcm = np.ascontiguousarray(audio, dtype=np.float32)
         self._send(
@@ -404,6 +444,9 @@ class O5FcLockstepSession:
                     item.get("tool_call_id")
                     for item in event.get("tool_events") or []
                     if item.get("tool_call_id")
+                ]
+                result.consumed_standalone_event_ids = [
+                    item.get("event_id") for item in event.get("standalone_events") or []
                 ]
             elif event_type == "response.spoken.delta":
                 result.is_speaking = True
