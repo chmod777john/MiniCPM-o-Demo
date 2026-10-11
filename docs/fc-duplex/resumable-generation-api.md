@@ -1,5 +1,9 @@
 # FC Duplex Resumable Generation API
 
+> ⚠️ **已冻结（2026-10-10）**：本协议只在 O45 上实现过，O5 不支持（`supports_stateless_resume=False`）。
+> O45 已停止维护，本文与对应实现（`core/fc_duplex_resume.py`）只作历史参考，不再演进；
+> 新的 input event 类型（如 `input.standalone_event`）不会被纳入续传。
+
 > 本文记录 v1 实现与演进依据。当前目标协议是
 > [`semantic-realtime-api-v2.md`](./semantic-realtime-api-v2.md)；v2 删除冗余
 > generation batch/sp-token/block 字段，改用 semantic events 直接承载 resume steps。
