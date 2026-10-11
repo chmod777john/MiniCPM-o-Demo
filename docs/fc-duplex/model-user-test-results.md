@@ -192,6 +192,34 @@ closed: 2026-07-28
 而同一外层 API、前端和调度框架下的 O45FC 已通过。该分布强烈指向 O5 专属的模型内层
 推理、特殊 token 或 adapter 边界，而不是10个训练 checkpoint 独立失效。
 
+## standalone input_event 自动回放验收（2026-10-10）
+
+> 自动回放（`scripts/fc_standalone_replay.py`），**不是用户实测**；状态取 `evaluated`。
+
+```text
+status: evaluated
+profile: F9-T3 subagent（family_009 treatment_003）
+training_job: 1101598（训练用 SDK 0.0.6a3 → tts_pad_protocol=legacy）
+ckpt: /backup/user/sunweiyue/checkpoints/model_tunnel_moe_deploy/family_009_family9-langfang-32gpu-8k-agentonly/treatment_003_subagent/runs/job_1101598/checkpoints/iter_0002000/model.pt
+eval_job: 1186537（agent-dev 1×A100，Succeeded）
+code: Demo 仓 sdk-0.0.6 分支 9d0e21a，推理侧 SDK 0.0.6
+decoding_policy: raise_protocol_error
+产物: /user/sunweiyue/tmp/standalone_accept_f9t3/out/（每个源一份 .md 并排对照 + .jsonl）
+```
+
+口径与训练一致：data-mix 的 `system_prefix_text` 插到 system 最前（同训练侧
+`prepend_system_prefix_text`），样本自带参考音频 / 工具 / UnitPolicy，用户音频逐 Unit 原样喂入；
+进度与工具结果挂在模型实际发起的工具调用上，保持与样本相同的 Unit 间隔。
+
+结论（3 个源 × 3 条样本，0 条协议错误，回执与发送全部一致）：
+
+- **进度汇报（no-think 数据，zh/en）**：15 条 standalone 中 15 条在 3 个 Unit 内转述、13 条当场开口；
+  最终结果到达前不抢答结论，结果一到即完整转述。行为与训练样本一致，例如进度
+  「已找到科林斯团队1999年的触发实验报告…」→ 模型「找到九十九年那个触发实验了」。
+- **`[FILE_UPLOADED] 文件名`（think 数据，zh）**：3/3 由模型发起 `delegate_task` 读该文件，
+  message 里写出的文件名只出现在 standalone 事件中（用户语音只说「这个文件」）；发起时机与样本差 1～2 个
+  Unit。按训练样本，文件通知到达时用户尚未说完，AI 不应立刻开口，3 条均未抢话。
+
 ## REF-AUDIO 同期严格 A/B 用户验收
 
 ```text
