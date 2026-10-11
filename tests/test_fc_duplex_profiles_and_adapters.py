@@ -91,7 +91,7 @@ def test_o45_profile_has_fixed_sdk_target_and_rows() -> None:
         unit_policy=_unit_policy(),
     )
 
-    assert profile.sdk_version == "0.0.6a3"
+    assert profile.sdk_version == "0.0.6"
     assert profile.tokenizer_target == "o45_fc"
     assert profile.required_model_rows == 151772
 

@@ -437,7 +437,7 @@ def test_defaults_expose_full_model_identity(
                 "backbone_dir": "/backup/user/sunweiyue/delivery/ckpt/iter_500/backbone",
                 "checkpoint_sha256": None,
                 "deployment_mode": "tp2",
-                "sdk_version": "0.0.6a3",
+                "sdk_version": "0.0.6",
             }
         ),
         encoding="utf-8",
@@ -449,7 +449,7 @@ def test_defaults_expose_full_model_identity(
     assert identity["backbone_dir"] == "/backup/user/sunweiyue/delivery/ckpt/iter_500/backbone"
     assert identity["base_model_path"] == "/user/sunweiyue/models/MiniCPM-o-4_6"
     assert identity["deployment_mode"] == "tp2"
-    assert identity["sdk_version"] == "0.0.6a3"
+    assert identity["sdk_version"] == "0.0.6"
     assert identity["checkpoint_sha256"] is None
     assert identity["profile_path"] == str(profile)
 

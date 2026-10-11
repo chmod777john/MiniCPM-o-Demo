@@ -29,8 +29,8 @@ class _BaseFcDeploymentProfile(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     profile_id: str = Field(min_length=1, description="稳定且可审计的部署 Profile ID。")
-    sdk_version: Literal["0.0.6a3"] = Field(
-        default="0.0.6a3",
+    sdk_version: Literal["0.0.6"] = Field(
+        default="0.0.6",
         description="训练与推理共同使用的正式 MiniCPMO5 SDK 版本。",
     )
     model_path: str = Field(min_length=1, description="模型 config/tokenizer/processor 资产目录。")
@@ -196,7 +196,7 @@ def load_fc_deployment_profile(
     参数:
         profile_path: Profile JSON 文件路径。
         check_paths: 是否同时检查模型资产路径存在。
-        check_sdk_version: 是否要求当前环境安装正式 ``0.0.6a3``。
+        check_sdk_version: 是否要求当前环境安装正式 ``0.0.6``。
 
     返回:
         按 ``model_family`` 解析出的 O45 或 O5 Profile。
