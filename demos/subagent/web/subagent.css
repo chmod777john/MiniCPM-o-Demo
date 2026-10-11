@@ -1,0 +1,27 @@
+/* subagent Demo 专属样式。每条顶层选择器以 [data-demo="subagent"] 开头。 */
+
+[data-demo="subagent"] .stage { display: flex; flex-direction: column; gap: 10px; overflow: auto; }
+[data-demo="subagent"] .sg-workspace { border: 1px solid #d8dbe0; border-radius: 8px; padding: 8px 10px; background: #fafbfc; }
+[data-demo="subagent"] .sg-ws-head { display: flex; gap: 8px; align-items: center; font-size: 13px; }
+[data-demo="subagent"] .sg-ws-title { font-weight: 600; }
+[data-demo="subagent"] .sg-ws-path { flex: 1; font-size: 11px; color: #666; word-break: break-all; }
+[data-demo="subagent"] .sg-upload { cursor: pointer; border: 1px solid #24292f; border-radius: 6px; padding: 2px 10px; font-size: 12px; }
+[data-demo="subagent"] .sg-files { list-style: none; margin: 6px 0 0; padding: 0; font-size: 12px; }
+[data-demo="subagent"] .sg-files li span { color: #999; margin-left: 6px; }
+[data-demo="subagent"] .sg-notice { color: #b33; font-size: 13px; min-height: 1em; }
+[data-demo="subagent"] .sg-timeline { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+[data-demo="subagent"] .sg-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline; padding: 6px 10px; border-radius: 6px; font-size: 13px; }
+[data-demo="subagent"] .sg-sa { background: #f3f7fd; border-left: 3px solid #3a7bd5; }
+[data-demo="subagent"] .sg-tool { background: #fdf7ef; border-left: 3px solid #d9822b; }
+[data-demo="subagent"] .sg-card { background: #f4f9f4; border-left: 3px solid #1a7f37; }
+[data-demo="subagent"] .sg-card pre { margin: 0; font-size: 11px; white-space: pre-wrap; }
+[data-demo="subagent"] .sg-tag { font-size: 11px; color: #fff; background: #555; border-radius: 4px; padding: 0 6px; white-space: nowrap; }
+[data-demo="subagent"] .sg-sa .sg-tag { background: #3a7bd5; }
+[data-demo="subagent"] .sg-tool .sg-tag { background: #d9822b; }
+[data-demo="subagent"] .sg-card .sg-tag { background: #1a7f37; }
+[data-demo="subagent"] .sg-text { flex: 1; word-break: break-all; }
+[data-demo="subagent"] .sg-result { flex-basis: 100%; color: #444; font-size: 12px; white-space: pre-wrap; }
+[data-demo="subagent"] .sg-ok { color: #1a7f37; font-size: 12px; white-space: nowrap; }
+[data-demo="subagent"] .sg-wait { color: #b8860b; font-size: 12px; white-space: nowrap; }
+[data-demo="subagent"] .sg-err { color: #b33; font-size: 12px; white-space: nowrap; }
+[data-demo="subagent"] .sg-empty { color: #888; font-size: 12px; }

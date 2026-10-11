@@ -28,6 +28,7 @@ mobile_gateway_*.log
 # 运行时数据
 data/
 demos/board/tools/display_object_on_board/live_image_downloads/
+demos/subagent/workspace/
 
 # 临时文件
 tmp/
