@@ -52,7 +52,7 @@ demos/<id>/
     └── <id>.css       # 本 Demo 专属样式
 ```
 
-现有 Demo 就是活范例：`demos/board/`（带工具 + 额外静态目录）、`demos/rejection/`（纯 think 解析）、`demos/standalone/`（输入框注入 standalone_event + Unit 回执 + 按 preset 切换工具）。
+现有 Demo 就是活范例：`demos/board/`（带工具 + 额外静态目录）、`demos/rejection/`（纯 think 解析）、`demos/standalone/`（输入框注入 standalone_event + Unit 回执，不带工具）。
 
 ## 3. 后端：`demo.py`
 

@@ -1,77 +1,55 @@
-// Standalone Demo 的 preset：system 取自训练过 standalone 的 sub_agent 数据（后端 defaults 原样给出
-// [参考音频, per-case 正文] 与 tools），这里只按数据类型在最前拼上训练时注入的统一前缀。
+// Standalone Demo 的 preset：[统一前缀, 参考音频] 两段，不带任何工具。
+// 本 Demo 只演示「注入 standalone 事件」本身，与工具 / 子任务无关。
 
-import { buildPrependedSetting } from '../../../static/demo-gallery/core/quick-settings.js';
 import {
+  SYSTEM_PREFIX_EN_GENERAL,
   SYSTEM_PREFIX_EN_NO_THINK,
   SYSTEM_PREFIX_ZH_NO_THINK,
   SYSTEM_PREFIX_ZH_THINK,
 } from '../../../static/demo-gallery/core/system-prefixes.js';
 
-export const PRESET_ZH_NOTHINK = 'subagent_zh_nothink';
-export const PRESET_ZH_THINK = 'subagent_zh_think';
-export const PRESET_EN_NOTHINK = 'subagent_en_nothink';
+// 训练侧统一参考音频（swy-dev o5-ai-spoken-regulation skill 的 ref_audio_mapping.json 登记项）。
+const REF_DIR = '/user/sunweiyue/lib/swy-dev/.claude/skills/o5-ai-spoken-regulation/media/ref_audio_in_training_data/MB-HT';
+export const ZH_REF_AUDIO_PATH = `${REF_DIR}/ref_minicpm_signature_fix.wav`;          // 中文声优 F224
+export const EN_REF_AUDIO_PATH = `${REF_DIR}/F409-379_clip_310-324_fix_16khz.wav`;    // 英文声优 F409
 
-export const PRESET_OPTIONS = [
-  { id: PRESET_ZH_NOTHINK, label: 'sub_agent · 中文 no-think（训练里 standalone = 子任务进度）' },
-  { id: PRESET_ZH_THINK, label: 'sub_agent · 中文 think（训练里 standalone = 文件上传通知）' },
-  { id: PRESET_EN_NOTHINK, label: 'sub_agent · English no-think（progress updates）' },
+export const PRESET_ZH_THINK = 'zh_think';
+export const PRESET_ZH_NOTHINK = 'zh_nothink';
+export const PRESET_EN_GENERAL = 'en_general';
+export const PRESET_EN_NOTHINK = 'en_nothink';
+
+const PRESETS = [
+  { id: PRESET_ZH_THINK, label: '中文 · think（前缀 #1 · F224）', prefix: SYSTEM_PREFIX_ZH_THINK, ref: ZH_REF_AUDIO_PATH },
+  { id: PRESET_ZH_NOTHINK, label: '中文 · no-think（前缀 #2 · F224）', prefix: SYSTEM_PREFIX_ZH_NO_THINK, ref: ZH_REF_AUDIO_PATH },
+  { id: PRESET_EN_GENERAL, label: 'English · general (prefix #3 · F409)', prefix: SYSTEM_PREFIX_EN_GENERAL, ref: EN_REF_AUDIO_PATH },
+  { id: PRESET_EN_NOTHINK, label: 'English · no-think (prefix #6 · F409)', prefix: SYSTEM_PREFIX_EN_NO_THINK, ref: EN_REF_AUDIO_PATH },
 ];
 
-// 与 F9-T3 data-mix 的源一一对应：zh no-think #2 / zh think #1 / en no-think #6。
-const PREFIX_BY_PRESET = {
-  [PRESET_ZH_NOTHINK]: SYSTEM_PREFIX_ZH_NO_THINK,
-  [PRESET_ZH_THINK]: SYSTEM_PREFIX_ZH_THINK,
-  [PRESET_EN_NOTHINK]: SYSTEM_PREFIX_EN_NO_THINK,
+export const PRESET_OPTIONS = PRESETS.map(({ id, label }) => ({ id, label }));
+
+/** 输入框的一键示例（只填进输入框，不自动发送）。刻意与工具 / 子任务无关。 */
+export const EXAMPLES_BY_LANGUAGE = {
+  zh: ['[系统通知] 用户的快递已经送到门口了', '现在是下午三点半'],
+  en: ['[NOTICE] The user\'s package has just been delivered.', 'It is now 3:30 PM.'],
 };
 
-/** 每类数据里 standalone 的训练形态，作为输入框的一键示例（只填进输入框，不自动发送）。 */
-export const EXAMPLES_BY_PRESET = {
-  [PRESET_ZH_NOTHINK]: [
-    '已找到两篇相关文献，正在核对其中的实验数据',
-    '价格区间已经查到了，还在确认是否含运费，马上汇总',
-  ],
-  [PRESET_ZH_THINK]: ['[FILE_UPLOADED] report.pdf'],
-  [PRESET_EN_NOTHINK]: ['Found the official documentation; now checking the version differences.'],
-};
-
-function presetSource(defaults, presetId) {
-  const preset = defaults?.standalone_presets?.[presetId];
-  if (!preset || preset.error || !preset.system) return null;
-  return preset;
+export function presetLanguage(presetId) {
+  return String(presetId || '').startsWith('en_') ? 'en' : 'zh';
 }
 
-/** 从 /defaults 构造 quick setting；某个 preset 的数据不可读时跳过它（页面上会提示）。 */
+/** 构造 quick setting；budget / 调度来自部署 defaults（与 checkpoint 绑定）。 */
 export function buildStandaloneQuickSettings(defaults) {
   const runtime = {
     nonSpokenScheduling: defaults?.non_spoken_scheduling,
     nonSpokenBudgetWhileListening: defaults?.non_spoken_budget_while_listening,
     nonSpokenBudgetWhileSpeaking: defaults?.non_spoken_budget_while_speaking,
   };
-  const settings = new Map();
-  for (const { id } of PRESET_OPTIONS) {
-    const preset = presetSource(defaults, id);
-    if (!preset) continue;
-    settings.set(id, buildPrependedSetting(
-      PREFIX_BY_PRESET[id],
-      preset.system.segments,
-      preset.tts_prompt_audio?.file_path || '',
-      runtime,
-    ));
-  }
-  return settings;
-}
-
-/** 当前 preset 的工具（顺序是训练口径的一部分，不能混用别的 preset 的）。 */
-export function presetTools(defaults, presetId) {
-  const preset = presetSource(defaults, presetId) || presetSource(defaults, PRESET_ZH_NOTHINK);
-  return JSON.parse(JSON.stringify(preset?.system?.tools || []));
-}
-
-/** 不可用的 preset 及原因，供场景提示。 */
-export function unavailablePresets(defaults) {
-  return PRESET_OPTIONS
-    .map(({ id }) => [id, defaults?.standalone_presets?.[id]])
-    .filter(([, preset]) => !preset || preset.error)
-    .map(([id, preset]) => ({ id, error: preset?.error || 'defaults 里没有该 preset' }));
+  return new Map(PRESETS.map(({ id, prefix, ref }) => [id, {
+    segments: [
+      { kind: 'text', text: prefix },
+      { kind: 'audio', audio: { source: 'path', file_path: ref } },
+    ],
+    ttsPromptAudioPath: ref,
+    runtime: { ...runtime },
+  }]));
 }

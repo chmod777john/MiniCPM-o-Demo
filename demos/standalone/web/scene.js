@@ -2,16 +2,16 @@
 //
 // 只负责「注入」与「回执」：模型说了什么、想了什么由 shell 的 AI Speech / Think 面板如实展示，
 // 这里不对模型输出做任何解读或补救。下方时间线列出每条注入及它被哪个 Unit 吃掉
-// （response.unit.started.standalone_events 回执），以及模型发起的工具调用。
+// （response.unit.started.standalone_events 回执）。
+// 本 Demo 不带任何工具；模型若仍发出 tool_call，时间线如实列出，不拦截、不回包。
 
 import { escapeHtml } from '../../../static/demo-gallery/core/ui-utils.js';
 import {
-  EXAMPLES_BY_PRESET,
+  EXAMPLES_BY_LANGUAGE,
   PRESET_OPTIONS,
-  PRESET_ZH_NOTHINK,
+  PRESET_ZH_THINK,
   buildStandaloneQuickSettings,
-  presetTools,
-  unavailablePresets,
+  presetLanguage,
 } from './quick-settings.js';
 
 export function createScene({ stageEl, getClient }) {
@@ -19,8 +19,7 @@ export function createScene({ stageEl, getClient }) {
     entries: [],      // {kind:'event', id, text, status, unit} | {kind:'tool', name, args, unit}
     seq: 0,
     notice: '',
-    defaults: null,
-    presetId: PRESET_ZH_NOTHINK,   // shell 经 tools(defaults, presetId) 告知当前 preset
+    presetId: PRESET_ZH_THINK,   // shell 经 tools(defaults, presetId) 告知当前 preset（只用来切示例语言）
   };
   let built = false;
 
@@ -75,9 +74,9 @@ export function createScene({ stageEl, getClient }) {
   }
 
   function renderExamples() {
-    const examples = EXAMPLES_BY_PRESET[state.presetId] || [];
+    const examples = EXAMPLES_BY_LANGUAGE[presetLanguage(state.presetId)] || [];
     return examples.length
-      ? '<span class="sa-examples-label">训练数据里的形态（点一下填入）：</span>' + examples
+      ? '<span class="sa-examples-label">示例（点一下填入）：</span>' + examples
         .map((text) => `<button type="button" class="sa-chip" data-example="${escapeHtml(text)}">${escapeHtml(text)}</button>`)
         .join('')
       : '';
@@ -86,7 +85,7 @@ export function createScene({ stageEl, getClient }) {
   function renderEntry(entry) {
     if (entry.kind === 'tool') {
       return `<li class="sa-row sa-tool">
-        <span class="sa-tag">模型 → 工具</span>
+        <span class="sa-tag">模型发出 tool_call</span>
         <span class="sa-unit">U${escapeHtml(String(entry.unit ?? '?'))}</span>
         <code>${escapeHtml(entry.name)}</code>
         <span class="sa-args">${escapeHtml(entry.args)}</span>
@@ -105,9 +104,7 @@ export function createScene({ stageEl, getClient }) {
   function render() {
     if (!built) build();
     stageEl.querySelector('.sa-examples').innerHTML = renderExamples();
-    const missing = state.defaults ? unavailablePresets(state.defaults) : [];
-    const notices = [state.notice, ...missing.map((m) => `preset ${m.id} 不可用：${m.error}`)].filter(Boolean);
-    stageEl.querySelector('.sa-notice').innerHTML = notices.map(escapeHtml).join('<br>');
+    stageEl.querySelector('.sa-notice').textContent = state.notice;
     const timeline = stageEl.querySelector('.sa-timeline');
     timeline.innerHTML = state.entries.length
       ? state.entries.slice().reverse().map(renderEntry).join('')
@@ -119,10 +116,9 @@ export function createScene({ stageEl, getClient }) {
     panelHint: '回车 = 一次 input.standalone_event',
     liveStatus: 'Listening via /v1/realtime · 输入框回车即注入 standalone_event',
     presetOptions: PRESET_OPTIONS,
-    fallbackQuickSetting: PRESET_ZH_NOTHINK,
+    fallbackQuickSetting: PRESET_ZH_THINK,
 
     buildQuickSettings(defaults) {
-      state.defaults = defaults;
       return buildStandaloneQuickSettings(defaults);
     },
 
@@ -131,7 +127,7 @@ export function createScene({ stageEl, getClient }) {
         state.presetId = presetId;
         if (built) queueMicrotask(render);   // preset 切换时示例跟着换
       }
-      return presetTools(defaults, presetId);
+      return [];   // 不带任何工具
     },
 
     render,
