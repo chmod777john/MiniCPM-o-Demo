@@ -776,7 +776,7 @@ async def backend_ws(ws: WebSocket) -> None:
             if msg_type == "input.append":
                 await session.push(message)
                 continue
-            if msg_type in {"input.tool_result", "input.tool_result.delta", "input.tool_result.done"}:
+            if msg_type in {"input.tool_result", "input.tool_result.delta", "input.tool_result.done", "input.standalone_event"}:
                 payload = dict(message)
                 payload["type"] = msg_type.removeprefix("input.")
                 await session.push({"type": "input.append", "input": payload})

@@ -1196,6 +1196,7 @@ async def test_runtime_emits_explicit_processed_unit_tool_event_attribution() ->
                     "tool_call_id": "tc_000002",
                 },
             ],
+            "standalone_events": [],
         }
     ]
 

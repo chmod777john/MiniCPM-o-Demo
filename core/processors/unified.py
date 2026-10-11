@@ -174,6 +174,7 @@ from core.schemas.fc_duplex import (
     FcNonSpokenGenerateResult,
     FcSpokenGenerateRequest,
     FcSpokenGenerateResult,
+    FcStandaloneEvent,
     FcTokenStreamDiff,
     FcToolResponse,
     FcViewGenerationStep,
@@ -2181,10 +2182,26 @@ class FcDuplexView:
         audio_waveform = self._audio_from_base64(request.audio_data)
         if request.audio_path and audio_waveform is None:
             audio_waveform, _ = librosa.load(request.audio_path, sr=request.sample_rate, mono=True)
+        # 本 Unit 的 input_event 顺序（SDK tool-protocol §1.1）：框架注入的 tool_started 与
+        # 解析失败回包在前；客户端事件随后，按到达顺序（= 用户时间顺序），工具结果与
+        # standalone 可交错。模型接口参数仍叫 tool_responses（历史命名），实际承载全部事件。
         tool_events = []
         tool_events.extend(self.tool_call_manager.consume_pending_started_events())
         tool_events.extend(self.tool_call_manager.consume_pending_error_responses())
-        tool_events.extend(self.tool_call_manager.validate_and_mark_responses(request.tool_responses))
+        for event in request.ordered_input_events():
+            if isinstance(event, FcStandaloneEvent):
+                if self._adapter.model_family != "o5":
+                    raise NotImplementedError(
+                        f"{self._adapter.model_family.upper()} 已停止维护，不支持 standalone_event"
+                        "（只有 O5 实现了该事件，见仓库根目录 CLAUDE.md）"
+                    )
+                tool_events.append({
+                    "type": "standalone_event",
+                    "content": event.content,
+                    "event_id": event.event_id,
+                })
+            else:
+                tool_events.extend(self.tool_call_manager.validate_and_mark_responses([event]))
         result = self._adapter.streaming_prefill(
             audio_waveform=audio_waveform,
             frame_list=request.frame_list,

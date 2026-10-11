@@ -34,6 +34,8 @@ from core.schemas.fc_duplex import (
     FcDuplexPrepareRequest,
     FcDuplexEvaluationConfig,
     FcDuplexInfrastructureConfig,
+    FcInputEvent,
+    FcStandaloneEvent,
     FcToolResponse,
     NonSpokenStepGenerationFlag,
 )
@@ -105,7 +107,8 @@ class FcDuplexSessionRuntime:
         self._on_fatal = on_fatal
         self._response_id: Optional[str] = None
         self._tools: list[OpenAIToolDefinition] = []
-        self._pending_tool_responses: List[FcToolResponse] = []
+        # 客户端提交、等待下一个音频 Unit 注入的事件（工具结果与 standalone 共用，保持到达顺序）。
+        self._pending_input_events: List[FcInputEvent] = []
         self._streaming_tool_results: Dict[str, List[Any]] = {}
         self._api_to_internal: Dict[str, str] = {}
         self._internal_to_api: Dict[str, str] = {}
@@ -505,7 +508,19 @@ class FcDuplexSessionRuntime:
         if payload_type == "tool_result.done":
             await self.finish_tool_result_stream(payload)
             return
+        if payload_type == "standalone_event":
+            await self.queue_standalone_event(payload)
+            return
         await self.enqueue_audio_input(payload)
+
+    async def queue_standalone_event(self, payload: Dict[str, Any]) -> None:
+        """排队一个 standalone 事件，与工具结果共用队列，进入下一个被处理的音频 Unit。
+
+        不合法（缺 content、非字符串、空串、未知字段）直接抛错，不会落入音频路径。
+        """
+
+        fields = {k: v for k, v in payload.items() if k not in ("type", "event_type")}
+        self._pending_input_events.append(FcStandaloneEvent.model_validate(fields))
 
     async def queue_tool_result(self, payload: Dict[str, Any]) -> None:
         api_id = str(payload.get("tool_call_id") or "")
@@ -514,7 +529,7 @@ class FcDuplexSessionRuntime:
         internal_id = self._api_to_internal.get(api_id)
         if not internal_id:
             raise RuntimeError(f"unknown tool_call_id: {api_id}")
-        self._pending_tool_responses.append(
+        self._pending_input_events.append(
             FcToolResponse(
                 call_id=internal_id,
                 content=_contents_to_text(
@@ -541,7 +556,7 @@ class FcDuplexSessionRuntime:
         deltas = self._streaming_tool_results.pop(api_id, None)
         if deltas is None:
             raise RuntimeError(f"tool_result.done without prior delta for tool_call_id: {api_id}")
-        self._pending_tool_responses.append(
+        self._pending_input_events.append(
             FcToolResponse(call_id=internal_id, content=_contents_to_text(deltas))
         )
 
@@ -604,8 +619,8 @@ class FcDuplexSessionRuntime:
         if self._non_spoken_scheduling == "latency" and not self._input_queue.empty():
             self._next_input_event.set()
         frame_list = decode_frame_base64_list(_extract_frame_base64_list(payload)).frame_list
-        tool_responses = list(self._pending_tool_responses)
-        self._pending_tool_responses.clear()
+        input_events = list(self._pending_input_events)
+        self._pending_input_events.clear()
         sample_rate = int(payload.get("sample_rate") or self._sample_rate)
         unit_index = self._audio_dump_unit_seq
         self._audio_dump_unit_seq += 1
@@ -624,7 +639,7 @@ class FcDuplexSessionRuntime:
             self.backend.fc_duplex_prefill,
             audio_data=audio_base64,
             frame_list=frame_list,
-            tool_responses=tool_responses or None,
+            input_events=input_events or None,
             sample_rate=sample_rate,
         )
         self._accumulate_unit_cost("prefill", getattr(prefill, "cost_prefill_ms", None))
@@ -1020,8 +1035,12 @@ class FcDuplexSessionRuntime:
         """Expose the exact processed-Unit attribution of internal tool events."""
 
         public_events: List[Dict[str, Any]] = []
+        standalone_events: List[Dict[str, Any]] = []
         for raw_event in list(getattr(prefill, "tool_events", None) or []):
             event = dict(raw_event)
+            if event.get("type") == "standalone_event":
+                standalone_events.append({"event_id": event.get("event_id")})
+                continue
             internal_call_id = str(event.get("call_id") or "")
             api_call_id = self._internal_to_api.get(internal_call_id)
             if not api_call_id:
@@ -1043,6 +1062,7 @@ class FcDuplexSessionRuntime:
             input_id=input_id,
             unit_index=unit_index,
             tool_events=public_events,
+            standalone_events=standalone_events,
         )
 
     async def _record_generation_steps(

@@ -184,6 +184,28 @@ class FcToolResponse(BaseModel):
     content: Any = Field(..., description="Raw tool response content")
 
 
+class FcStandaloneEvent(BaseModel):
+    """不关联任何 tool_call 的外部事件，注入 input_event 槽（SDK ``O5StandaloneEvent``）。
+
+    渲染为 ``<standalone_event>content</standalone_event>``，正文按普通文本原样编码。
+    训练数据里的典型用法是 subagent 的进度汇报：``delegate_task`` 发出后陆续推送若干条，
+    最终结果仍走 tool response。SDK 只支持单段文本，所以 content 只收非空字符串。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    content: str = Field(..., min_length=1, description="事件正文（单段文本）")
+    event_id: Optional[str] = Field(
+        None,
+        min_length=1,
+        description="客户端自定的事件 id；只用于回执 response.unit.started.standalone_events，不进模型",
+    )
+
+
+FcInputEvent = Union[FcToolResponse, FcStandaloneEvent]
+"""一个 Unit 内由客户端提交的 input event；框架自动注入的 tool_started 不在其中。"""
+
+
 class FcDuplexPrepareRequest(BaseModel):
     """FC Semantic Realtime API v3 的唯一 prepare 输入。"""
 
@@ -230,8 +252,31 @@ class FcDuplexPrefillRequest(BaseModel):
     audio_path: Optional[str] = Field(None, description="Audio file path")
     audio_data: Optional[str] = Field(None, description="Base64 float32 PCM audio")
     frame_list: Optional[List[Any]] = Field(None, description="Optional video/image frames")
-    tool_responses: Optional[List[FcToolResponse]] = Field(None, description="Tool responses for this unit")
+    tool_responses: Optional[List[FcToolResponse]] = Field(
+        None,
+        description="旧字段：只含工具结果。新调用方用 input_events",
+    )
+    input_events: Optional[List[FcInputEvent]] = Field(
+        None,
+        description=(
+            "本 Unit 客户端提交的事件，按到达顺序（即 SDK 的用户时间顺序）排列；"
+            "工具结果与 standalone 事件可交错"
+        ),
+    )
     sample_rate: int = Field(16000, gt=0, description="Input audio sample rate")
+
+    @model_validator(mode="after")
+    def validate_single_event_field(self) -> "FcDuplexPrefillRequest":
+        """两个字段同时给出时无法确定工具结果与 standalone 之间的先后，直接拒绝。"""
+
+        if self.tool_responses and self.input_events:
+            raise ValueError("tool_responses 与 input_events 只能二选一")
+        return self
+
+    def ordered_input_events(self) -> List[FcInputEvent]:
+        """返回本 Unit 客户端事件的有序列表（兼容旧字段）。"""
+
+        return list(self.input_events or self.tool_responses or [])
 
 
 class FcDuplexPrefillResult(BaseModel):

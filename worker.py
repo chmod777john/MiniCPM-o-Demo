@@ -268,7 +268,7 @@ async def _handle_remote_backend_runtime_ws(
                     await runtime.push(_input_payload(msg))
                     continue
 
-                if msg_type in {"input.tool_result", "input.tool_result.delta", "input.tool_result.done"}:
+                if msg_type in {"input.tool_result", "input.tool_result.delta", "input.tool_result.done", "input.standalone_event"}:
                     payload = msg.get("payload")
                     if not isinstance(payload, dict):
                         payload = {k: v for k, v in msg.items() if k != "type"}

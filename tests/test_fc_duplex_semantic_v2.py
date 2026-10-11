@@ -131,6 +131,7 @@ async def test_runtime_emits_minimal_semantic_v2_events_only() -> None:
         "unit_index": 0,
         "input_id": "input_000000",
         "tool_events": [],
+        "standalone_events": [],
     }
     assert events[1] == {
         "type": "response.spoken.end",

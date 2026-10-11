@@ -28,6 +28,7 @@ from core.schemas.fc_duplex import (
     FcFinalizeUnitRequest,
     FcNonSpokenGenerateRequest,
     FcSpokenGenerateRequest,
+    FcInputEvent,
     FcToolResponse,
 )
 from core.fc_duplex.system_input import (
@@ -432,14 +433,22 @@ class PyTorchBackend:
         audio_data: Optional[str] = None,
         frame_list: Optional[list] = None,
         tool_responses: Optional[List[FcToolResponse]] = None,
+        input_events: Optional[List[FcInputEvent]] = None,
         sample_rate: int = 16000,
     ) -> Any:
+        """Prefill 一个 Unit。
+
+        ``input_events`` 是保序的客户端事件（工具结果与 standalone 可交错）；
+        ``tool_responses`` 是只含工具结果的旧参数，留给离线脚本，二者只能给一个。
+        """
+
         fc_view = self.processor.set_fc_duplex_mode()
         return fc_view.streaming_prefill(
             FcDuplexPrefillRequest(
                 audio_data=audio_data,
                 frame_list=frame_list,
                 tool_responses=tool_responses,
+                input_events=input_events,
                 sample_rate=sample_rate,
             )
         )
