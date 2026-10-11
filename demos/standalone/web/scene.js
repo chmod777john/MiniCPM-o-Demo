@@ -56,7 +56,7 @@ export function createScene({ stageEl, getClient }) {
     if (!text) return;
     const client = getClient();
     if (!client || !client.ready) {
-      state.notice = '会话还没开始：先点 Start mic live，等状态变成 connected 再注入。';
+      state.notice = '会话还没就绪：先点 Start mic live，等底部状态栏出现「Listening」再注入（system 预填要十几秒）。';
       render();
       return;
     }
