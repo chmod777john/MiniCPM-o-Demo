@@ -14,8 +14,12 @@
 //   必填 render()   首帧语义：shell 在初始化时调用一次，此时 stageEl 是空的，
 //                   **场景必须自己画出空状态**（骨架 HTML 里不再有任何场景内容）。
 //   可选 pageTitle / panelTitle / panelHint / liveStatus
-//   可选 presetOptions [{id,label}]、fallbackQuickSetting、buildQuickSettings(defaults)、tools(defaults)
+//   可选 presetOptions [{id,label}]、fallbackQuickSetting、buildQuickSettings(defaults)
+//   可选 tools(defaults, presetId)  presetId = 当前选中的 preset（选「Custom」时为 fallbackQuickSetting）；
+//                                   工具顺序是训练口径的一部分时，按 preset 返回各自的工具
 //   可选 reset()、onThinkBegin/onThinkDelta/onThinkEnd/onToolCallDone
+//   可选 onUnitStarted(event)       每个被处理的 Unit 的 response.unit.started（含 tool_events /
+//                                   standalone_events 回执），用于展示事件落在哪个 Unit
 //
 // ⚠️ 场景**不得**改 stageEl 的 class 来解除 shell 给的布局（这类补丁已废弃）。
 //    布局写在 demo 自己的 CSS 里，选择器以 [data-demo="<id>"] 开头。
@@ -47,6 +51,7 @@ export function normalizeScene(scene, { demoId, title }) {
     onThinkDelta: bind(scene.onThinkDelta, NOOP),
     onThinkEnd: bind(scene.onThinkEnd, NOOP),
     onToolCallDone: bind(scene.onToolCallDone, NOOP),
+    onUnitStarted: bind(scene.onUnitStarted, NOOP),
   };
   for (const key of ['pageTitle', 'panelTitle']) {
     if (typeof normalized[key] !== 'string' || !normalized[key]) {

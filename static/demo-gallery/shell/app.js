@@ -536,11 +536,15 @@ function applyDefaults(defaults) {
     renderSystemSegments();
   }
   if (el.kvCkpt) el.kvCkpt.textContent = defaults.checkpoint_profile_id || 'No checkpoint profile';
-  if (el.kvTools) {
-    const names = validatedTools().map(tool => tool?.function?.name || tool?.name || 'tool');
-    el.kvTools.textContent = names.length ? names.join(', ') : 'none';
-  }
+  renderToolsSummary();
   renderModelIdentity(defaults);
+}
+
+/** Session 面板的 Tools 一栏；工具可以随 preset 变，所以切 preset 时也要刷新。 */
+function renderToolsSummary() {
+  if (!el.kvTools) return;
+  const names = validatedTools().map(tool => tool?.function?.name || tool?.name || 'tool');
+  el.kvTools.textContent = names.length ? names.join(', ') : 'none';
 }
 
 function renderModelIdentity(defaults) {
@@ -600,6 +604,7 @@ function applyQuickSetting(settingId) {
   if (el.ttsPadProtocolView) el.ttsPadProtocolView.value = ttsPadProtocol;
   if (el.quickSetting) el.quickSetting.value = settingId;
   renderSystemSegments();
+  renderToolsSummary();
 }
 
 function markQuickSettingCustom() {
@@ -607,7 +612,7 @@ function markQuickSettingCustom() {
 }
 
 function validatedTools() {
-  const tools = scene.tools(fcBoardDefaults || {});
+  const tools = scene.tools(fcBoardDefaults || {}, selectedQuickSetting());
   if (!Array.isArray(tools)) throw new Error('System tools must be an array');
   return JSON.parse(JSON.stringify(tools));
 }
@@ -693,6 +698,7 @@ function applyApiEvent(event) {
       setStatus(`Session closed: ${event.reason || 'closed'}`);
       return;
     case 'response.unit.started':
+      scene.onUnitStarted(event);
       return;
     case 'response.non_spoken.end':
       nsView.markNonSpokenEnd(event.unit_index, event.reason);
