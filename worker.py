@@ -441,6 +441,10 @@ def main():
         log_level="debug" if ws_debug else "info",
         log_config=_uvicorn_log_config(debug=ws_debug),
         ws_max_size=128 * 1024 * 1024,
+        # 与 py_backend/server.py 同理：本端忙于把输入转给 backend 时读不到对端的 pong，
+        # 默认 20s 窗口会把健康会话误判为 keepalive 超时（2026-10-12 在 Gateway↔Worker 上实际发生）。
+        ws_ping_interval=360.0,
+        ws_ping_timeout=360.0,
     )
 
 

@@ -280,3 +280,45 @@ def test_api_only_mode_hides_everything_else(gw: TestClient, monkeypatch) -> Non
     assert gw.get("/e/alpha/v1/info").status_code == 200
     for path in ("/status", "/workers", "/api/queue", "/sessions", "/", "/admin", "/api/config/eta"):
         assert gw.get(path).status_code == 404, path
+
+
+def test_messages_sent_while_queued_are_forwarded_after_dispatch(gw: TestClient) -> None:
+    """排队期间客户端连接也一直在读（否则 uvicorn 暂停读 socket、ping 得不到 pong）；提前发来的消息按序缓存转发。"""
+
+    with _FakeWorker("A") as a:
+        _register(gw, "alpha", "wa", a.port)
+        first, cm1 = _open(gw, "alpha")
+        first.send_json({"type": "session.init"})
+        _until(first, "session.created")
+
+        second, cm2 = _open(gw, "alpha")
+        second.send_json({"type": "session.init"})              # 还在排队就发
+        second.send_json({"type": "ping-me"})
+        assert second.receive_json()["type"] == "session.queued"
+
+        first.send_json({"type": "session.close"})
+        _until(first, "session.closed")
+        cm1.__exit__(None, None, None)
+
+        frames = _until(second, "echo")
+        kinds = [f["type"] for f in frames]
+        assert kinds.index("session.queue_done") < kinds.index("session.created") < kinds.index("echo")
+        cm2.__exit__(None, None, None)
+
+
+def test_disconnect_while_queued_releases_the_ticket(gw: TestClient) -> None:
+    with _FakeWorker("A") as a:
+        _register(gw, "alpha", "wa", a.port)
+        first, cm1 = _open(gw, "alpha")
+        first.send_json({"type": "session.init"})
+        _until(first, "session.created")
+        second, cm2 = _open(gw, "alpha")
+        assert second.receive_json()["type"] == "session.queued"
+        assert gateway.endpoint_registry.get("alpha").queue_length == 1
+        cm2.__exit__(None, None, None)                           # 排队中断开
+        for _ in range(50):
+            if gateway.endpoint_registry.get("alpha").queue_length == 0:
+                break
+            time.sleep(0.1)
+        assert gateway.endpoint_registry.get("alpha").queue_length == 0
+        cm1.__exit__(None, None, None)

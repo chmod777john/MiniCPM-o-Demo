@@ -30,12 +30,10 @@ from clients.v4_payload import wav_file_audio  # noqa: E402
 SYSTEM_TEXT = "你是一个语音助手，请用自然口语简洁地回答用户。"
 
 
-async def run(args: argparse.Namespace) -> dict:
+async def run(args: argparse.Namespace, summary: dict) -> dict:
     ctx = ssl.create_default_context()
     ctx.check_hostname = False
     ctx.verify_mode = ssl.CERT_NONE
-    summary: dict = {"queued": False, "worker_id": None, "model": None, "spoken": [], "units": 0,
-                     "closed_reason": None, "error": None, "started_at": time.time()}
     user, sr = sf.read(args.user, dtype="float32")
     if sr != 16000 or user.ndim != 1:
         raise SystemExit("--user 必须是 16 kHz 单声道")
@@ -100,10 +98,13 @@ def main() -> None:
     parser.add_argument("--seconds", type=float, default=20.0)
     parser.add_argument("--hold", type=int, default=0)
     args = parser.parse_args()
+    summary: dict = {"queued": False, "worker_id": None, "model": None, "spoken": [], "units": 0,
+                     "closed_reason": None, "error": None, "started_at": time.time()}
     try:
-        summary = asyncio.run(run(args))
-    except Exception as exc:  # noqa: BLE001 验收脚本：任何失败都如实打印
-        summary = {"error": f"{type(exc).__name__}: {exc}"}
+        asyncio.run(run(args, summary))
+    except Exception as exc:  # noqa: BLE001 验收脚本：任何失败都如实打印（保留已经拿到的部分摘要）
+        summary["error"] = f"{type(exc).__name__}: {exc}"
+        summary["failed_after_s"] = round(time.time() - summary["started_at"], 1)
     summary.pop("started_at", None)
     print(json.dumps(summary, ensure_ascii=False))
 

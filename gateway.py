@@ -500,6 +500,25 @@ async def _api_worker_passthrough_ws(
 
     await ws.accept()
 
+    # 客户端连接从接受起就持续读取，进入队列，排队期间也不停：uvicorn（sansio 实现）收到一条消息后
+    # 会暂停读 socket，直到应用 receive()；若排队时不读，客户端的 ping 得不到 pong，排队超过约 40 秒
+    # 就会被客户端判为 keepalive 超时断开。排队期间提前发来的消息（如 session.init）按序缓存，
+    # 分到 Worker 后先转发它们。读到 None 表示客户端已断开。
+    client_frames: "asyncio.Queue[Optional[tuple]]" = asyncio.Queue()
+    client_gone = asyncio.Event()
+
+    async def read_client() -> None:
+        try:
+            async for raw in ws.iter_text():
+                await client_frames.put((time.time(), raw))
+        except (WebSocketDisconnect, RuntimeError):
+            pass
+        finally:
+            client_gone.set()
+            await client_frames.put(None)
+
+    client_reader = asyncio.create_task(read_client())
+
     # ---- API 往返数据录制(旁路,fail-safe:任何异常都不影响转发主路径)----
     # 网关只认 session_id,不知道这个 Session 拿来干什么。从连接建立起就开始缓冲,
     # 包括排队阶段网关自己发的帧;拿到 worker 在 session.created 里返回的 session_id
@@ -582,6 +601,10 @@ async def _api_worker_passthrough_ws(
                         worker = await asyncio.wait_for(asyncio.shield(future), timeout=3.0)
                         break
                     except asyncio.TimeoutError:
+                        if client_gone.is_set():
+                            logger.info("API WS disconnected during queue: ticket=%s", ticket.ticket_id)
+                            pool.cancel(ticket.ticket_id)
+                            return None
                         updated = pool.get_ticket(ticket.ticket_id)
                         if updated:
                             await gateway_send({
@@ -624,6 +647,7 @@ async def _api_worker_passthrough_ws(
     for attempt in range(2):
         acquired = await acquire_worker()
         if acquired is None:
+            client_reader.cancel()
             return
         ticket, worker = acquired
         worker.mark_busy(worker_status, request_type, ticket_id=ticket.ticket_id)
@@ -633,6 +657,9 @@ async def _api_worker_passthrough_ws(
                 ws_url,
                 open_timeout=5,
                 max_size=128 * 1024 * 1024,
+                # 内部链路不做 keepalive ping（Worker 侧窗口放宽到 360s，与 worker→backend 一致）：
+                # 对端忙于处理时读不到 pong 会被误判超时；存活由每 10 秒的健康检查负责。
+                ping_interval=None,
             )
             break
         except Exception as exc:
@@ -647,6 +674,7 @@ async def _api_worker_passthrough_ws(
             "error": {"code": "session_failed", "message": "Assigned worker is unreachable", "type": "server_error"},
         })
         await ws.close(code=1011, reason="Worker unreachable")
+        client_reader.cancel()
         return
 
     await gateway_send({"type": "session.queue_done", "worker_id": worker.worker_id})
@@ -703,17 +731,17 @@ async def _api_worker_passthrough_ws(
                 return {"_raw_text": raw}
 
         async def client_to_worker() -> None:
-            try:
-                async for raw in ws.iter_text():
-                    recv = time.time()
-                    sent: Optional[float] = None
-                    try:
-                        await worker_ws.send(raw)
-                        sent = time.time()
-                    finally:
-                        record_or_buffer("up", _as_frame(raw), recv_ts=recv, send_ts=sent, src="client")
-            except WebSocketDisconnect:
-                pass
+            while True:
+                item = await client_frames.get()
+                if item is None:
+                    return                      # 客户端断开
+                recv, raw = item
+                sent: Optional[float] = None
+                try:
+                    await worker_ws.send(raw)
+                    sent = time.time()
+                finally:
+                    record_or_buffer("up", _as_frame(raw), recv_ts=recv, send_ts=sent, src="client")
 
         async def worker_to_client() -> None:
             async for raw in worker_ws:
@@ -784,6 +812,7 @@ async def _api_worker_passthrough_ws(
             except Exception:
                 pass
         live_sessions.unregister(live)
+        client_reader.cancel()
         duration = (datetime.now() - task_start).total_seconds()
         pool.release_worker(worker, request_type=request_type, duration_s=duration)
         try:
@@ -1846,6 +1875,10 @@ def main():
             log_level="debug" if ws_debug else "info",
             log_config=_uvicorn_log_config(debug=ws_debug),
             ws_max_size=128 * 1024 * 1024,
+            # 对外客户端：仍用 ping 发现死连接，但窗口放宽 —— 本端忙于转发时读 pong 会滞后，
+            # 默认的 20s/20s 会把健康的会话误判为超时。
+            ws_ping_interval=30.0,
+            ws_ping_timeout=120.0,
             **ssl_kwargs,
         )
         internal_config = uvicorn.Config(
