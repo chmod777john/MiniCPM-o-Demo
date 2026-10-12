@@ -73,15 +73,16 @@ git checkout --detach <交付方提供的一键启动 commit>
 
 ```text
 HTTP API:  http://<host>:8009
-WebSocket: ws://<host>:8009/v1/realtime
+WebSocket: ws://<host>:8009/v1/realtime      （本机单 Worker 的 default 端点）
 Health:    http://<host>:8009/health
-Demos:     http://<host>:8009/demos            (Demo Gallery 索引页)
-FC Board:  http://<host>:8009/demos/board
-Rejection: http://<host>:8009/demos/rejection
 ```
 
-Demo 的开发规范（加一个新 Demo 只在一个文件夹里改）见
-[`../demos/README.md`](../demos/README.md)。
+这个启动器面向「本机起一个 API 自用」。对外部署（多端点、多 Worker、控制面板动态扩缩容）
+见仓库根 `CLAUDE.md`「部署」与 `scripts/start_api_gateway.sh`；对外协议见
+[`fc-duplex/semantic-realtime-api-v4.md`](fc-duplex/semantic-realtime-api-v4.md)。
+
+Demo 不在 API 里：Demo 是独立服务（`demo_server.py`，见 [`../demos/README.md`](../demos/README.md)），
+页面上填 API 端点即可连任意一个部署。
 
 TrainingData 驱动的调用样例、事件含义和推理产物说明见
 [`fc-duplex/api-usage.md`](fc-duplex/api-usage.md)。

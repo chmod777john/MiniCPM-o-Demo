@@ -45,7 +45,10 @@ class _BaseFcDeploymentProfile(BaseModel):
     )
     case_folder: str | None = Field(
         default=None,
-        description="FC Board 静态 TrainingData case 目录。",
+        description=(
+            "已废弃，不再使用：board Demo 取默认 case 的目录现在是 Demo 服务自己的配置"
+            "（DEMO_BOARD_CASE_FOLDER）。保留字段只为能读旧 Profile 文件。"
+        ),
     )
     unit_policy: O5UnitPolicy | None = Field(
         description=(
@@ -271,8 +274,6 @@ def apply_fc_deployment_profile_environment(
     os.environ["O5_DEPLOY_MODE"] = profile.deployment_mode
     if profile.reference_audio_path is not None:
         os.environ["FC_REFERENCE_AUDIO_PATH"] = profile.reference_audio_path
-    if profile.case_folder is not None:
-        os.environ["FC_BOARD_CASE_FOLDER"] = profile.case_folder
     if isinstance(profile, O5FcDeploymentProfile):
         if profile.backbone_dir is not None:
             os.environ["O5_BACKBONE_DIR"] = profile.backbone_dir
@@ -330,10 +331,6 @@ def _validate_profile_paths(profile: FcDeploymentProfile) -> None:
     ):
         raise FileNotFoundError(
             f"reference_audio_path 不存在或不是文件: {profile.reference_audio_path}"
-        )
-    if profile.case_folder is not None and not Path(profile.case_folder).is_dir():
-        raise FileNotFoundError(
-            f"case_folder 不存在或不是目录: {profile.case_folder}"
         )
     if (
         isinstance(profile, O5FcDeploymentProfile)
