@@ -1,12 +1,15 @@
 """对一个 API 端点跑一次真实 v4 会话，打印 JSON 摘要（部署验收用）。
 
     python scripts/api_v4_smoke.py --url wss://<host>:<port>/e/<端点>/v1/realtime?mode=audio \\
-        --ref <16k 单声道参考音频.wav> --user <16k 单声道用户音频.wav> [--seconds 20] [--hold 0]
+        --ref <16k 单声道参考音频.wav> --user <16k 单声道用户音频.wav> [--seconds 20] [--hold 0] \
+        [--config '{"tts_pad_protocol": "legacy"}']
 
 - 参考音频按 v4 以 base64 WAV 上传（同时作 system 音频段与 tts_prompt_audio）。
 - 用户音频逐 Unit 锁步发送（发一个 Unit，等 response.unit.committed 再发下一个）。
 - ``--hold N``：音频发完后再发 N 个静音 Unit，用来让会话多占住 Worker 一会儿（测排队 / 驱逐）。
-- 摘要含：是否排过队、分到的 worker_id、session.created.model、模型说的话、结束原因。
+- ``--config JSON``：合并进 ``payload.config``（例如覆盖 tts_pad / 预算 / 调度；不传就用端点默认值）。
+- 摘要含：是否排过队、分到的 worker_id、session.created.model 与 session_config（实际生效值）、
+  模型说的话、结束原因。
 """
 
 from __future__ import annotations
@@ -46,7 +49,7 @@ async def run(args: argparse.Namespace, summary: dict) -> dict:
             "system": {"segments": [{"kind": "text", "text": SYSTEM_TEXT}, {"kind": "audio", "audio": ref}],
                        "tools": []},
             "tts_prompt_audio": ref, "generate_audio": True,
-            "config": {"decoding_policy": "constrained_decoding"},
+            "config": {"decoding_policy": "constrained_decoding", **args.config},
         }}))
         while True:
             event = json.loads(await ws.recv())
@@ -58,6 +61,7 @@ async def run(args: argparse.Namespace, summary: dict) -> dict:
                 summary["dispatched_after_s"] = round(time.time() - summary["started_at"], 1)
             elif kind == "session.created":
                 summary["model"] = event.get("model")
+                summary["session_config"] = event.get("session_config")
                 break
             elif kind in ("error", "session.closed"):
                 summary["error"] = event
@@ -97,6 +101,7 @@ def main() -> None:
     parser.add_argument("--user", required=True)
     parser.add_argument("--seconds", type=float, default=20.0)
     parser.add_argument("--hold", type=int, default=0)
+    parser.add_argument("--config", type=json.loads, default={}, help="合并进 payload.config 的 JSON 对象")
     args = parser.parse_args()
     summary: dict = {"queued": False, "worker_id": None, "model": None, "spoken": [], "units": 0,
                      "closed_reason": None, "error": None, "started_at": time.time()}
