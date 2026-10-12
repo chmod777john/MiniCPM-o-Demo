@@ -90,20 +90,21 @@ cd /user/sunweiyue/lib/MiniCPM-o-Demo-modelbest
 > （`test_chat` / `test_duplex` / `test_e2e` / `test_integration` / `test_streaming` /
 > `test_queue`），本机必然失败，与 Demo 开发无关。
 
-## ⚠️ 线上部署跑的就是这个目录
+## ⚠️ 线上 Demo 服务跑的就是这个目录
 
-廊坊 deploy 池的 Demo 服务（公网 `https://47.95.219.248:7029/demos`）直接从
-`/user/sunweiyue/lib/MiniCPM-o-Demo-modelbest` 启动。所以：
+线上 Demo 服务（公网 `https://47.95.219.248:7032/demos`）是开发机上的一个进程，直接从
+`/user/sunweiyue/lib/MiniCPM-o-Demo-modelbest` 启动（`scripts/start_demo_server.sh <env 文件>`）。
+它**不加载模型**；页面里连的 API 是另一套服务（公网 7029，见仓库根 `CLAUDE.md`「部署」）。所以：
 
-- **前端文件（JS / CSS / 页面模板）一保存，线上立刻变**；Python 改动要重启 job 才生效。
-  前后端不同步时页面可能直接坏掉。
-- 开发半成品时**不要直接在这个工作区里改**，用 `git worktree` 另开一份。要上线时再合回来，
-  并按需重启 deploy job。
-- 新 Demo 上线要重启服务：Gallery 只在启动时扫描 `demos/`。
+- **前端文件（JS / CSS / 页面模板）一保存，线上立刻变**；Python 改动要重启 Demo 服务进程才生效
+  （秒级，不涉及模型）。前后端不同步时页面可能直接坏掉。
+- 开发半成品时**不要直接在这个工作区里改**，用 `git worktree` 另开一份，在别的端口起一个 Demo 服务自测。
+- 新 Demo 上线要重启 Demo 服务：Gallery 只在启动时扫描 `demos/`。
 
 ## 部署 subagent：必须用你自己的 Claude Code 与网关账号
 
-subagent 会在后台起 Claude Code（联网、消耗网关额度），部署者必须在**自己的**入口脚本里设两个环境变量，
+subagent 会在后台起 Claude Code（联网、消耗网关额度；跑在 Demo 服务所在机器上），部署者必须在**自己的**
+Demo 服务 env 文件里设两个环境变量，
 缺任何一个，subagent 的 API 全部返回 503（其余 Demo 不受影响）：
 
 | 变量 | 含义 |
