@@ -221,6 +221,10 @@ class SubagentRunner:
             task.emit("error", f"后台执行超时（{int(TASK_TIMEOUT_SEC)} 秒）")
             return
         final_text, is_error = outcome["final_text"], outcome["is_error"]
+        if final_text and (is_error or proc.returncode not in (0, None)):
+            # 例如上游安全分类器拦下请求：exit=1，但 result 里有原因 —— 如实回给模型。
+            task.emit("error", strip_progress(final_text))
+            return
         if final_text is None or proc.returncode not in (0, None):
             stderr = (await proc.stderr.read()).decode("utf-8", "replace")[-500:] if proc.stderr else ""
             task.emit("error", f"Claude Code 异常退出（exit={proc.returncode}）：{stderr.strip() or '无输出'}")
@@ -301,14 +305,15 @@ def build_prompt(tool_name: str, arguments: dict[str, Any], language: str) -> tu
             f"\n用 WebSearch 搜索给定关键词，取最多 {limit} 条结果。最后只输出一个 JSON 对象，不要任何其他文字："
             '{"items":[{"title":"...","url":"...","snippet":"..."}]}'
         )
-        return query, system
+        # 只给一个裸关键词时，模型偶尔认不出这就是要搜的内容（实测回「没有提供搜索关键词」），所以明确标出。
+        return (f"搜索关键词：{query}" if zh else f"Search query: {query}"), system
     if tool_name == "calculate":
         expression = str(arguments.get("expression") or "")
         system = common + (
             "\n精确计算给定的 Python 表达式（Decimal 语义，支持日期时间运算）。最后只输出一个 JSON 对象，不要任何其他文字："
             '{"type":"number","value":<结果>,"approximate":false}；无法计算时输出 {"error":"<原因>"}。'
         )
-        return expression, system
+        return (f"表达式：{expression}" if zh else f"Expression: {expression}"), system
     raise ValueError(f"不支持的工具 {tool_name!r}")
 
 

@@ -177,6 +177,12 @@ def test_web_search_result_matches_training_format() -> None:
     assert lines[1] == "1. 迭部天气（https://a.example）14.8℃"
 
 
+def test_search_and_calculate_prompts_label_the_argument() -> None:
+    assert cr.build_prompt("web_search", {"query": "MiniCPM-o 面壁智能"}, "zh")[0] == "搜索关键词：MiniCPM-o 面壁智能"
+    assert cr.build_prompt("web_search", {"query": "MiniCPM-o"}, "en")[0] == "Search query: MiniCPM-o"
+    assert cr.build_prompt("calculate", {"expression": "2940 * 6.71"}, "zh")[0] == "表达式：2940 * 6.71"
+
+
 def test_delegate_result_drops_progress_lines() -> None:
     assert cr.format_result("delegate_task", "PROGRESS: 查到了\n结论是可以。", {}) == "结论是可以。"
 
@@ -211,3 +217,32 @@ console.log(JSON.stringify({{ zhNo: map.get('subagent_zh_nothink').segments[0].t
   enNo: map.get('subagent_en_nothink').segments[0].text === px.SYSTEM_PREFIX_EN_NO_THINK }}));
 """)
     assert got == {"zhNo": True, "zhThink": True, "enNo": True}
+
+
+def test_claude_failure_reason_is_reported_to_model(tmp_path: Path, monkeypatch) -> None:
+    """上游拦截时 Claude Code exit=1，但 result 里有原因；回给模型的应是这个原因而不是「无输出」。"""
+
+    import asyncio
+
+    fake = tmp_path / "fake_claude"
+    fake.write_text('#!/bin/sh\necho \'{"type":"result","result":"API Error: safeguards flagged this message","is_error":true}\'\nexit 1\n')
+    fake.chmod(0o755)
+    settings = tmp_path / "settings.json"
+    settings.write_text('{"env": {}}')
+    monkeypatch.setattr(cr, "WORKSPACE_ROOT", tmp_path / "ws")
+    monkeypatch.setattr(cr, "CLAUDE_CONFIG_DIR", tmp_path / "cfg")
+    monkeypatch.setenv("SUBAGENT_CLAUDE_BIN", str(fake))
+    monkeypatch.setenv("SUBAGENT_CLAUDE_SETTINGS", str(settings))
+
+    async def go() -> cr.Task:
+        runner = cr.SubagentRunner()
+        task = runner.submit(workspace_id="ws_abcdef123", tool_call_id="t1", tool_name="delegate_task",
+                             arguments={"message": "hi"}, language="zh")
+        for _ in range(100):
+            if task.done:
+                break
+            await asyncio.sleep(0.05)
+        return task
+
+    task = asyncio.run(go())
+    assert [(e.kind, e.text) for e in task.events] == [("error", "API Error: safeguards flagged this message")]
