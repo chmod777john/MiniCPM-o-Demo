@@ -103,6 +103,9 @@ subagent 会在后台起 Claude Code（联网、消耗网关额度），部署�
 | `SUBAGENT_CLAUDE_SETTINGS` | **你自己的** Claude Code settings 文件；只取其中 `env` 段（网关地址、API key 等）传给后台 |
 
 **[MUST NOT] 不要把这两个路径指向别人的目录**——哪怕读得到。那等于用别人的 API key 替你付费。
+**key 用项目 key，不要用个人会话 key**：给 subagent 单独建一份 settings 文件（只含 `env`：网关地址、项目 key、
+网关必需的 disable 开关），放在仓库外、600 权限。个人 CloudCLI 会话 key 有 per-key 限速（llm-center 实测 50 RPM），
+且用量记在个人名下。
 不想开放 subagent 就三个都不设，它会保持禁用。
 
 ## 删除 Demo
