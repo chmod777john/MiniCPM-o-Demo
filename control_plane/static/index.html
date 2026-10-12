@@ -9,50 +9,66 @@
 <body>
   <header>
     <h1>MiniCPM-o 5 API 控制面板</h1>
-    <nav><a href="/api-docs" target="_blank">API 调用文档</a> <button id="logout" hidden>退出</button></nav>
+    <nav>
+      <a href="/api-docs" target="_blank">API 调用文档 ↗</a>
+      <button id="logout" class="ghost" hidden>退出</button>
+    </nav>
   </header>
 
-  <form id="login" hidden>
-    <p>请输入控制面板密码：</p>
+  <form id="login" class="login-card" hidden>
+    <h2>登录</h2>
+    <p class="muted">请输入控制面板密码</p>
     <input id="password" type="password" autocomplete="current-password" autofocus>
-    <button type="submit">进入</button>
-    <span id="login-error" class="err"></span>
+    <button type="submit" class="primary">进入</button>
+    <p id="login-error" class="err"></p>
   </form>
 
   <main id="main" hidden>
-    <div id="notice" class="notice" role="status"></div>
+    <div id="summary" class="summary"></div>
+    <div id="toast" class="toast" role="status" hidden></div>
 
     <section>
       <div class="section-head">
         <h2>端点</h2>
-        <form id="new-endpoint" class="inline">
-          <input name="name" placeholder="端点名（如 f9t4）" required pattern="[a-z0-9][a-z0-9\-]{0,39}">
-          <input name="description" placeholder="说明（可选）">
-          <button type="submit">新建端点</button>
-        </form>
+        <span class="hint">一个端点 = 一个对外接入地址 + 背后的一组 Worker；会话按顺序分给空闲 Worker，忙不过来就排队</span>
       </div>
       <div id="endpoints"></div>
+      <details class="new-box" data-key="new-endpoint">
+        <summary>＋ 新建端点</summary>
+        <form id="new-endpoint" class="form-row">
+          <label>端点名<input name="name" required pattern="[a-z0-9][a-z0-9\-]{0,39}" placeholder="例如 f9t4"></label>
+          <label class="grow">说明（可选）<input name="description" placeholder="例如 Family 9 / T4 rejection iter_2000"></label>
+          <button type="submit" class="primary">创建</button>
+        </form>
+        <p class="hint">端点名会出现在接入地址里：小写字母、数字、连字符。</p>
+      </details>
     </section>
 
     <section>
-      <div class="section-head"><h2>Worker 模板</h2><span class="hint">一个模板 = 一个 checkpoint 及其训练口径；新建 / 扩容 Worker 都从模板起</span></div>
-      <table id="templates"><thead><tr>
-        <th>名字</th><th>checkpoint 目录</th><th>tts_pad</th><th>预算 听/说</th><th>Unit</th><th>说明</th><th></th>
-      </tr></thead><tbody></tbody></table>
-      <details id="template-editor">
-        <summary>新建 / 编辑模板</summary>
+      <div class="section-head">
+        <h2>Worker 模板</h2>
+        <span class="hint">一个模板 = 一个 checkpoint 及其训练口径；添加 / 扩容 Worker 都从模板起</span>
+      </div>
+      <div id="templates"></div>
+      <details id="template-editor" class="new-box" data-key="template-editor">
+        <summary>＋ 新建 / 编辑模板</summary>
         <form id="template-form" class="grid">
-          <label>名字<input name="name" required pattern="[a-z0-9][a-z0-9\-]{0,47}" placeholder="f9t4-rejection-iter2000"></label>
+          <label>模板名<input name="name" required pattern="[a-z0-9][a-z0-9\-]{0,47}" placeholder="f9t4-rejection-iter2000"></label>
           <label class="wide">checkpoint 目录（含 model.pt 与 backbone/）<input name="model_dir" required placeholder="/backup/user/.../iter_0002000"></label>
-          <label>tts_pad 口径<select name="tts_pad_protocol" required>
-            <option value="">— 必选 —</option><option value="legacy">legacy（SDK ≤0.0.6a3 训）</option><option value="revised">revised（SDK ≥0.0.6a4 训）</option>
-          </select></label>
+          <label>tts_pad 口径
+            <select name="tts_pad_protocol" required>
+              <option value="">— 必选 —</option>
+              <option value="legacy">legacy（训练用 SDK ≤ 0.0.6a3）</option>
+              <option value="revised">revised（训练用 SDK ≥ 0.0.6a4）</option>
+            </select>
+          </label>
           <label>听时预算<input name="non_spoken_budget_while_listening" type="number" min="1" value="45"></label>
           <label>说时预算<input name="non_spoken_budget_while_speaking" type="number" min="1" value="25"></label>
-          <label>Unit 秒<input name="unit_sec" type="number" step="0.1" min="0.1" value="1.0"></label>
+          <label>Unit 秒数<input name="unit_sec" type="number" step="0.1" min="0.1" value="1.0"></label>
           <label>调度<select name="non_spoken_scheduling"><option>quality</option><option>latency</option></select></label>
-          <label class="wide">说明<input name="note"></label>
-          <div class="wide"><button type="submit">保存模板</button></div>
+          <label class="wide">说明<input name="note" placeholder="例如：Family 9 / T4，SDK 0.0.6a3 训"></label>
+          <p class="wide hint">⚠️ tts_pad 按该 checkpoint <b>训练时</b>用的 SDK 版本选，不能按目录名的日期推断。同名模板保存即覆盖；已起的 Worker 不受影响。</p>
+          <div class="wide"><button type="submit" class="primary">保存模板</button></div>
         </form>
       </details>
     </section>
