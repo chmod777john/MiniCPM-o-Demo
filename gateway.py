@@ -52,6 +52,7 @@ from gateway_modules.endpoints import DEFAULT_ENDPOINT, EndpointError, EndpointR
 from gateway_modules.live_sessions import LiveSession, LiveSessionRegistry
 from runtime.protocol import API_PROTOCOL_VERSION
 from control_plane.routes import docs_router as control_docs_router
+from control_plane.routes import public_router as control_public_router
 from control_plane.routes import router as control_router
 from control_plane.routes import set_control_plane
 from gateway_modules.ref_audio_registry import (
@@ -303,11 +304,11 @@ _BLOCKED_ADMIN_PATHS = {"/admin", "/admin/"}
 _BLOCKED_ADMIN_STATIC_PATHS = {"/static/admin.html", "/static/admin.html/"}
 
 
-# API-only 部署（对外公开的 API Gateway）：只放行 API、文档、控制面板，其余页面与接口一律 404。
+# API-only 部署（对外公开的 API Gateway）：只放行 API、文档、控制面板与公开状态页，其余页面与接口一律 404。
 # 老页面（O45 时期的 /、/omni、/admin…）和会修改服务状态的旧接口（DELETE /api/queue、
 # PUT /api/config/eta、参考音频上传、会话录音）都不对外。评测本地网关不设这个开关，行为不变。
 _API_ONLY = os.getenv("GATEWAY_API_ONLY", "").lower() in {"1", "true", "yes", "on"}
-_API_ONLY_PREFIXES = ("/e/", "/api-docs", "/control")
+_API_ONLY_PREFIXES = ("/e/", "/api-docs", "/control", "/overview")
 _API_ONLY_EXACT = {"/health"}
 
 
@@ -1478,9 +1479,10 @@ async def toggle_app(app_id: str, req: AppToggleRequest):
 
 
 # ============ 控制面板与公开文档 ============
-# /control（需密码）与 /api-docs（公开）。控制面只在 --control-plane-root 启动时启用，否则面板接口 503。
+# /control（需密码）、/overview（公开只读状态页）与 /api-docs（公开）。控制面只在 --control-plane-root 启动时启用，否则相关接口 503。
 app.include_router(control_router)
 app.include_router(control_docs_router)
+app.include_router(control_public_router)
 
 # ============ 静态文件 ============
 

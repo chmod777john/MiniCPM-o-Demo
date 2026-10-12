@@ -83,3 +83,42 @@ def test_panel_page_and_public_docs(client: TestClient) -> None:
     assert client.get("/control/static/../routes.py").status_code == 404
     docs = client.get("/api-docs")
     assert docs.status_code == 200 and "Realtime API v4" in docs.text and "<table>" in docs.text
+
+
+def test_public_overview_needs_no_password_and_leaks_nothing_internal(client: TestClient, tmp_path: Path) -> None:
+    from control_plane.specs import write_ready
+    from tests.control_plane.test_manager import _settle  # noqa: F401  (同一事件循环里推进)
+
+    _login(client)
+    client.post("/control/api/endpoints", json={"name": "alpha", "description": "公开测试"})
+    client.put(f"/control/api/templates/{TEMPLATE.name}", json=TEMPLATE.model_dump(mode="json"))
+    client.post("/control/api/workers", json={"endpoint": "alpha", "template": TEMPLATE.name})
+    client.post("/control/api/workers", json={"endpoint": "alpha", "template": TEMPLATE.name})
+    from control_plane.routes import _plane
+
+    async def advance() -> None:
+        import asyncio
+        await asyncio.sleep(0.05)                                      # 让后台提交任务跑完
+        rec = _plane.state.workers["alpha-1"]
+        _plane.jobs.statuses[rec.job_id] = "Running"
+        write_ready(Path(rec.run_dir), worker_id="alpha-1", host="10.9.9.9", port=22410, model_info={})
+        await _plane.tick()
+        await _plane.tick()
+        _plane.state.workers["alpha-2"].error = "job 在就绪前结束，见 /secret/path/job.log"
+
+    client.portal.call(advance)
+    client.cookies.clear()                                           # 公开页：不带任何登录态
+
+    assert client.get("/overview").status_code == 200
+    assert client.get("/overview/static/overview.js").status_code == 200
+    assert client.get("/overview/static/panel.js").status_code == 404   # 只开放公开页自己的静态文件
+    r = client.get("/overview/api/state")
+    assert r.status_code == 200 and r.headers["access-control-allow-origin"] == "*"
+    body = r.json()
+    (ep,) = body["endpoints"]
+    assert ep["name"] == "alpha" and ep["model"] == TEMPLATE.name and ep["tts_pad_protocol"] == "legacy"
+    states = {w["worker_id"]: w["state"] for w in ep["workers"]}
+    assert states["alpha-2"] == "queued" and states["alpha-1"] in ("idle", "unavailable")
+    for secret in ("10.9.9.9", "22410", "/abs/ckpt", "/secret/path", "job_id", "run_dir", str(tmp_path)):
+        assert secret not in r.text, secret
+    assert client.get("/control/api/state").status_code == 401       # 管理接口仍要密码

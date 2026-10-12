@@ -1,0 +1,57 @@
+:root {
+  --text: #1f2328; --muted: #656d76; --line: #e3e7eb; --bg: #f4f6f8;
+  --idle: #1a7f37; --busy: #8250df; --starting: #0969da; --leaving: #bc4c00; --unavailable: #8c959f;
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.55 -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif; }
+main { max-width: 980px; margin: 0 auto; padding: 28px 20px 48px; }
+header { display: flex; justify-content: space-between; align-items: flex-end; gap: 16px; flex-wrap: wrap; margin-bottom: 18px; }
+h1 { font-size: 22px; margin: 0 0 4px; font-weight: 650; }
+.totals { margin: 0; color: var(--muted); }
+.totals b { color: var(--text); }
+.links { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; }
+.links a { color: var(--starting); text-decoration: none; }
+.updated { color: var(--muted); font-size: 12px; }
+.updated.stale { color: var(--leaving); }
+
+.ep { background: #fff; border: 1px solid var(--line); border-radius: 12px; padding: 16px 18px; margin-bottom: 12px; }
+.ep-row { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; }
+.ep-name { font-size: 18px; font-weight: 650; }
+.ep-desc { color: var(--muted); font-size: 13px; margin-left: 8px; }
+.ep-model { color: var(--muted); font-size: 13px; margin-top: 2px; }
+.verdict { font-weight: 600; font-size: 13px; padding: 3px 12px; border-radius: 999px; white-space: nowrap; }
+.verdict.ok { color: var(--idle); background: #dafbe1; }
+.verdict.wait { color: #9a6700; background: #fff8c5; }
+.verdict.none { color: var(--muted); background: #eaeef2; }
+.url { display: flex; align-items: center; gap: 8px; margin: 10px 0 12px; }
+.url code { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 12.5px ui-monospace, Menlo, monospace; background: var(--bg); padding: 5px 10px; border-radius: 6px; user-select: all; }
+.url button { border: 1px solid var(--line); background: #fff; border-radius: 6px; padding: 4px 10px; cursor: pointer; font: inherit; font-size: 12px; white-space: nowrap; }
+.url button:hover { background: var(--bg); }
+
+.chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.chip { display: inline-flex; align-items: center; gap: 8px; padding: 5px 12px; border-radius: 999px; background: var(--bg); font-size: 13px; white-space: nowrap; }
+.chip b { font-weight: 600; }
+.chip .time { color: var(--muted); font-size: 12px; }
+.chip .tpl { color: var(--muted); font-size: 12px; }
+.empty { color: var(--muted); font-size: 13px; }
+
+.dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: var(--unavailable); flex: none; }
+.dot.idle { background: var(--idle); }
+.dot.busy { background: var(--busy); }
+.dot.starting { background: var(--starting); animation: blink 1.4s infinite; }
+.dot.leaving { background: var(--leaving); }
+.dot.unavailable { background: var(--unavailable); }
+@keyframes blink { 50% { opacity: .3; } }
+
+footer { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-top: 18px; color: var(--muted); font-size: 12px; }
+.legend { display: inline-flex; align-items: center; gap: 6px; }
+.note { flex-basis: 100%; }
+.error { color: var(--leaving); padding: 20px; text-align: center; }
+
+/* 窄屏（手机）：Worker 标签允许换行，不撑出横向滚动 */
+@media (max-width: 600px) {
+  main { padding: 18px 12px 36px; }
+  .chip { white-space: normal; flex-wrap: wrap; row-gap: 0; border-radius: 12px; max-width: 100%; }
+  .links { align-items: flex-start; }
+}

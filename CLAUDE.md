@@ -24,7 +24,7 @@ Demo 是模型能力的测量仪器，不是补偿器。**禁止**为了展示�
 ```text
 开发机（廊坊 devbox）
   公网 7029 → frpc → 127.0.0.1:10029  API Gateway + 控制面板   scripts/start_api_gateway.sh <api.env>
-       /e/<端点>/v1/realtime（WS）、/e/<端点>/v1/info、/api-docs（公开）、/control（密码）
+       /e/<端点>/v1/realtime（WS）、/e/<端点>/v1/info、/api-docs、/overview（公开只读状态页）、/control（密码）
   公网 7032 → frpc → 127.0.0.1:10032  Demo 服务                 scripts/start_demo_server.sh <demo.env>
 deploy 资源池：每个 Worker 一个 cctl job（2×A100 TP2，scripts/o5_worker_job.py），由控制面板起停
 ```

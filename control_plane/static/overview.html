@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="zh">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MiniCPM-o 5 API 运行状态</title>
+  <link rel="stylesheet" href="/overview/static/overview.css">
+</head>
+<body>
+  <main>
+    <header>
+      <div>
+        <h1>MiniCPM-o 5 API 运行状态</h1>
+        <p id="totals" class="totals">加载中…</p>
+      </div>
+      <div class="links">
+        <a href="/api-docs" target="_blank">调用文档 ↗</a>
+        <span id="updated" class="updated"></span>
+      </div>
+    </header>
+    <div id="endpoints"></div>
+    <footer>
+      <span class="legend"><i class="dot idle"></i>空闲，可立即接入</span>
+      <span class="legend"><i class="dot busy"></i>使用中</span>
+      <span class="legend"><i class="dot starting"></i>启动中</span>
+      <span class="legend"><i class="dot leaving"></i>即将下线</span>
+      <span class="legend"><i class="dot unavailable"></i>暂不可用</span>
+      <span class="note">一个 Worker 同一时间只服务一个会话；全部使用中时新会话会排队，连接上会收到排队位置。</span>
+    </footer>
+  </main>
+  <script type="module" src="/overview/static/overview.js"></script>
+</body>
+</html>

@@ -475,3 +475,62 @@ class ControlPlane:
             "ticket_id": live.ticket_id if live else None,
         }
         return view
+
+    # ------------------------------------------------------------ 公开状态视图（无需登录）
+
+    def public_snapshot(self) -> Dict[str, Any]:
+        """对外公开的状态：端点、模型名、各 Worker 的占用情况。
+
+        只给使用者判断「现在能不能用、要不要等」所需的信息；**不含** job id、Pod 内网地址、
+        checkpoint 路径与报错原文（报错里常有目录路径）。已结束的 Worker 不列出。
+        """
+
+        now = time.time()
+        endpoints: List[Dict[str, Any]] = []
+        for name, endpoint in self.state.endpoints.items():
+            pool = self.registry.get(name)
+            active = [w for w in self.state.workers.values() if w.endpoint == name and w.phase.active]
+            counts: Dict[str, int] = {}
+            for w in active:
+                counts[w.template.name] = counts.get(w.template.name, 0) + 1
+            main = max(counts, key=counts.get) if counts else None
+            main_template = next((w.template for w in active if w.template.name == main), None)
+            workers = []
+            for record in active:
+                worker = pool.get_worker(record.worker_id) if pool is not None else None
+                busy = bool(worker is not None and worker.is_busy)
+                workers.append({
+                    "worker_id": record.worker_id,
+                    "state": _public_state(record, worker),
+                    "since": record.phase_since,
+                    "session_started_at": (worker.task_started_at.timestamp()
+                                           if busy and worker.task_started_at else None),
+                    "model": record.template.name,
+                    "tts_pad_protocol": record.template.tts_pad_protocol,
+                })
+            endpoints.append({
+                "name": name,
+                "description": endpoint.description,
+                "model": main,
+                "tts_pad_protocol": main_template.tts_pad_protocol if main_template else None,
+                "queue_length": pool.queue_length if pool else 0,
+                "available": pool.idle_count if pool else 0,
+                "workers": workers,
+            })
+        return {"now": now, "endpoints": endpoints}
+
+
+def _public_state(record: WorkerRecord, worker: Any) -> str:
+    """公开状态分类：queued / loading / idle / busy / unavailable / leaving。"""
+
+    if record.phase in (WorkerPhase.SUBMITTING, WorkerPhase.QUEUED):
+        return "queued"
+    if record.phase == WorkerPhase.LOADING:
+        return "loading"
+    if record.phase in (WorkerPhase.DRAINING, WorkerPhase.STOPPING) or record.move_to:
+        return "leaving"
+    if worker is None:
+        return "unavailable"
+    if worker.is_busy:
+        return "busy"
+    return "idle" if worker.is_idle else "unavailable"

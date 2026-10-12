@@ -1,4 +1,4 @@
-"""控制面板的 HTTP 接口（``/control``，需要密码）与公开的 API 文档页（``/api-docs``）。
+"""控制面板的 HTTP 接口（``/control``，需要密码）、公开的状态页（``/overview``，只读）与 API 文档页（``/api-docs``）。
 
 密码来自环境变量 ``CONTROL_PANEL_PASSWORD``；**未设置时面板一律 503**（失败即关闭）。
 登录成功后发一个签名 cookie（HttpOnly、Secure、只在 /control 下有效，7 天过期）；
@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Request, Response
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from pydantic import BaseModel, Field, ValidationError
 
 from control_plane.manager import ControlPlane, ControlPlaneError
@@ -194,6 +194,41 @@ async def move(worker_id: str, payload: MoveRequest, plane: ControlPlane = Depen
 @router.delete("/api/workers/{worker_id}")
 async def forget(worker_id: str, plane: ControlPlane = Depends(require_login)):
     return await _call(plane.forget(worker_id))
+
+
+# ---------------------------------------------------------------- 公开状态页（无需登录，只读）
+
+public_router = APIRouter(prefix="/overview")
+_PUBLIC_HEADERS = {"Access-Control-Allow-Origin": "*", "Cache-Control": "no-store"}
+
+
+def _public_base(request: Request) -> str:
+    return (os.environ.get("API_PUBLIC_BASE_URL") or f"{request.url.scheme}://{request.url.netloc}").rstrip("/")
+
+
+@public_router.get("", include_in_schema=False)
+@public_router.get("/", include_in_schema=False)
+async def overview_page() -> FileResponse:
+    return FileResponse(STATIC_DIR / "overview.html", headers={"Cache-Control": "no-store"})
+
+
+@public_router.get("/static/{name}", include_in_schema=False)
+async def overview_static(name: str) -> FileResponse:
+    if not name.startswith("overview."):
+        raise HTTPException(status_code=404)
+    path = (STATIC_DIR / name).resolve()
+    if path.parent != STATIC_DIR or not path.is_file():
+        raise HTTPException(status_code=404)
+    return FileResponse(path, headers={"Cache-Control": "no-store"})
+
+
+@public_router.get("/api/state")
+async def overview_state(request: Request) -> JSONResponse:
+    """公开的端点与 Worker 占用状态（不含 job、内网地址、路径与报错）。"""
+
+    if _plane is None:
+        return JSONResponse({"detail": "控制面未启用"}, status_code=503, headers=_PUBLIC_HEADERS)
+    return JSONResponse({**_plane.public_snapshot(), "public_base": _public_base(request)}, headers=_PUBLIC_HEADERS)
 
 
 # ---------------------------------------------------------------- 公开文档
