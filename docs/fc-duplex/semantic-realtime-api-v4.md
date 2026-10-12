@@ -58,10 +58,10 @@ wss://<host>:<port>/e/<端点名>/v1/realtime?mode=audio
 ```json
 {"type": "session.queued", "position": 2, "estimated_wait_s": 95.0, "ticket_id": "q_…", "queue_length": 2}
 {"type": "session.queue_update", "position": 1, "estimated_wait_s": 40.0, "queue_length": 1}
-{"type": "session.queue_done"}
+{"type": "session.queue_done", "worker_id": "f9t4-1"}
 ```
 
-排队期间断开连接即放弃排队。端点不存在时 WebSocket 以关闭码 `4404` 关闭。
+`worker_id` 是这次会话分到的 Worker（只用于排查问题，不含地址）。排队期间断开连接即放弃排队。端点不存在时 WebSocket 以关闭码 `4404` 关闭。
 
 ## 3. 建立会话：`session.init`
 

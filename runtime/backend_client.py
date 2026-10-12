@@ -72,6 +72,9 @@ class RemoteBackendSession:
         }))
 
         event = await self.pull()
+        if event.get("type") == "session.closed":
+            # backend 在准备阶段就拒绝了会话（例如协议版本不对）：把带原因的关闭事件原样交给调用方。
+            return event
         if event.get("type") not in {"session.created", "initialized"}:
             raise RuntimeError(f"backend init returned unexpected event: {event.get('type')}")
         if event.get("session_id"):

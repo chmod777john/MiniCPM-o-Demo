@@ -25,6 +25,11 @@ O5_LLM_CACHE="${O5_LLM_CACHE:-32768}"
 O5_SPMD_HEARTBEAT_INTERVAL="${O5_SPMD_HEARTBEAT_INTERVAL:-30}"
 FC_MODEL_FAMILY="${FC_MODEL_FAMILY:-o5}"
 CHECKPOINT_PROFILE_ID="${CHECKPOINT_PROFILE_ID:-unprofiled}"
+# worker-only：不在本 job 起 Gateway（Gateway 与控制面板在开发机上）。worker 绑 WORKER_HOST
+# （应为 0.0.0.0），就绪后在 WORKER_READY_DIR 写 worker_ready.json，由控制面板读到后登记。
+WORKER_ONLY="${WORKER_ONLY:-0}"
+WORKER_ADVERTISE_HOST="${WORKER_ADVERTISE_HOST:-}"
+WORKER_READY_DIR="${WORKER_READY_DIR:-}"
 
 mkdir -p "${LOG_DIR}"
 cd "${PROJECT_DIR}"
@@ -45,6 +50,9 @@ if [ ! -x "${PYTHON}" ]; then echo "[tp2-start] missing python: ${PYTHON}" >&2; 
 if [ -z "${MODEL_PATH}" ] || [ ! -d "${MODEL_PATH}" ]; then echo "[tp2-start] missing MODEL_PATH=${MODEL_PATH}" >&2; exit 1; fi
 if [ -z "${PT_PATH}" ] || [ ! -f "${PT_PATH}" ]; then echo "[tp2-start] missing PT_PATH=${PT_PATH}" >&2; exit 1; fi
 if [ -z "${BACKBONE_DIR}" ] || [ ! -d "${BACKBONE_DIR}" ]; then echo "[tp2-start] missing BACKBONE_DIR=${BACKBONE_DIR}" >&2; exit 1; fi
+if [ "${WORKER_ONLY}" = "1" ] && { [ -z "${WORKER_ADVERTISE_HOST}" ] || [ -z "${WORKER_READY_DIR}" ]; }; then
+    echo "[tp2-start] WORKER_ONLY=1 requires WORKER_ADVERTISE_HOST and WORKER_READY_DIR" >&2; exit 1
+fi
 
 backend_pid=""; worker_pid=""; gateway_pid=""; frpc_pid=""
 cleanup() {
@@ -83,12 +91,14 @@ fi
 
 echo "[tp2-start] gateway=${gateway_scheme}://${GATEWAY_HOST}:${GATEWAY_PORT} backend=${BACKEND_URL} worker=${WORKER_ENDPOINT}"
 
-"${PYTHON}" gateway.py \
-    --host "${GATEWAY_HOST}" --port "${GATEWAY_PORT}" --internal-port "${GATEWAY_INTERNAL_PORT}" \
-    "${gateway_args[@]}" \
-    > "${LOG_DIR}/gateway.log" 2>&1 &
-gateway_pid=$!
-wait_http "http://127.0.0.1:${GATEWAY_INTERNAL_PORT}/health" 120 "gateway-internal"
+if [ "${WORKER_ONLY}" != "1" ]; then
+    "${PYTHON}" gateway.py \
+        --host "${GATEWAY_HOST}" --port "${GATEWAY_PORT}" --internal-port "${GATEWAY_INTERNAL_PORT}" \
+        "${gateway_args[@]}" \
+        > "${LOG_DIR}/gateway.log" 2>&1 &
+    gateway_pid=$!
+    wait_http "http://127.0.0.1:${GATEWAY_INTERNAL_PORT}/health" 120 "gateway-internal"
+fi
 
 "${PROJECT_DIR}/core/deploy/launch_tp2.sh" \
     --host "${BACKEND_HOST}" --port "${BACKEND_PORT}" \
@@ -102,7 +112,17 @@ wait_http "${BACKEND_URL}/health" 1200 "backend-tp2"
     --gpu-id 0 --backend-server-url "${BACKEND_URL}" \
     > "${LOG_DIR}/worker.log" 2>&1 &
 worker_pid=$!
-wait_http "http://${WORKER_ENDPOINT}/health" 120 "worker"
+wait_http "http://127.0.0.1:${WORKER_PORT}/health" 120 "worker"
+
+if [ "${WORKER_ONLY}" = "1" ]; then
+    "${PYTHON}" -m control_plane.specs write-ready "${WORKER_READY_DIR}" "${WORKER_ID}" "${WORKER_ADVERTISE_HOST}" "${WORKER_PORT}"
+    echo "[tp2-start] worker-only ready: ${WORKER_ADVERTISE_HOST}:${WORKER_PORT}"
+    while true; do
+        ! kill -0 "${backend_pid}" 2>/dev/null && echo "[tp2-start] backend exited" >&2 && exit 1
+        ! kill -0 "${worker_pid}" 2>/dev/null && echo "[tp2-start] worker exited" >&2 && exit 1
+        sleep 5
+    done
+fi
 
 payload="{\"endpoint\":\"${WORKER_ENDPOINT}\",\"gpu_group\":\"${WORKER_GPU_GROUP}\",\"labels\":{\"model\":\"${FC_MODEL_FAMILY}\",\"runtime\":\"tp2-cctl\",\"profile\":\"${CHECKPOINT_PROFILE_ID}\"}}"
 curl -sf -X PUT -H "content-type: application/json" --data "${payload}" "${GATEWAY_REGISTRY_URL}" >/dev/null

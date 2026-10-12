@@ -650,7 +650,7 @@ async def _api_worker_passthrough_ws(
         await ws.close(code=1011, reason="Worker unreachable")
         return
 
-    await gateway_send({"type": "session.queue_done"})
+    await gateway_send({"type": "session.queue_done", "worker_id": worker.worker_id})
     task_start = datetime.now()
     session_closed = asyncio.Event()
     live = LiveSession(worker_id=worker.worker_id, ticket_id=ticket.ticket_id, endpoint=endpoint_name)

@@ -253,7 +253,10 @@ async def _handle_remote_backend_runtime_ws(
 
         init_params = dict(init_params)
         init_params.setdefault("mode", mode)
-        await _send_runtime_event(await runtime.init(init_params))
+        init_event = await _send_runtime_event(await runtime.init(init_params))
+        if init_event.get("type") == "session.closed":
+            backend_closed = True
+            return
 
         if pending_input is not None:
             await runtime.push(pending_input)
@@ -322,6 +325,7 @@ async def _handle_remote_backend_runtime_ws(
                 "type": "session.closed",
                 "session_id": runtime.session_id,
                 "reason": "backend_error",
+                "diagnostic": {"message": str(exc)},
             })
         except Exception:
             pass
