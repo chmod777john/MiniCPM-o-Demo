@@ -57,6 +57,13 @@ class _BaseFcDeploymentProfile(BaseModel):
         default="quality",
         description="模型已验证的 non-spoken 调度策略；None 表示由 Session 显式提供。",
     )
+    tts_pad_protocol: Literal["legacy", "revised"] | None = Field(
+        default=None,
+        description=(
+            "checkpoint 训练侧的 tts_pad 口径（SDK ≤0.0.6a3 训的是 legacy，≥0.0.6a4 是 revised）。"
+            "填了就由部署绑定，Session 不传或传同值；None 表示由每个 Session 显式提供（通用评测服务）。"
+        ),
+    )
 
     @field_validator("profile_id", "model_path", "pt_path")
     @classmethod
@@ -257,6 +264,10 @@ def apply_fc_deployment_profile_environment(
             "FC_DUPLEX_NON_SPOKEN_BUDGET_WHILE_SPEAKING",
             policy_data.get("non_spoken_budgets_while_speaking"),
         )
+    if profile.tts_pad_protocol is None:
+        os.environ.pop("FC_DUPLEX_TTS_PAD_PROTOCOL", None)
+    else:
+        os.environ["FC_DUPLEX_TTS_PAD_PROTOCOL"] = profile.tts_pad_protocol
     os.environ["O5_DEPLOY_MODE"] = profile.deployment_mode
     if profile.reference_audio_path is not None:
         os.environ["FC_REFERENCE_AUDIO_PATH"] = profile.reference_audio_path

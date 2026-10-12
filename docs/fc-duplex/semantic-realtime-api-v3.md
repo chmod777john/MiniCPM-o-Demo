@@ -1,5 +1,8 @@
 # FC Semantic Realtime API v3
 
+> ⚠️ **已被 v4 取代**（见 `semantic-realtime-api-v4.md`）。对外部署的 Worker 只认 v4；v3 只在评测副本池
+> （`FC_API_ACCEPT_V3=1`）里保留，供按服务端路径传音频的评测客户端使用。
+
 v3 是破坏性协议，`session.init.payload.protocol_version` 必须严格等于字符串 `"3"`。
 服务端不接受 v2 prepare 字段或别名。
 

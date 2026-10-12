@@ -36,11 +36,11 @@ JsonObject: TypeAlias = dict[str, JsonValue]
 
 
 class FcDuplexSessionRuntime(_ProductionFcDuplexSessionRuntime):
-    """为调度单测补齐固定 v3 envelope，不提供生产兼容逻辑。"""
+    """为调度单测补齐固定 v4 envelope，不提供生产兼容逻辑。"""
 
     async def prepare(self, params: JsonObject) -> None:
         payload: JsonObject = {
-            "protocol_version": "3",
+            "protocol_version": "4",
             "system": {"segments": [], "tools": []},
             "generate_audio": False,
             **params,

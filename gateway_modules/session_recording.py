@@ -232,6 +232,9 @@ class SessionRecorder:
     def _externalize(self, value: Any, default_sr: int) -> Any:
         """递归复制;音频 base64 → @blob/NNNN.wav,视频帧 JPEG → @blob/NNNN.jpg。不改原对象。"""
         if isinstance(value, dict):
+            if value.get("source") == "base64" and value.get("format") == "wav" and isinstance(value.get("data"), str):
+                # v4 的 system / TTS 参考音频：本身就是 WAV 文件字节，原样落成 wav，不再内联在 session.init 里。
+                return {**value, "data": self._stash_wav_file(value["data"])}
             sr = value.get("sample_rate")
             sr = sr if isinstance(sr, int) and sr > 0 else default_sr
             out: Dict[str, Any] = {}
@@ -259,6 +262,18 @@ class SessionRecorder:
         rel, path = self._next_blob("wav")
         try:
             _write_float32_wav(path, data, sample_rate)
+        except Exception:
+            return value
+        return rel
+
+    def _stash_wav_file(self, value: str) -> str:
+        data = _strict_b64decode(value)
+        if data is None:
+            return value
+        rel, path = self._next_blob("wav")
+        try:
+            with open(path, "wb") as f:
+                f.write(data)
         except Exception:
             return value
         return rel

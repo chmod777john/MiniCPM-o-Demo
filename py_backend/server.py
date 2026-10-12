@@ -278,6 +278,11 @@ class BackendProtocolSession:
                 if self._fc_runtime is not None
                 else None
             ),
+            model=(
+                self._fc_runtime.model_info
+                if self._fc_runtime is not None
+                else None
+            ),
             metrics=self._safe_metrics(),
         )
 

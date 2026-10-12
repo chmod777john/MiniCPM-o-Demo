@@ -39,13 +39,26 @@ from core.schemas.fc_duplex import (
     FcToolResponse,
     NonSpokenStepGenerationFlag,
 )
+from core.fc_duplex.model_info import worker_model_info
 from core.fc_duplex.system_input import (
+    FcAudioBase64Input,
     FcAudioPathInput,
     FcSystemContentInput,
+    FcSystemContentV4Input,
 )
 from py_backend.media import decode_audio_base64, decode_frame_base64_list
 
 logger = logging.getLogger(__name__)
+
+
+def v3_path_audio_enabled() -> bool:
+    """是否仍接受 v3（音频按服务端路径传）。
+
+    对外部署的 Worker 默认只认 v4：让任何调用方传一个服务端路径、由服务端去读，是不该对外开放的能力。
+    评测副本池（客户端与 Worker 同机、按 v3 传路径）显式设 ``FC_API_ACCEPT_V3=1``。
+    """
+
+    return os.environ.get("FC_API_ACCEPT_V3", "").lower() in {"1", "true", "yes", "on"}
 
 
 def _deferred_budget_reached_step(
@@ -157,6 +170,7 @@ class FcDuplexSessionRuntime:
         # 默认只累加不打印（600 Unit × 数十副本会把日志冲爆）。
         self._unit_cost_ms: Dict[str, float] = {}
         self._resume_identity: Dict[str, Any] = {}
+        self._protocol_version: str = "4"
         self._emit_debug_events = (
             os.environ.get("FC_DUPLEX_DEBUG_EVENTS", "0") == "1"
         )
@@ -187,11 +201,14 @@ class FcDuplexSessionRuntime:
         """
 
         protocol_version = params.get("protocol_version")
-        if protocol_version != "3":
+        accepted = ("4", "3") if v3_path_audio_enabled() else ("4",)
+        if protocol_version not in accepted:
             raise RuntimeError(
-                "FC Semantic Realtime API requires protocol_version='3'; "
+                "FC Semantic Realtime API requires protocol_version='4' "
+                "(audio as base64 WAV; server paths are not accepted); "
                 f"received {protocol_version!r}"
             )
+        self._protocol_version = str(protocol_version)
         legacy_keys = {
             "system_prompt",
             "instructions",
@@ -219,13 +236,23 @@ class FcDuplexSessionRuntime:
                 + "; use system, system.tools, tts_prompt_audio, and generate_audio"
             )
 
-        prepare_request = FcDuplexPrepareRequest(
-            system=FcSystemContentInput.model_validate(params.get("system")),
-            tts_prompt_audio=(
-                FcAudioPathInput.model_validate(params["tts_prompt_audio"])
-                if params.get("tts_prompt_audio") is not None
+        raw_tts_prompt = params.get("tts_prompt_audio")
+        if protocol_version == "4":
+            # 对外协议：音频只收 base64，落到本机内容哈希缓存后转成内部路径 DTO。
+            system_input = FcSystemContentV4Input.model_validate(params.get("system")).materialize()
+            tts_prompt_input = (
+                FcAudioBase64Input.model_validate(raw_tts_prompt).materialize()
+                if raw_tts_prompt is not None
                 else None
-            ),
+            )
+        else:
+            system_input = FcSystemContentInput.model_validate(params.get("system"))
+            tts_prompt_input = (
+                FcAudioPathInput.model_validate(raw_tts_prompt) if raw_tts_prompt is not None else None
+            )
+        prepare_request = FcDuplexPrepareRequest(
+            system=system_input,
+            tts_prompt_audio=tts_prompt_input,
             generate_audio=params.get("generate_audio"),
         )
 
@@ -282,12 +309,20 @@ class FcDuplexSessionRuntime:
         )
         self._fixed_tool_call_ids = evaluation.fixed_tool_call_ids
         self._decode_mode = str(config.get("decode_mode", params.get("decode_mode", "greedy")) or "greedy")
-        # tts_pad_protocol 是 per-ckpt 训练口径（和 prefix / unit_policy 同类），由 session preset 给。
-        # 默认 legacy = SDK ≤ 0.0.6a3 的存量 ckpt；用 0.0.6a4 数据重训后的 ckpt 要在 preset 里写
-        # "tts_pad_protocol": "revised"。
-        self._tts_pad_protocol = str(
-            config.get("tts_pad_protocol", params.get("tts_pad_protocol", "legacy")) or "legacy"
-        )
+        # tts_pad_protocol 是 per-ckpt 训练口径（和 prefix / unit_policy 同类）。部署 Profile 写了
+        # 就由部署绑定（FC_DUPLEX_TTS_PAD_PROTOCOL），Session 不传或传同值；没写（通用评测服务）
+        # 时由 session preset 给，默认 legacy = SDK ≤ 0.0.6a3 的存量 ckpt。
+        self._tts_pad_protocol = _resolve_profile_bound_choice(
+            requested=_optional_non_empty_string(
+                _coalesce(config.get("tts_pad_protocol"), params.get("tts_pad_protocol")),
+                field_name="tts_pad_protocol",
+            ),
+            registered=_optional_non_empty_string(
+                os.environ.get("FC_DUPLEX_TTS_PAD_PROTOCOL") or None,
+                field_name="FC_DUPLEX_TTS_PAD_PROTOCOL",
+            ),
+            field_name="tts_pad_protocol",
+        ) or "legacy"
         # decoding_policy 是 per-session / per-用途（FDB 用 raise，tau / Demo 用 constrained），不进 ckpt preset
         self._decoding_policy = str(
             config.get("decoding_policy", params.get("decoding_policy", "raise_protocol_error"))
@@ -320,6 +355,7 @@ class FcDuplexSessionRuntime:
         )
         self._resume_identity.update(
             {
+                "protocol_version": self._protocol_version,
                 "checkpoint_profile_id": self._checkpoint_profile_id,
                 "unit_policy": self._unit_policy.model_dump(mode="json"),
                 "tts_pad_protocol": self._tts_pad_protocol,
@@ -344,6 +380,12 @@ class FcDuplexSessionRuntime:
             self._resume_identity["non_spoken_budget_while_speaking"] = (
                 speaking_legacy_scalar
             )
+
+    @property
+    def model_info(self) -> Dict[str, Any]:
+        """本 Worker 加载的模型摘要（随 session.created 下发）。"""
+
+        return worker_model_info()
 
     @property
     def resume_identity(self) -> Dict[str, Any]:

@@ -57,6 +57,7 @@ from minicpm_o5_sdk.protocols.duplex import (
 from minicpm_o5_sdk.protocols.duplex.training_data import O5SystemAudioSegment
 from pydantic import BaseModel, ConfigDict, Field
 
+from clients.v4_payload import to_v4_session_init
 from core.fc_duplex.system_input import (
     FcAudioPathInput,
     FcSystemAudioInput,
@@ -579,7 +580,8 @@ def build_session_init_payload(
             "source": "path",
             "file_path": tts_prompt_audio_path,
         }
-    return {"type": "session.init", "payload": payload}
+    # 内部按本机路径描述音频；发送前转成协议 v4（音频读成 base64，服务端不收路径）。
+    return to_v4_session_init({"type": "session.init", "payload": payload})
 
 
 def build_api_inference_scenario(

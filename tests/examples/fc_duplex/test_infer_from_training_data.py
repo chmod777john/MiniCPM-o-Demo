@@ -69,7 +69,7 @@ def test_session_init_contains_request_semantics_without_evaluation_fields() -> 
     assert payload["type"] == "session.init"
     assert payload["payload"]["fc_duplex"] is True
     assert payload["payload"]["generate_audio"] is True
-    assert payload["payload"]["protocol_version"] == "3"
+    assert payload["payload"]["protocol_version"] == "4"
     assert payload["payload"]["system"]["segments"] == [
         {"kind": "text", "text": "你是助手"}
     ]

@@ -3,8 +3,9 @@
 本文面向需要调用已启动 O5 API 的使用者和 Agent，只解释请求、事件和推理产物。
 不涉及模型部署、计算资源申请、模型来源、Ground Truth 对拍或能力评价。
 
-协议事件的唯一详细定义见
-[`semantic-realtime-api-v2.md`](semantic-realtime-api-v2.md)。本文是使用教程，不重复定义协议。
+对外调用的协议说明见 [`semantic-realtime-api-v4.md`](semantic-realtime-api-v4.md)
+（现行版本 v4；事件细节沿用 [`semantic-realtime-api-v2.md`](semantic-realtime-api-v2.md)）。
+本文是这个仓库自带推理脚本的使用教程，不重复定义协议。
 
 ## 1. 最短调用路径
 
@@ -51,7 +52,7 @@ JSONL 输入使用零起始行号：
 
 - `system` 中的 system prompt；
 - `system.tools` 中的工具定义；
-- `system` 中可选的请求级参考音频路径；
+- `system` 中可选的请求级参考音频（脚本读本机文件，按 v4 以 base64 WAV 上传，服务端不收路径）；
 - 完整 `unit_policy`；
 - 按 TrainingData timeline 合成的 16 kHz 单声道 float32 用户音频 Unit。
 

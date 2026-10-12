@@ -504,6 +504,8 @@ def _base_environment(
             "TOKENIZERS_PARALLELISM": "false",
             # 锁步驱动的离线 Session 不受墙钟时长限制（Gateway 看门狗关闭）。
             "FC_API_SESSION_MAX_DURATION_S": "0",
+            # 评测客户端与 Worker 同机，仍按 v3 传服务端路径；对外部署的 Worker 不开（只认 v4）。
+            "FC_API_ACCEPT_V3": "1",
             "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
         }
     )

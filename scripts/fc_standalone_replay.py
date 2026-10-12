@@ -25,6 +25,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from clients.v4_payload import to_v4_session_init  # noqa: E402
 from clients.o5_fc_lockstep_client import (  # noqa: E402
     O5FcLockstepSession,
     O5FcSessionError,
@@ -88,8 +89,15 @@ def _load_sample(line: str, root: Path, prefix: Optional[str]) -> O5DuplexTraini
     return training_data
 
 
+class _V4SessionSpec(O5FcSessionSpec):
+    """锁步客户端按 v3 构造 session.init（它被原样复制进评测仓库，不能改）；这里发送前转成 v4。"""
+
+    def session_init_frame(self) -> dict[str, Any]:
+        return to_v4_session_init(super().session_init_frame())
+
+
 def _session_system(training_data: O5DuplexTrainingData, root: Path) -> dict[str, Any]:
-    """把样本 system 转成 session.init 的 system（音频改为服务端可读的绝对路径）。"""
+    """把样本 system 转成 session.init 的 system（音频先用本机绝对路径描述，发送前转 base64）。"""
 
     segments: list[dict[str, Any]] = []
     for segment in training_data.system.segments:
@@ -183,7 +191,7 @@ def replay_sample(
     audio = training_data.build_user_audio_tensor(tokenizer_id=O5TokenizerID.O5)
     audio_units = audio.units.numpy().astype(np.float32) if audio is not None else np.zeros((0, SAMPLES_PER_UNIT), np.float32)
 
-    spec = O5FcSessionSpec(
+    spec = _V4SessionSpec(
         server_url=server_url,
         system=_session_system(training_data, root),
         unit_policy=training_data.unit_policy.model_dump(mode="json"),

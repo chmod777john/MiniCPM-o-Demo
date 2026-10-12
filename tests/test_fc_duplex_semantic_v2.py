@@ -100,7 +100,7 @@ async def test_runtime_emits_minimal_semantic_v2_events_only() -> None:
     )
     await runtime.prepare(
         {
-            "protocol_version": "3",
+            "protocol_version": "4",
             "system": {"segments": [], "tools": []},
             "generate_audio": False,
             "checkpoint_profile_id": "profile_test",
