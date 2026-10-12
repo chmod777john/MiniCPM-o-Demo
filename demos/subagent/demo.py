@@ -12,38 +12,32 @@
 每个 Demo 会话一个工作区 ``workspace/<workspace_id>/``（会话开始时为空），Claude Code 只能读写
 该目录；用户上传的文件也落在这里，并以 ``[FILE_UPLOADED] 文件名`` 的 standalone 通知模型（训练形态）。
 
-访问控制：本 Demo 的所有 API（会起 Claude Code，带联网、用网关密钥）都要求请求头
-``X-Subagent-Password`` 与环境变量 ``SUBAGENT_PASSWORD`` 一致。``SUBAGENT_PASSWORD`` /
-``SUBAGENT_CLAUDE_BIN`` / ``SUBAGENT_CLAUDE_SETTINGS`` **缺任何一个都一律拒绝**（失败即关闭），
-三者只放在部署者自己的入口脚本里，不进仓库。其余 Demo 不受影响。
+部署配置：后台用谁的 Claude Code、谁的网关账号由部署者显式提供（``SUBAGENT_CLAUDE_BIN`` /
+``SUBAGENT_CLAUDE_SETTINGS``），**缺任何一个，本 Demo 的 API 一律 503**（失败即关闭），
+两者只放在部署者自己的入口脚本里，不进仓库。其余 Demo 不受影响。本 Demo 不设访问密码。
 """
 
 from __future__ import annotations
 
 import base64
-import hmac
-import os
 import re
-from typing import Any, Optional
+from typing import Any
 
-from fastapi import APIRouter, Body, Depends, Header, HTTPException
+from fastapi import APIRouter, Body, Depends, HTTPException
 
 from demo_gallery import demo
 from demos.subagent.claude_runner import HANDLED_TOOLS, missing_config, runner
 from demos.subagent.presets import subagent_presets
 
-def require_password(x_subagent_password: Optional[str] = Header(default=None)) -> None:
-    """本 Demo 全部 API 的访问门禁：先查部署配置齐不齐，再比密码。"""
+def require_configured() -> None:
+    """本 Demo 全部 API 的前置检查：部署配置不齐就拒绝，不回退到任何人的默认值。"""
 
     missing = missing_config()
     if missing:
         raise HTTPException(status_code=503, detail=f"subagent 未配置 {' / '.join(missing)}，已禁用")
-    expected = os.environ["SUBAGENT_PASSWORD"]
-    if not hmac.compare_digest((x_subagent_password or "").encode(), expected.encode()):
-        raise HTTPException(status_code=401, detail="密码错误")
 
 
-router = APIRouter(dependencies=[Depends(require_password)])
+router = APIRouter(dependencies=[Depends(require_configured)])
 
 MAX_UPLOAD_BYTES = 20 * 1024 * 1024
 SAFE_NAME_RE = re.compile(r"^[^/\\\x00]{1,200}$")
@@ -62,13 +56,6 @@ class SubagentDemo:
 
     def defaults(self) -> dict[str, Any]:
         return {"subagent_presets": subagent_presets(), "subagent_handled_tools": list(HANDLED_TOOLS)}
-
-
-@router.post("/auth")
-async def check_password() -> dict[str, Any]:
-    """前端校验密码用；门禁由 router 级依赖完成，走到这里即通过。"""
-
-    return {"ok": True}
 
 
 def _ws(workspace_id: str):

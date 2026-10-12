@@ -69,29 +69,20 @@ def test_new_workspace_is_an_empty_directory_under_the_root(tmp_path: Path, monk
     assert ws.path == (tmp_path / "ws_abcdef123").resolve() and list(ws.path.iterdir()) == []
 
 
-PASSWORD = "test-pass-123"
-
-
-def _client(tmp_path: Path, monkeypatch, *, password: str | None = PASSWORD,
-            unset: tuple[str, ...] = ()) -> TestClient:
+def _client(tmp_path: Path, monkeypatch, *, unset: tuple[str, ...] = ()) -> TestClient:
     monkeypatch.setattr(cr, "WORKSPACE_ROOT", tmp_path)
     monkeypatch.setattr(sd, "runner", cr.SubagentRunner())
     monkeypatch.setenv("SUBAGENT_CLAUDE_BIN", "/nonexistent/claude")
     monkeypatch.setenv("SUBAGENT_CLAUDE_SETTINGS", str(tmp_path / "settings.json"))
-    if password is None:
-        monkeypatch.delenv("SUBAGENT_PASSWORD", raising=False)
-    else:
-        monkeypatch.setenv("SUBAGENT_PASSWORD", password)
     for name in unset:
         monkeypatch.delenv(name, raising=False)
     app = FastAPI()
     app.include_router(sd.router, prefix="/api/demos/subagent")
-    return TestClient(app, headers={"X-Subagent-Password": PASSWORD})
+    return TestClient(app)
 
 
-# 本 Demo 的全部端点（方法, 路径）；新增端点时这里也要加，确保都在门禁之后。
+# 本 Demo 的全部端点（方法, 路径）；新增端点时这里也要加，确保都在配置检查之后。
 ENDPOINTS = [
-    ("post", "/api/demos/subagent/auth"),
     ("post", "/api/demos/subagent/workspaces/ws_abcdef123"),
     ("get", "/api/demos/subagent/workspaces/ws_abcdef123/files"),
     ("post", "/api/demos/subagent/workspaces/ws_abcdef123/files"),
@@ -107,17 +98,7 @@ def test_every_endpoint_is_listed_here() -> None:
 
 
 @pytest.mark.parametrize("method,path", ENDPOINTS)
-def test_all_endpoints_require_password(method: str, path: str, tmp_path: Path, monkeypatch) -> None:
-    client = _client(tmp_path, monkeypatch)
-    for headers, expected in (({}, 401), ({"X-Subagent-Password": "wrong"}, 401)):
-        client.headers.clear()
-        client.headers.update(headers)
-        assert getattr(client, method)(path, **({"json": {}} if method == "post" else {})).status_code == expected
-    assert not (tmp_path / "ws_abcdef123").exists()      # 门禁在建目录之前
-
-
-@pytest.mark.parametrize("method,path", ENDPOINTS)
-@pytest.mark.parametrize("missing", ["SUBAGENT_PASSWORD", "SUBAGENT_CLAUDE_BIN", "SUBAGENT_CLAUDE_SETTINGS"])
+@pytest.mark.parametrize("missing", ["SUBAGENT_CLAUDE_BIN", "SUBAGENT_CLAUDE_SETTINGS"])
 def test_any_missing_config_disables_everything(missing: str, method: str, path: str, tmp_path: Path,
                                                 monkeypatch) -> None:
     client = _client(tmp_path, monkeypatch, unset=(missing,))
@@ -126,9 +107,9 @@ def test_any_missing_config_disables_everything(missing: str, method: str, path:
     assert not (tmp_path / "ws_abcdef123").exists()
 
 
-def test_correct_password_passes(tmp_path: Path, monkeypatch) -> None:
+def test_configured_demo_needs_no_password(tmp_path: Path, monkeypatch) -> None:
     client = _client(tmp_path, monkeypatch)
-    assert client.post("/api/demos/subagent/auth").json() == {"ok": True}
+    assert client.post("/api/demos/subagent/workspaces/ws_abcdef123").status_code == 200
 
 
 def test_upload_stays_in_workspace_root(tmp_path: Path, monkeypatch) -> None:

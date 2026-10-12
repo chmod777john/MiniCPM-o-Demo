@@ -9,9 +9,6 @@
 // 每个 Demo 会话一个工作区（会话开始时为空目录）；上传的文件落在这里，并以
 // "[FILE_UPLOADED] 文件名" 的 standalone 通知模型（sub_agent think 数据里的训练形态）。
 // 模型说了什么、想了什么由 shell 面板如实展示。
-//
-// 访问密码：本 Demo 的后端 API 会起 Claude Code，全部要求 X-Subagent-Password 请求头。
-// 进入页面先输密码（只存在本标签页的 sessionStorage）；未通过前不建工作区、不执行任何工具。
 
 import { escapeHtml } from '../../../static/demo-gallery/core/ui-utils.js';
 import {
@@ -24,7 +21,6 @@ import {
 } from './quick-settings.js';
 
 const POLL_MS = 800;
-const PASSWORD_KEY = 'subagent_password';
 
 function newWorkspaceId() {
   const rand = (globalThis.crypto?.randomUUID?.() || `${Date.now()}${Math.random()}`).replace(/[^A-Za-z0-9]/g, '');
@@ -44,38 +40,17 @@ export function createScene({ stageEl, getClient, api }) {
     defaults: null,
     presetId: PRESET_ZH_NOTHINK,
     handled: ['delegate_task', 'web_search', 'calculate'],
-    password: globalThis.sessionStorage?.getItem(PASSWORD_KEY) || '',
-    authed: false,
-    authError: '',
   };
   let built = false;
 
   async function call(path, init = {}) {
-    const headers = { ...(init.headers || {}), 'X-Subagent-Password': state.password };
-    const response = await fetch(api.url(path), { ...init, headers });
+    const response = await fetch(api.url(path), init);
     const body = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(body.detail || `HTTP ${response.status}`);
     return body;
   }
 
-  async function authenticate(password) {
-    state.password = password;
-    try {
-      await call('auth', { method: 'POST' });
-      globalThis.sessionStorage?.setItem(PASSWORD_KEY, password);
-      state.authed = true;
-      state.authError = '';
-      await openWorkspace();
-    } catch (error) {
-      state.authed = false;
-      state.authError = error.message;
-      globalThis.sessionStorage?.removeItem(PASSWORD_KEY);
-      render();
-    }
-  }
-
   async function openWorkspace() {
-    if (!state.authed) return;
     try {
       const body = await call(`workspaces/${state.workspaceId}`, { method: 'POST' });
       state.workspacePath = body.path;
@@ -116,11 +91,6 @@ export function createScene({ stageEl, getClient, api }) {
   }
 
   async function uploadFile(file) {
-    if (!state.authed) {
-      state.notice = '请先输入访问密码。';
-      render();
-      return;
-    }
     if (!ready()) {
       state.notice = '会话还没就绪：先点 Start mic live，等底部状态栏出现「Listening」再上传。';
       render();
@@ -181,12 +151,6 @@ export function createScene({ stageEl, getClient, api }) {
 
   function build() {
     stageEl.innerHTML = `
-      <form class="sg-auth">
-        <span>subagent 会在后台启动 Claude Code，需要访问密码：</span>
-        <input class="sg-password" type="password" autocomplete="current-password" placeholder="密码" />
-        <button type="submit">进入</button>
-        <span class="sg-auth-error"></span>
-      </form>
       <div class="sg-workspace">
         <div class="sg-ws-head">
           <span class="sg-ws-title">工作区</span>
@@ -197,11 +161,6 @@ export function createScene({ stageEl, getClient, api }) {
       </div>
       <div class="sg-notice" role="status"></div>
       <ol class="sg-timeline"></ol>`;
-    stageEl.querySelector('.sg-auth').addEventListener('submit', (event) => {
-      event.preventDefault();
-      const value = stageEl.querySelector('.sg-password').value.trim();
-      if (value) authenticate(value);
-    });
     stageEl.querySelector('.sg-upload input').addEventListener('change', (event) => {
       const file = event.target.files?.[0];
       event.target.value = '';
@@ -228,10 +187,10 @@ export function createScene({ stageEl, getClient, api }) {
   }
 
   function render() {
-    if (!built) build();
-    stageEl.querySelector('.sg-auth').hidden = state.authed;
-    stageEl.querySelector('.sg-workspace').hidden = !state.authed;
-    stageEl.querySelector('.sg-auth-error').textContent = state.authError ? `验证失败：${state.authError}` : '';
+    if (!built) {
+      build();
+      openWorkspace();      // 首次渲染即建本会话的（空）工作区
+    }
     stageEl.querySelector('.sg-ws-path').textContent = state.workspacePath || '（会话开始后创建）';
     stageEl.querySelector('.sg-files').innerHTML = state.files.length
       ? state.files.map((f) => `<li>${escapeHtml(f.name)} <span>${escapeHtml(String(f.size))} B</span></li>`).join('')
@@ -245,7 +204,6 @@ export function createScene({ stageEl, getClient, api }) {
       : '<li class="sg-empty">开麦后对模型说一件需要查、算或读文件的事；它调用工具时，由 Claude Code 在上面的工作区里执行。</li>';
   }
 
-  if (state.password) queueMicrotask(() => authenticate(state.password));
 
   return {
     panelTitle: 'Subagent · Claude Code 执行工具',
@@ -302,14 +260,6 @@ export function createScene({ stageEl, getClient, api }) {
         const entry = { kind: 'tool', name: 'show_card', args: '', status: '已完成', callUnit: event.unit_index, unit: null, result: 'result ok True' };
         state.entries.push(entry);
         sendToolResult(event.tool_call_id, 'result ok True', entry);
-        render();
-        return;
-      }
-      if (!state.authed) {
-        const entry = { kind: 'tool', name: call_.name, args: JSON.stringify(parseArguments(call_.arguments)),
-          status: '执行失败', callUnit: event.unit_index, unit: null, result: '后台未授权：页面还没有输入访问密码，工具没有执行。' };
-        state.entries.push(entry);
-        sendToolResult(event.tool_call_id, entry.result, entry);
         render();
         return;
       }

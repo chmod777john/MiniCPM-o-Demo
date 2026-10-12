@@ -93,12 +93,11 @@ cd /user/sunweiyue/lib/MiniCPM-o-Demo-modelbest
 
 ## 部署 subagent：必须用你自己的 Claude Code 与网关账号
 
-subagent 会在后台起 Claude Code（联网、消耗网关额度），部署者必须在**自己的**入口脚本里设三个环境变量，
+subagent 会在后台起 Claude Code（联网、消耗网关额度），部署者必须在**自己的**入口脚本里设两个环境变量，
 缺任何一个，subagent 的 API 全部返回 503（其余 Demo 不受影响）：
 
 | 变量 | 含义 |
 |---|---|
-| `SUBAGENT_PASSWORD` | 页面进入 subagent 时要输的访问密码（公网端口无鉴权，必须设） |
 | `SUBAGENT_CLAUDE_BIN` | **你自己的** `claude` 可执行文件路径 |
 | `SUBAGENT_CLAUDE_SETTINGS` | **你自己的** Claude Code settings 文件；只取其中 `env` 段（网关地址、API key 等）传给后台 |
 
@@ -106,7 +105,8 @@ subagent 会在后台起 Claude Code（联网、消耗网关额度），部署�
 **key 用项目 key，不要用个人会话 key**：给 subagent 单独建一份 settings 文件（只含 `env`：网关地址、项目 key、
 网关必需的 disable 开关），放在仓库外、600 权限。个人 CloudCLI 会话 key 有 per-key 限速（llm-center 实测 50 RPM），
 且用量记在个人名下。
-不想开放 subagent 就三个都不设，它会保持禁用。
+不想开放 subagent 就两个都不设，它会保持禁用。
+本 Demo 不设访问密码：打开页面即可用，后台调用记在部署者配置的那把 key 上。
 
 ## 删除 Demo
 

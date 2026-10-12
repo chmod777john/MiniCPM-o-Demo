@@ -46,7 +46,7 @@ WORKSPACE_ID_RE = re.compile(r"^[A-Za-z0-9_-]{8,64}$")
 PROGRESS_RE = re.compile(r"^\s*PROGRESS\s*[:：]\s*(.+?)\s*$")
 HANDLED_TOOLS = ("delegate_task", "web_search", "calculate")
 # 部署者必须显式提供的环境变量（缺任何一个，本 Demo 的 API 全部 503）。
-REQUIRED_ENV = ("SUBAGENT_PASSWORD", "SUBAGENT_CLAUDE_BIN", "SUBAGENT_CLAUDE_SETTINGS")
+REQUIRED_ENV = ("SUBAGENT_CLAUDE_BIN", "SUBAGENT_CLAUDE_SETTINGS")
 
 
 def missing_config() -> list[str]:
