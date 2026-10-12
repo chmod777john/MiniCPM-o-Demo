@@ -62,6 +62,9 @@ from gateway_modules.worker_pool import WorkerPool, WorkerConnection
 from gateway_modules.endpoints import DEFAULT_ENDPOINT, EndpointError, EndpointRegistry
 from gateway_modules.live_sessions import LiveSession, LiveSessionRegistry
 from runtime.protocol import API_PROTOCOL_VERSION
+from control_plane.routes import docs_router as control_docs_router
+from control_plane.routes import router as control_router
+from control_plane.routes import set_control_plane
 from gateway_modules.ref_audio_registry import (
     RefAudioRegistry,
     RefAudioListResponse,
@@ -241,6 +244,25 @@ async def lifespan(app: FastAPI):
     endpoint_registry = EndpointRegistry(pool_factory)
     worker_pool = await endpoint_registry.start(pool_factory(workers))
 
+    control_plane = None
+    if GATEWAY_CONFIG.get("control_plane_root"):
+        # 控制面：管理端点、Worker 模板与 Worker job 生命周期（cctl），与上面的端点池共用。
+        from control_plane.cctl import CctlRunner
+        from control_plane.manager import ControlPlane
+        from scripts.run_o5_api import load_o5_api_runtime_settings
+
+        control_plane = ControlPlane(
+            root=Path(GATEWAY_CONFIG["control_plane_root"]),
+            registry=endpoint_registry,
+            live_sessions=live_sessions,
+            jobs=CctlRunner(),
+            repo_dir=str(Path(__file__).resolve().parent),
+            python=str(load_o5_api_runtime_settings().runtime_python),
+        )
+        await control_plane.start()
+        set_control_plane(control_plane)
+        logger.info("Control plane enabled: root=%s", GATEWAY_CONFIG["control_plane_root"])
+
     # 初始化参考音频注册表
     data_dir = os.path.join(os.path.dirname(__file__), "data", "assets", "ref_audio")
     ref_audio_registry = RefAudioRegistry(storage_dir=data_dir)
@@ -254,6 +276,9 @@ async def lifespan(app: FastAPI):
 
     if _cleanup_task:
         _cleanup_task.cancel()
+    if control_plane is not None:
+        set_control_plane(None)
+        await control_plane.stop()
     await endpoint_registry.stop()
     logger.info("Gateway stopped")
 
@@ -1449,6 +1474,11 @@ async def toggle_app(app_id: str, req: AppToggleRequest):
     return {"success": True, "app": result}
 
 
+# ============ 控制面板与公开文档 ============
+# /control（需密码）与 /api-docs（公开）。控制面只在 --control-plane-root 启动时启用，否则面板接口 503。
+app.include_router(control_router)
+app.include_router(control_docs_router)
+
 # ============ 静态文件 ============
 
 static_dir = os.path.join(os.path.dirname(__file__), "static")
@@ -1771,6 +1801,8 @@ def main():
     parser.add_argument("--port", type=int, default=None, help=f"Gateway port (default: {cfg.gateway_port})")
     parser.add_argument("--internal-port", type=int, default=8007, help="Internal worker registration port")
     parser.add_argument("--host", type=str, default="0.0.0.0", help="Host")
+    parser.add_argument("--control-plane-root", type=str, default=None,
+                        help="启用控制面：状态与 Worker 运行目录的根（须在共享存储上，Worker job 要读写它）")
     parser.add_argument("--internal-host", type=str, default=None,
                         help="内部注册接口绑定地址（默认同 --host；对外部署设 127.0.0.1，注册接口没有鉴权）")
     parser.add_argument("--max-queue-size", type=int, default=None, help="Max queue size")
@@ -1797,6 +1829,7 @@ def main():
         GATEWAY_CONFIG["default_lang"] = args.lang
 
     GATEWAY_CONFIG.update({
+        "control_plane_root": args.control_plane_root,
         "workers": [],
         "max_queue_size": args.max_queue_size or cfg.max_queue_size,
         "timeout": args.timeout or cfg.request_timeout,
