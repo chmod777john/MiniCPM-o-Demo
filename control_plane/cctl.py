@@ -22,7 +22,7 @@ TERMINAL_STATUSES = frozenset({"Succeeded", "Failed", "Killed", "Stopped", "Erro
 
 @dataclass(frozen=True)
 class JobSettings:
-    """deploy 池的 job 规格（2×A100 TP2）。"""
+    """deploy 池的 job 规格（2×A100 TP2；CPU / 内存按用户 2026-10-12 定：16 核、256 GiB）。"""
 
     project: str = "swy-o5-deploy"
     cluster: str = "langfang_train"
@@ -31,8 +31,8 @@ class JobSettings:
     image: str = "model-align/ngc-train:hjsun_0313_omni_transformers_52_0603"
     gpu: int = 2
     gpu_model: str = "A100"
-    cpu: int = 32
-    memory_gi: int = 320
+    cpu: int = 16
+    memory_gi: int = 256
     priority: str = "NORMAL"
 
 
@@ -45,6 +45,15 @@ class JobRunner(Protocol):
     async def status(self, job_id: int) -> str: ...
     async def stop(self, job_id: int) -> None: ...
     async def find_by_description(self, description: str) -> Optional[int]: ...
+
+
+CYBERTRON_JOB_URL = "https://cybertron.modelbest.co/job-detail?id={job_id}&cluster={cluster}"
+
+
+def job_url(job_id: int, cluster: str) -> str:
+    """该 job 在 Cybertron 网页上的详情页。"""
+
+    return CYBERTRON_JOB_URL.format(job_id=job_id, cluster=cluster)
 
 
 def description_for(worker_id: str) -> str:

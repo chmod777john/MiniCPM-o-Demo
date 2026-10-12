@@ -122,3 +122,25 @@ def test_public_overview_needs_no_password_and_leaks_nothing_internal(client: Te
     for secret in ("10.9.9.9", "22410", "/abs/ckpt", "/secret/path", "job_id", "run_dir", str(tmp_path)):
         assert secret not in r.text, secret
     assert client.get("/control/api/state").status_code == 401       # 管理接口仍要密码
+
+
+def test_worker_view_links_to_cybertron_job(client: TestClient) -> None:
+    _login(client)
+    client.post("/control/api/endpoints", json={"name": "alpha"})
+    client.put(f"/control/api/templates/{TEMPLATE.name}", json=TEMPLATE.model_dump(mode="json"))
+    client.post("/control/api/workers", json={"endpoint": "alpha", "template": TEMPLATE.name})
+
+    async def settle() -> None:
+        import asyncio
+        await asyncio.sleep(0.05)
+
+    client.portal.call(settle)
+    (worker,) = client.get("/control/api/state").json()["endpoints"][0]["workers"]
+    assert worker["job_url"] == f"https://cybertron.modelbest.co/job-detail?id={worker['job_id']}&cluster=langfang_train"
+
+
+def test_worker_job_spec_is_16cpu_2gpu_256g() -> None:
+    from control_plane.cctl import JobSettings
+
+    s = JobSettings()
+    assert (s.cpu, s.gpu, s.memory_gi) == (16, 2, 256)

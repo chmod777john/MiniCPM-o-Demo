@@ -113,7 +113,7 @@ function workerCard(worker, endpoint, endpoints, mainTemplate) {
     ${otherTemplate}
     ${worker.error ? `<div class="w-err">${esc(worker.error)}</div>` : ''}
     <div class="w-sub">
-      ${worker.job_id ? `<span title="cctl job">job ${esc(worker.job_id)}${worker.job_status ? ` · ${esc(worker.job_status)}` : ''}</span>` : ''}
+      ${worker.job_id ? `<a class="job-link" href="${esc(worker.job_url)}" target="_blank" rel="noopener" title="在 Cybertron 打开这个 job（新标签页）">job ${esc(worker.job_id)} ↗</a>${worker.job_status ? `<span>${esc(worker.job_status)}</span>` : ''}` : ''}
       ${worker.host ? `<span title="Worker 在集群内的地址">${esc(worker.host)}:${esc(worker.port)}</span>` : ''}
     </div>
     <div class="w-actions">${actions}</div>

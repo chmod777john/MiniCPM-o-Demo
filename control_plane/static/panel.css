@@ -126,3 +126,5 @@ details.finished .workers { margin-top: 10px; }
 .grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px 14px; margin-top: 10px; }
 .grid .wide { grid-column: 1 / -1; }
 .grid p { margin: 0; }
+.job-link { color: var(--blue); text-decoration: none; }
+.job-link:hover { text-decoration: underline; }

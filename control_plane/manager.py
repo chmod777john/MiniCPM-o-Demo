@@ -19,7 +19,9 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from control_plane.cctl import CctlError, JobRunner, TERMINAL_STATUSES, description_for, worker_entry
+from control_plane.cctl import (
+    CctlError, JobRunner, JobSettings, TERMINAL_STATUSES, description_for, job_url, worker_entry,
+)
 from control_plane.specs import SPEC_FILE, WorkerJobSpec, WorkerTemplate, read_ready, write_json_atomic
 from control_plane.state import EndpointRecord, PhaseEvent, StateStore, WorkerPhase, WorkerRecord
 from gateway_modules.endpoints import DEFAULT_ENDPOINT, EndpointError, EndpointRegistry
@@ -464,6 +466,8 @@ class ControlPlane:
     def _worker_view(self, record: WorkerRecord, now: float) -> Dict[str, Any]:
         view = record.model_dump(mode="json")
         view["phase_since"] = record.phase_since
+        cluster = getattr(getattr(self.jobs, "settings", None), "cluster", None) or JobSettings().cluster
+        view["job_url"] = job_url(record.job_id, cluster) if record.job_id is not None else None
         pool = self.registry.get(record.endpoint)
         worker = pool.get_worker(record.worker_id) if pool is not None else None
         live = self.live_sessions.get(record.worker_id)
