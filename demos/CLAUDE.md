@@ -63,9 +63,10 @@ static/demo-gallery/        前端 core（shell、realtime client、通用组件
 - **代码里不许出现任何人的私人路径或凭证默认值**（家目录、`~/.claude/settings.json`、某人装的程序、
   API key）。会动用账号 / 密钥 / 计费资源的配置一律走环境变量，**没配就拒绝服务**，不许回退到某人的默认值。
   原因：集群容器都以 root 运行，别人的 `/user/<name>` 对你可读——默认值写的是谁，别人克隆部署后就悄悄用谁的账号。
-- **模型口径不归 Demo 管**：预算、调度方式、tts_pad、checkpoint profile 是 API 端点上部署的模型的事实，
-  页面从 `<端点>/v1/info` 读来展示，**不发送、不覆盖**。preset 只描述 system segments 与 TTS prompt 音频，
-  不要再做「只差 tts_pad / 只差 budget」的成对 preset。
+- **模型口径用端点默认值**：预算、调度方式、tts_pad 协议上是 Session 参数，但 Demo **不发送**，
+  直接用 API 端点给的默认值（`<端点>/v1/info` 的 `model.session_defaults`，建会话后以
+  `session.created.session_config` 为准）。换模型 = 换端点或改端点的 Worker 模板，不在 Demo 里改。
+  preset 只描述 system segments 与 TTS prompt 音频，不要再做「只差 tts_pad / 只差 budget」的成对 preset。
 - **音频写 Demo 服务所在机器上的绝对路径**，建会话时由 shell 读成 base64（`/api/demos/_audio`）。
   只能读 `DEMO_AUDIO_ROOTS` 白名单内的 16 kHz 单声道 WAV；新素材放不进白名单就加白名单目录，别改代码绕过。
 - **推理忠实**：Demo 只负责展示，**不许为了效果改推理语义**（加 logit bias、改 prompt、

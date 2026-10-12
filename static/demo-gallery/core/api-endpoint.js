@@ -31,10 +31,28 @@ function budgetText(value) {
   return typeof first === 'object' ? JSON.stringify(first) : String(first);
 }
 
-/** 从 <端点>/v1/info 提取页面要展示的内容（模型口径由部署决定，Demo 只展示不发送）。 */
+/**
+ * 从 <端点>/v1/info 提取页面要展示的内容。tts_pad / 预算 / 调度取 model.session_defaults：
+ * Demo 不发这些参数，所以端点的默认值就是本次会话会用的值（建会话后以 session.created.session_config 为准）。
+ */
 export function summarizeEndpointInfo(info) {
   const model = info?.models?.[0]?.model || null;
-  const policy = model?.unit_policy || {};
+  return { ...summarizeSessionConfig(model?.session_defaults), model, profileId: model?.profile_id || '', statusText: endpointStatus(info) };
+}
+
+/** tts_pad / Unit 策略 / 调度的展示值；输入是 model.session_defaults 或 session.created.session_config。 */
+export function summarizeSessionConfig(config) {
+  const policy = config?.unit_policy || {};
+  return {
+    ttsPad: config?.tts_pad_protocol || '',
+    scheduling: config?.non_spoken_scheduling || '',
+    listening: budgetText(policy.non_spoken_budgets_while_listening),
+    speaking: budgetText(policy.non_spoken_budgets_while_speaking),
+    unitSec: policy.unit_sec ?? null,
+  };
+}
+
+function endpointStatus(info) {
   const workers = Array.isArray(info?.workers) ? info.workers.length : 0;
   let statusText = '';
   if (info) {
@@ -42,14 +60,5 @@ export function summarizeEndpointInfo(info) {
     if ((info.models || []).length > 1) statusText += ' · ⚠️ 该端点下有多个不同模型，以 session.created 为准';
     if (!workers) statusText += ' · 当前没有 Worker，开始会话会一直排队';
   }
-  return {
-    model,
-    profileId: model?.profile_id || '',
-    ttsPad: model?.tts_pad_protocol || '',
-    scheduling: model?.non_spoken_scheduling || '',
-    listening: budgetText(policy.non_spoken_budgets_while_listening),
-    speaking: budgetText(policy.non_spoken_budgets_while_speaking),
-    unitSec: policy.unit_sec ?? null,
-    statusText,
-  };
+  return statusText;
 }

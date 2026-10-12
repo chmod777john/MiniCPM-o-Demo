@@ -7,7 +7,7 @@
 步骤：
 1. 读 ``<run_dir>/worker_spec.json``（Worker 模板 + worker_id）。
 2. 复用 ``scripts/run_o5_api.py`` 生成部署 Profile 与运行目录，再按模板写入
-   profile_id、预算、Unit 时长、调度方式、tts_pad 口径。
+   profile_id，以及 Session 没传时用的推荐默认值（预算、调度方式、tts_pad）。
 3. 以 worker-only 模式交给 ``scripts/start_fc_service.py``：不起 Gateway，worker 绑 0.0.0.0，
    就绪后由 ``start_o5_tp2_cctl_service.sh`` 写 ``worker_ready.json``；任一子进程退出则 job 退出。
 
@@ -59,7 +59,6 @@ def prepare(spec: WorkerJobSpec) -> tuple[dict[str, str], Path, Path]:
     )
     data = load_fc_deployment_profile(prepared.profile_path).model_dump(mode="json")
     policy = data["unit_policy"]
-    policy["unit_sec"] = template.unit_sec
     policy["non_spoken_budgets_while_listening"] = [template.non_spoken_budget_while_listening]
     policy["non_spoken_budgets_while_speaking"] = [template.non_spoken_budget_while_speaking]
     data.update({

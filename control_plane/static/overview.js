@@ -26,7 +26,7 @@ function chip(worker, endpointModel, now) {
     ? `本次会话 ${duration(now - worker.session_started_at)}`
     : worker.state === 'idle' ? '' : `已 ${duration(now - worker.since)}`;
   const tpl = worker.model !== endpointModel ? `<span class="tpl">${esc(worker.model)}</span>` : '';
-  return `<span class="chip" title="${esc(worker.worker_id)} · ${esc(worker.model)} · tts_pad ${esc(worker.tts_pad_protocol)}">
+  return `<span class="chip" title="${esc(worker.worker_id)} · ${esc(worker.model)} · 默认 tts_pad ${esc(worker.tts_pad_protocol)}">
     <i class="dot ${DOT[worker.state] || 'unavailable'}"></i><b>${esc(worker.worker_id)}</b>${esc(LABEL[worker.state] || worker.state)}
     ${time ? `<span class="time">${time}</span>` : ''}${tpl}</span>`;
 }
@@ -51,7 +51,7 @@ function render(state) {
     return `<section class="ep">
       <div class="ep-row">
         <div><span class="ep-name">${esc(e.name)}</span><span class="ep-desc">${esc(e.description)}</span>
-          <div class="ep-model">${e.model ? `模型 ${esc(e.model)} · tts_pad ${esc(e.tts_pad_protocol)}` : '暂无模型'}</div></div>
+          <div class="ep-model">${e.model ? `模型 ${esc(e.model)} · 默认 tts_pad ${esc(e.tts_pad_protocol)}` : '暂无模型'}</div></div>
         ${verdict(e)}
       </div>
       <div class="url"><code title="${esc(url)}">${esc(url)}</code><button data-copy="${esc(url)}">复制</button>

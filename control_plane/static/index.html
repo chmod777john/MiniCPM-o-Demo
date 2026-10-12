@@ -48,7 +48,7 @@
     <section>
       <div class="section-head">
         <h2>Worker 模板</h2>
-        <span class="hint">一个模板 = 一个 checkpoint 及其训练口径；添加 / 扩容 Worker 都从模板起</span>
+        <span class="hint">一个模板 = 加载哪个 checkpoint + 一组 Session 默认参数；添加 / 扩容 Worker 都从模板起</span>
       </div>
       <div id="templates"></div>
       <details id="template-editor" class="new-box" data-key="template-editor">
@@ -56,19 +56,18 @@
         <form id="template-form" class="grid">
           <label>模板名<input name="name" required pattern="[a-z0-9][a-z0-9\-]{0,47}" placeholder="f9t4-rejection-iter2000"></label>
           <label class="wide">checkpoint 目录（含 model.pt 与 backbone/）<input name="model_dir" required placeholder="/backup/user/.../iter_0002000"></label>
-          <label>tts_pad 口径
-            <select name="tts_pad_protocol" required>
-              <option value="">— 必选 —</option>
-              <option value="legacy">legacy（训练用 SDK ≤ 0.0.6a3）</option>
-              <option value="revised">revised（训练用 SDK ≥ 0.0.6a4）</option>
+          <p class="wide hint">下面几项只是<b>默认值</b>：调用方创建 Session 时没传才用它们，传了就以调用方为准。</p>
+          <label>默认 tts_pad
+            <select name="tts_pad_protocol">
+              <option value="revised" selected>revised（SDK ≥ 0.0.6a4 训的）</option>
+              <option value="legacy">legacy（SDK ≤ 0.0.6a3 训的旧模型）</option>
             </select>
           </label>
-          <label>听时预算<input name="non_spoken_budget_while_listening" type="number" min="1" value="45"></label>
-          <label>说时预算<input name="non_spoken_budget_while_speaking" type="number" min="1" value="25"></label>
-          <label>Unit 秒数<input name="unit_sec" type="number" step="0.1" min="0.1" value="1.0"></label>
-          <label>调度<select name="non_spoken_scheduling"><option>quality</option><option>latency</option></select></label>
-          <label class="wide">说明<input name="note" placeholder="例如：Family 9 / T4，SDK 0.0.6a3 训"></label>
-          <p class="wide hint">⚠️ tts_pad 按该 checkpoint <b>训练时</b>用的 SDK 版本选，不能按目录名的日期推断。同名模板保存即覆盖；已起的 Worker 不受影响。</p>
+          <label>默认听时预算<input name="non_spoken_budget_while_listening" type="number" min="1" value="45"></label>
+          <label>默认说时预算<input name="non_spoken_budget_while_speaking" type="number" min="1" value="25"></label>
+          <label>默认调度<select name="non_spoken_scheduling"><option>quality</option><option>latency</option></select></label>
+          <label class="wide">说明<input name="note" placeholder="例如：Family 9 / T4 rejection iter_2000"></label>
+          <p class="wide hint">同名模板保存即覆盖；已起的 Worker 不受影响（新默认值对之后起的 Worker 生效）。</p>
           <div class="wide"><button type="submit" class="primary">保存模板</button></div>
         </form>
       </details>

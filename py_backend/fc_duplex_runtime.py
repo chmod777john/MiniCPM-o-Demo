@@ -286,10 +286,9 @@ class FcDuplexSessionRuntime:
             ),
             field_name="non_spoken_scheduling",
         )
-        self._non_spoken_scheduling = _resolve_profile_bound_choice(
+        self._non_spoken_scheduling = _session_or_default(
             requested=requested_scheduling,
-            registered=registered_scheduling,
-            field_name="non_spoken_scheduling",
+            default=registered_scheduling,
         )
         if self._non_spoken_scheduling is None:
             raise RuntimeError(
@@ -309,19 +308,17 @@ class FcDuplexSessionRuntime:
         )
         self._fixed_tool_call_ids = evaluation.fixed_tool_call_ids
         self._decode_mode = str(config.get("decode_mode", params.get("decode_mode", "greedy")) or "greedy")
-        # tts_pad_protocol 是 per-ckpt 训练口径（和 prefix / unit_policy 同类）。部署 Profile 写了
-        # 就由部署绑定（FC_DUPLEX_TTS_PAD_PROTOCOL），Session 不传或传同值；没写（通用评测服务）
-        # 时由 session preset 给，默认 legacy = SDK ≤ 0.0.6a3 的存量 ckpt。
-        self._tts_pad_protocol = _resolve_profile_bound_choice(
+        # tts_pad_protocol / unit_policy / 调度都是 Session 参数：Session 传了就用 Session 的；
+        # 没传用部署 Profile 写的推荐默认值（FC_DUPLEX_*）；两边都没有时 tts_pad 取 legacy。
+        self._tts_pad_protocol = _session_or_default(
             requested=_optional_non_empty_string(
                 _coalesce(config.get("tts_pad_protocol"), params.get("tts_pad_protocol")),
                 field_name="tts_pad_protocol",
             ),
-            registered=_optional_non_empty_string(
+            default=_optional_non_empty_string(
                 os.environ.get("FC_DUPLEX_TTS_PAD_PROTOCOL") or None,
                 field_name="FC_DUPLEX_TTS_PAD_PROTOCOL",
             ),
-            field_name="tts_pad_protocol",
         ) or "legacy"
         # decoding_policy 是 per-session / per-用途（FDB 用 raise，tau / Demo 用 constrained），不进 ckpt preset
         self._decoding_policy = str(
@@ -386,6 +383,22 @@ class FcDuplexSessionRuntime:
         """本 Worker 加载的模型摘要（随 session.created 下发）。"""
 
         return worker_model_info()
+
+    @property
+    def session_config(self) -> Dict[str, Any]:
+        """本次会话实际生效的 Session 参数（Session 值优先，缺的取 Worker 推荐默认值）。"""
+
+        return {
+            "tts_pad_protocol": self._tts_pad_protocol,
+            "unit_policy": (
+                self._unit_policy.model_dump(mode="json")
+                if self._unit_policy is not None
+                else None
+            ),
+            "non_spoken_scheduling": self._non_spoken_scheduling,
+            "decoding_policy": self._decoding_policy,
+            "checkpoint_profile_id": self._checkpoint_profile_id,
+        }
 
     @property
     def resume_identity(self) -> Dict[str, Any]:
@@ -1956,7 +1969,7 @@ def _resolve_unit_policy(
         经 SDK ``O5UnitPolicy.model_validate`` 和执行容量校验的策略。
 
     异常:
-        RuntimeError: legacy 配置缺失、或 Session 策略与 process Profile 冲突。
+        RuntimeError: Session 与部署默认值都缺预算，或 Session 自身的策略与标量矛盾。
         ValueError: SDK UnitPolicy schema 非法。
     """
 
@@ -2010,12 +2023,13 @@ def _resolve_unit_policy(
         params.get("unit_policy"),
         config.get("unit_policy"),
     )
+    requested_unit_sec = _coalesce(
+        config.get("unit_sec"),
+        params.get("unit_sec"),
+    )
     if raw_policy is not None:
+        # Session 给了完整策略：直接用；只校验它和 Session 自己给的标量不自相矛盾
         policy = O5UnitPolicy.model_validate(raw_policy)
-        requested_unit_sec = _coalesce(
-            config.get("unit_sec"),
-            params.get("unit_sec"),
-        )
         if (
             requested_unit_sec is not None
             and float(requested_unit_sec) != policy.unit_sec
@@ -2036,55 +2050,47 @@ def _resolve_unit_policy(
             field_name="non_spoken_budgets_while_speaking",
             source_name="legacy Session config",
         )
-    elif registered_policy is not None:
+    elif (
+        requested_listening_budget is None
+        and requested_speaking_budget is None
+        and requested_unit_sec is None
+        and registered_policy is not None
+    ):
         policy = registered_policy
     else:
-        listening_budget = _resolve_profile_bound_budget(
-            requested=requested_listening_budget,
-            registered=registered_listening_budget,
-            field_name="non_spoken_budget_while_listening",
+        # Session 只给了部分标量：逐项 Session 优先，缺的项用部署 Profile 的推荐默认值
+        default_listening = registered_listening_budget
+        default_speaking = registered_speaking_budget
+        default_unit_sec = 1.0
+        if registered_policy is not None:
+            default_listening = default_listening or _constant_finite_budget(
+                registered_policy.non_spoken_budgets_while_listening
+            )
+            default_speaking = default_speaking or _constant_finite_budget(
+                registered_policy.non_spoken_budgets_while_speaking
+            )
+            default_unit_sec = registered_policy.unit_sec
+        listening_budget = _session_or_default(
+            requested=requested_listening_budget, default=default_listening
         )
-        speaking_budget = _resolve_profile_bound_budget(
-            requested=requested_speaking_budget,
-            registered=registered_speaking_budget,
-            field_name="non_spoken_budget_while_speaking",
+        speaking_budget = _session_or_default(
+            requested=requested_speaking_budget, default=default_speaking
         )
         if listening_budget is None or speaking_budget is None:
             raise RuntimeError(
                 "fc_duplex unit_policy or both legacy non-spoken budgets must be "
-                "provided explicitly by Checkpoint Profile or session.init"
+                "provided by session.init or the Worker's default Profile"
             )
         policy = O5UnitPolicy.model_validate(
             {
                 "unit_sec": float(
-                    _coalesce(
-                        config.get("unit_sec"),
-                        params.get("unit_sec"),
-                        default=1.0,
-                    )
+                    _coalesce(requested_unit_sec, default=default_unit_sec)
                 ),
                 "non_spoken_budgets_while_listening": [listening_budget],
                 "non_spoken_budgets_while_speaking": [speaking_budget],
             }
         )
 
-    if registered_policy is not None and policy != registered_policy:
-        raise RuntimeError(
-            "unit_policy conflicts with Checkpoint Profile "
-            "FC_DUPLEX_UNIT_POLICY_JSON"
-        )
-    _validate_policy_budget_matches_scalar(
-        budgets=policy.non_spoken_budgets_while_listening,
-        scalar=registered_listening_budget,
-        field_name="non_spoken_budgets_while_listening",
-        source_name="Checkpoint Profile",
-    )
-    _validate_policy_budget_matches_scalar(
-        budgets=policy.non_spoken_budgets_while_speaking,
-        scalar=registered_speaking_budget,
-        field_name="non_spoken_budgets_while_speaking",
-        source_name="Checkpoint Profile",
-    )
     try:
         policy.validate_execution_capacity()
     except ValueError as exc:
@@ -2215,6 +2221,20 @@ def _optional_scheduling(value: Any, *, field_name: str) -> Optional[str]:
     if scheduling not in {"quality", "latency"}:
         raise RuntimeError(f"{field_name} must be 'latency' or 'quality'")
     return scheduling
+
+
+def _session_or_default(*, requested: Any, default: Any) -> Any:
+    """Session 参数优先；Session 没传时用部署 Profile 写的推荐默认值。
+
+    参数:
+        requested: Session 显式值（None 表示没传）。
+        default: launcher 注入的推荐默认值（None 表示没有）。
+
+    返回:
+        生效值；两侧都缺失时返回 None。
+    """
+
+    return default if requested is None else requested
 
 
 def _resolve_profile_bound_choice(

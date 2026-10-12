@@ -262,12 +262,14 @@ def test_unknown_endpoint_is_rejected(gw: TestClient) -> None:
 
 def test_info_is_public_and_hides_worker_addresses(gw: TestClient) -> None:
     with _FakeWorker("A") as a:
-        _register(gw, "alpha", "wa", a.port, profile_id="model-a", tts_pad_protocol="revised")
+        _register(gw, "alpha", "wa", a.port, profile_id="model-a",
+                  session_defaults={"tts_pad_protocol": "revised"})
         r = gw.get("/e/alpha/v1/info")
         assert r.status_code == 200 and r.headers["access-control-allow-origin"] == "*"
         body = r.json()
         assert body["protocol_version"] == "4" and body["available_workers"] == 1
-        assert body["models"] == [{"model": {"profile_id": "model-a", "tts_pad_protocol": "revised"},
+        assert body["models"] == [{"model": {"profile_id": "model-a",
+                                             "session_defaults": {"tts_pad_protocol": "revised"}},
                                    "workers": 1, "available": 1}]
         assert "127.0.0.1" not in r.text and str(a.port) not in r.text
     assert gw.get("/e/nope/v1/info").status_code == 404

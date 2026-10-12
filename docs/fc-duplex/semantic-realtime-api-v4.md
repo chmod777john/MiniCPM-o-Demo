@@ -24,18 +24,20 @@ GET <端点>/v1/info
   "available_workers": 1,
   "queue_length": 0,
   "workers": [
-    {"worker_id": "f9t4-1", "status": "idle", "draining": false, "profile_id": "f9-t4-iter2000"}
+    {"worker_id": "mergeall-1", "status": "idle", "draining": false, "profile_id": "mergeall-0930"}
   ],
   "models": [
     {
       "model": {
-        "profile_id": "f9-t4-iter2000",
-        "tts_pad_protocol": "legacy",
-        "non_spoken_scheduling": "quality",
-        "unit_policy": {"unit_sec": 1.0, "non_spoken_budgets_while_listening": 45,
-                        "non_spoken_budgets_while_speaking": 25},
+        "profile_id": "mergeall-0930",
         "sdk_version": "0.0.6",
-        "pt_path": "…/model.pt"
+        "pt_path": "…/model.pt",
+        "session_defaults": {
+          "tts_pad_protocol": "revised",
+          "non_spoken_scheduling": "quality",
+          "unit_policy": {"unit_sec": 1.0, "non_spoken_budgets_while_listening": [45],
+                          "non_spoken_budgets_while_speaking": [25]}
+        }
       },
       "workers": 1,
       "available": 1
@@ -44,8 +46,9 @@ GET <端点>/v1/info
 }
 ```
 
-`model.unit_policy.unit_sec` 就是每个 Unit 的音频时长。一个端点下的所有 Worker 通常加载同一个模型；
-若不同，实际用的是哪个以 `session.created.model` 为准。
+`model` 的其余字段说明加载的是哪个 checkpoint；`model.session_defaults` 是 **Session 不传时用的默认值**
+（见 3.2）。一个端点下的所有 Worker 通常加载同一个模型；若不同，实际用的是哪个以
+`session.created.model` 为准。
 
 ## 2. 连接与排队
 
@@ -110,18 +113,21 @@ wss://<host>:<port>/e/<端点名>/v1/realtime?mode=audio
 （OpenAI function 格式）。`tts_prompt_audio` 是模型说话所用的音色参考，与 system 里的音频相互独立；
 `generate_audio: true` 时必填。
 
-### 3.2 由模型决定的参数：不用传
+### 3.2 模型口径参数：可以传，不传用端点默认值
 
-以下参数是 checkpoint 训练时的事实，由端点上部署的模型决定：
+以下参数每个 Session 都可以自己传；不传就用端点公布的默认值（`/v1/info` 里的
+`model.session_defaults`）。传了就以 Session 为准，不会因为与默认值不同而报错。
 
-```text
-checkpoint_profile_id
-unit_policy / non_spoken_budget_while_listening / non_spoken_budget_while_speaking
-non_spoken_scheduling
-tts_pad_protocol
-```
+| 字段（`payload` 或 `payload.config`） | 取值 | 说明 |
+|---|---|---|
+| `tts_pad_protocol` | `revised` / `legacy` | 与 checkpoint 训练时的 SDK 对应：≥0.0.6a4 训的用 `revised`，更早的用 `legacy` |
+| `unit_policy` | SDK `O5UnitPolicy` 对象 | 完整 Unit 策略：`unit_sec` 与逐 Unit 的听 / 说预算 |
+| `non_spoken_budget_while_listening` / `non_spoken_budget_while_speaking` | 正整数 | 简写：常量预算。只传一个时，另一个取默认值 |
+| `unit_sec` | 正数，默认 1.0 | 简写：每个 Unit 的音频时长（秒） |
+| `non_spoken_scheduling` | `quality` / `latency` | 非语音部分的调度方式 |
 
-不传即可；如果传了且与部署值不同，会话直接失败（防止误用错误口径）。
+只有 `checkpoint_profile_id` 不同：它是「我期望连到哪个模型」的断言，传了且与端点上的模型不一致时
+会话直接失败，避免连错模型而不自知。
 
 ### 3.3 可选的会话参数（`payload.config`）
 
@@ -137,13 +143,16 @@ tts_pad_protocol
   "type": "session.created",
   "session_id": "sess_8c1f…",
   "mode": "full_duplex",
-  "model": {"profile_id": "f9-t4-iter2000", "tts_pad_protocol": "legacy", "unit_policy": {…}, "…": "…"},
+  "model": {"profile_id": "mergeall-0930", "pt_path": "…/model.pt", "session_defaults": {…}, "…": "…"},
+  "session_config": {"tts_pad_protocol": "revised", "unit_policy": {…}, "non_spoken_scheduling": "quality",
+                     "decoding_policy": "constrained_decoding", "checkpoint_profile_id": "mergeall-0930"},
   "resume": {"protocol_version": "4", "checkpoint_profile_id": "…", "tts_prompt_audio_sha256": "…", "…": "…"},
   "system_prefill": {"…": "…"}
 }
 ```
 
-`model` 是这次会话实际使用的模型。system 内容较长（例如带很多工具）时，`session.created`
+`model` 是这次会话实际使用的模型；`session_config` 是本次会话**实际生效**的参数
+（Session 传的值，缺的项取端点默认值）。system 内容较长（例如带很多工具）时，`session.created`
 可能要十几秒后才到，这是在预填 system，属于正常现象。
 
 ## 4. 每个 Unit：发送用户音频
@@ -276,8 +285,9 @@ asyncio.run(main())
 
 - `protocol_version` 改为 `"4"`。
 - `session.init` 里的音频只收 base64 WAV，不再收服务端路径。
-- `tts_pad_protocol` 与 budget、调度方式一样，改由部署的模型决定，不用再传。
-- `session.created` 新增 `model`；`resume.protocol_version` 反映实际协议版本。
+- `tts_pad_protocol`、budget、调度方式都是 Session 参数，不传时用端点默认值（`/v1/info` 的
+  `model.session_defaults`）。
+- `session.created` 新增 `model` 与 `session_config`；`resume.protocol_version` 反映实际协议版本。
 - 新增端点地址 `/e/<端点名>/v1/realtime` 与 `/e/<端点名>/v1/info`。
 - 事件语义（Unit、think、tool_call、spoken、tool_result、standalone_event）与 v2/v3 相同，
   细节见 `semantic-realtime-api-v2.md`。

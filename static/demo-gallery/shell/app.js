@@ -10,7 +10,7 @@ import { DEFAULT_PLAYBACK_DELAY_MS, resolvePlaybackDelayMs } from '../core/playb
 import { MIC_SPEECH_DB, openingSilenceWarning } from '../core/mic-policy.js';
 import { MODEL_IDENTITY_HINTS, MODEL_IDENTITY_ROWS } from '../core/model-identity.js';
 import { escapeHtml, textFromSteps } from '../core/ui-utils.js';
-import { normalizeEndpoint, summarizeEndpointInfo } from '../core/api-endpoint.js';
+import { normalizeEndpoint, summarizeEndpointInfo, summarizeSessionConfig } from '../core/api-endpoint.js';
 
 // 后端注入的当前 demo 元信息（入口模块 URL / API 前缀 / 标题）。
 const bootstrap = JSON.parse(document.getElementById('gallery-bootstrap').textContent);
@@ -580,11 +580,17 @@ function renderEndpoint(message = '') {
   if (el.apiEndpointStatus) el.apiEndpointStatus.textContent = message || summary.statusText;
   if (el.kvCkpt) el.kvCkpt.textContent = summary.profileId || '—';
   if (el.checkpointProfileId) el.checkpointProfileId.value = summary.profileId;
+  renderSessionConfig(summary);
+  renderModelIdentity(summary.model);
+}
+
+/** 展示 tts_pad / 预算 / 调度：会话前是端点默认值，建会话后是 session.created.session_config 的实际生效值。 */
+function renderSessionConfig(summary) {
   if (el.nonSpokenBudgetWhileListening) el.nonSpokenBudgetWhileListening.value = summary.listening;
   if (el.nonSpokenBudgetWhileSpeaking) el.nonSpokenBudgetWhileSpeaking.value = summary.speaking;
   if (el.nonSpokenScheduling && summary.scheduling) el.nonSpokenScheduling.value = summary.scheduling;
   if (el.ttsPadProtocolView) el.ttsPadProtocolView.value = summary.ttsPad;
-  renderModelIdentity(summary.model);
+  if (summary.listening || summary.speaking) nsView.setBudgets(Number(summary.listening) || 0, Number(summary.speaking) || 0);
 }
 
 el.applyApiEndpoint?.addEventListener('click', () => selectApiEndpoint(el.apiEndpoint?.value));
@@ -732,6 +738,7 @@ function applyApiEvent(event) {
         renderModelIdentity(event.model);
         if (el.kvCkpt) el.kvCkpt.textContent = event.model.profile_id || '—';
       }
+      if (event.session_config) renderSessionConfig(summarizeSessionConfig(event.session_config));
       setStatus('Session created');
       return;
     case 'session.resumed':

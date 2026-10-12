@@ -91,9 +91,10 @@ class MyDemo:
 （`api_endpoints` 可选的 API 端点、`default_api_endpoint`、`default_quick_setting`，来自 Demo 服务的环境变量，
 见 `demo_gallery/runtime.py`），再用 `defaults()` 的返回值**覆盖合并**。
 
-**模型信息不在 defaults 里。** 用的是哪个 checkpoint、预算、调度方式、tts_pad 口径都是 API 端点上部署的
-模型的事实：shell 在会话前查 `<端点>/v1/info` 展示，会话建立后以 `session.created.model` 为准；
-Demo 不发送也不覆盖它们，所以 **preset 只描述 system segments 与 TTS prompt 音频**。
+**模型信息不在 defaults 里。** 用的是哪个 checkpoint 由 API 端点决定；预算、调度方式、tts_pad 虽然是
+Session 参数，Demo 也不发送，直接用端点的默认值：shell 在会话前查 `<端点>/v1/info`
+（`model.session_defaults`）展示，会话建立后以 `session.created.model` / `session_config` 为准。
+所以 **preset 只描述 system segments 与 TTS prompt 音频**。
 
 **音频用 Demo 服务所在机器上的绝对路径描述**（`{source:"path", file_path}`）。建会话前 shell 经
 `GET /api/demos/_audio?path=` 让 Demo 服务读成 base64 WAV 再上传（API 不收路径）；只能读

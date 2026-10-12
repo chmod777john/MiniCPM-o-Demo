@@ -66,7 +66,7 @@ function steps(worker) {
 }
 
 function ttsTag(protocol) {
-  return protocol ? `<span class="tag ${esc(protocol)}" title="checkpoint 训练侧的 tts_pad 口径">tts_pad ${esc(protocol)}</span>` : '';
+  return protocol ? `<span class="tag ${esc(protocol)}" title="Session 没传 tts_pad_protocol 时用的默认值">默认 tts_pad ${esc(protocol)}</span>` : '';
 }
 
 function pathView(path) {
@@ -215,12 +215,13 @@ function renderTemplates(state) {
     return `<div class="tpl">
       <div class="tpl-top"><span class="tpl-name">${esc(t.name)}</span>${ttsTag(t.tts_pad_protocol)}</div>
       ${pathView(t.model_dir)}
-      <div class="muted">预算 听 ${t.non_spoken_budget_while_listening} / 说 ${t.non_spoken_budget_while_speaking} · Unit ${t.unit_sec} 秒 · ${esc(t.non_spoken_scheduling)} · ${usedText}</div>
+      <div class="muted" title="Session 没传时用的默认值">默认：预算 听 ${t.non_spoken_budget_while_listening} / 说 ${t.non_spoken_budget_while_speaking} · 调度 ${esc(t.non_spoken_scheduling)}</div>
+      <div class="muted">${usedText}</div>
       ${t.note ? `<div class="w-line">${esc(t.note)}</div>` : ''}
       <div class="w-actions"><button class="small" data-edit-template="${esc(t.name)}">编辑</button>
         <button class="small danger" data-del-template="${esc(t.name)}">删除</button></div>
     </div>`;
-  }).join('')}</div>` : '<div class="empty">还没有模板。先新建一个（checkpoint 目录 + tts_pad 口径），再到端点里添加 Worker。</div>';
+  }).join('')}</div>` : '<div class="empty">还没有模板。先新建一个（填 checkpoint 目录即可），再到端点里添加 Worker。</div>';
 }
 
 function render(state) {
@@ -368,7 +369,6 @@ $('#template-form').addEventListener('submit', async (event) => {
   const form = event.target;
   const data = Object.fromEntries(new FormData(form).entries());
   for (const key of ['non_spoken_budget_while_listening', 'non_spoken_budget_while_speaking']) data[key] = Number(data[key]);
-  data.unit_sec = Number(data.unit_sec);
   const ok = await act(`templates/${encodeURIComponent(data.name)}`, { method: 'PUT', body: JSON.stringify(data) }, null, '模板已保存');
   if (ok) form.reset();
 });

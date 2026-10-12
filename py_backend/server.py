@@ -283,6 +283,11 @@ class BackendProtocolSession:
                 if self._fc_runtime is not None
                 else None
             ),
+            session_config=(
+                self._fc_runtime.session_config
+                if self._fc_runtime is not None
+                else None
+            ),
             metrics=self._safe_metrics(),
         )
 

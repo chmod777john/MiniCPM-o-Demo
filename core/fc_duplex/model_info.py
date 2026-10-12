@@ -5,6 +5,9 @@
 
 - ``session.created.model``：告诉客户端这次会话实际用的是哪个模型；
 - Worker 就绪文件：控制面板据此登记 Worker，``/e/<端点>/v1/info`` 再对外公布。
+
+``session_defaults`` 只是 **Session 没传时的推荐默认值**（tts_pad、Unit 策略、调度），
+Session 传了就以 Session 为准；本次会话实际生效的值见 ``session.created.session_config``。
 """
 
 from __future__ import annotations
@@ -24,9 +27,11 @@ def worker_model_info() -> Dict[str, Any]:
     info: Dict[str, Any] = {
         "profile_id": os.environ.get("CHECKPOINT_PROFILE_ID"),
         "model_family": os.environ.get("FC_MODEL_FAMILY"),
-        "tts_pad_protocol": os.environ.get("FC_DUPLEX_TTS_PAD_PROTOCOL") or None,
-        "non_spoken_scheduling": os.environ.get("FC_DUPLEX_NON_SPOKEN_SCHEDULING") or None,
-        "unit_policy": _json_env("FC_DUPLEX_UNIT_POLICY_JSON"),
+        "session_defaults": {
+            "tts_pad_protocol": os.environ.get("FC_DUPLEX_TTS_PAD_PROTOCOL") or None,
+            "non_spoken_scheduling": os.environ.get("FC_DUPLEX_NON_SPOKEN_SCHEDULING") or None,
+            "unit_policy": _json_env("FC_DUPLEX_UNIT_POLICY_JSON"),
+        },
         "deployment_mode": os.environ.get("O5_DEPLOY_MODE"),
         "sdk_version": _installed_sdk_version(),
         "pt_path": None,

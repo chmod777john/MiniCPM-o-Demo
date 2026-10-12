@@ -475,8 +475,9 @@ def test_model_identity_rows_cover_every_identity_field(
     from core.fc_duplex.model_info import worker_model_info
 
     monkeypatch.setenv("FC_DEPLOYMENT_PROFILE", str(tmp_path / "missing.json"))
-    # 这几项在 Session 面板的其他位置展示（profile id、Runtime 一栏），不进路径列表。
-    shown_elsewhere = {"profile_id", "model_family", "non_spoken_scheduling", "unit_policy"}
+    # 这几项在 Session 面板的其他位置展示（profile id；session_defaults 进 Runtime 一栏的
+    # tts_pad / 预算 / 调度），不进模型身份列表。
+    shown_elsewhere = {"profile_id", "model_family", "session_defaults"}
     backend_fields = set(worker_model_info()) - shown_elsewhere
 
     got = run_node(f"""

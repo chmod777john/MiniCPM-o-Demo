@@ -1,6 +1,7 @@
 """控制面与 Worker job 共用的数据结构：Worker 模板、job 规格、就绪文件。
 
-一个 **Worker 模板** = 「加载哪个 checkpoint、用什么口径」，即控制面板上的 preset；
+一个 **Worker 模板** = 「加载哪个 checkpoint」+ 一组 **Session 推荐默认值**（tts_pad、预算、调度：
+Session 没传时用它们，Session 传了以 Session 为准），即控制面板上的 preset；
 扩容就是用同一个模板再起一个 Worker。模板名同时作为部署 Profile 的 ``profile_id``，
 所以同一模板起的 Worker 对外报告同一个模型。
 
@@ -20,7 +21,7 @@ import time
 from pathlib import Path
 from typing import Any, Dict, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,47}$")
 
@@ -32,22 +33,32 @@ def _check_name(value: str) -> str:
 
 
 class WorkerTemplate(BaseModel):
-    """Worker 模板：一个 checkpoint 及其训练口径。"""
+    """Worker 模板：加载哪个 checkpoint，以及 Session 没传参数时用的推荐默认值。"""
 
     model_config = ConfigDict(extra="forbid")
 
     name: str = Field(description="模板名；也是部署 Profile 的 profile_id")
     model_dir: str = Field(min_length=1, description="checkpoint 目录（含 model.pt 与 backbone/）")
     tts_pad_protocol: Literal["legacy", "revised"] = Field(
-        description="checkpoint 训练侧口径：SDK ≤0.0.6a3 训的是 legacy，≥0.0.6a4 是 revised（不要按目录日期推）",
+        default="revised",
+        description="Session 不传 tts_pad_protocol 时的默认值；SDK ≥0.0.6a4 训的 checkpoint 用 revised",
     )
-    non_spoken_budget_while_listening: int = Field(default=45, ge=1)
-    non_spoken_budget_while_speaking: int = Field(default=25, ge=1)
-    unit_sec: float = Field(default=1.0, gt=0)
-    non_spoken_scheduling: Literal["quality", "latency"] = "quality"
+    non_spoken_budget_while_listening: int = Field(default=45, ge=1, description="Session 不传时的默认听时预算")
+    non_spoken_budget_while_speaking: int = Field(default=25, ge=1, description="Session 不传时的默认说时预算")
+    non_spoken_scheduling: Literal["quality", "latency"] = Field(
+        default="quality", description="Session 不传时的默认调度方式",
+    )
     llm_cache: int = Field(default=32768, ge=1)
     gpus: Literal[2] = Field(default=2, description="目前只支持 2×A100 TP2")
     note: str = ""
+
+    @model_validator(mode="before")
+    @classmethod
+    def _drop_retired_fields(cls, data: Any) -> Any:
+        # unit_sec 已不在模板里（Session 参数，默认 1.0）；旧 state.json 里存的值直接丢弃
+        if isinstance(data, dict) and "unit_sec" in data:
+            data = {k: v for k, v in data.items() if k != "unit_sec"}
+        return data
 
     @field_validator("name")
     @classmethod

@@ -306,10 +306,10 @@ async def test_runtime_uses_complete_unit_policy_from_checkpoint_profile_env(
 
 
 @pytest.mark.asyncio
-async def test_runtime_rejects_unit_policy_conflicting_with_profile_env(
+async def test_runtime_session_unit_policy_overrides_profile_default(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Session UnitPolicy 不得覆盖 launcher 绑定的完整 Profile 策略。"""
+    """Profile 的完整策略只是默认值；Session 传了 UnitPolicy 就用 Session 的。"""
 
     async def send(_: str, **__: Any) -> None:
         return
@@ -334,16 +334,18 @@ async def test_runtime_rejects_unit_policy_conflicting_with_profile_env(
         send=send,
     )
 
-    with pytest.raises(
-        RuntimeError,
-        match="FC_DUPLEX_UNIT_POLICY_JSON",
-    ):
-        await runtime.prepare(
-            {
-                "unit_policy": session_policy.model_dump(mode="json"),
-                "config": {"non_spoken_scheduling": "quality"},
-            }
-        )
+    await runtime.prepare(
+        {
+            "unit_policy": session_policy.model_dump(mode="json"),
+            "config": {"non_spoken_scheduling": "quality"},
+        }
+    )
+
+    assert runtime.session_config["unit_policy"] == session_policy.model_dump(mode="json")
+    assert runtime._select_non_spoken_budget(
+        SimpleNamespace(is_speaking=False),
+        unit_index=0,
+    ) == 31
 
 
 @pytest.mark.asyncio
@@ -534,10 +536,10 @@ async def test_runtime_uses_launcher_profile_environment(
 
 
 @pytest.mark.asyncio
-async def test_runtime_rejects_session_budget_conflicting_with_profile(
+async def test_runtime_session_budget_overrides_profile_default(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Session 参数不能静默覆盖 launcher 已绑定的 Checkpoint Profile。"""
+    """Session 传了预算就用 Session 的；只传一侧时另一侧取 Profile 默认值。"""
 
     async def send(_: str, **__: Any) -> None:
         return
@@ -551,22 +553,40 @@ async def test_runtime_rejects_session_budget_conflicting_with_profile(
         send=send,
     )
 
-    with pytest.raises(RuntimeError, match="conflicts with Checkpoint Profile"):
-        await runtime.prepare(
-            {
-                "config": {
-                    "non_spoken_budget_while_listening": 12,
-                    "non_spoken_budget_while_speaking": 12,
-                }
+    await runtime.prepare(
+        {
+            "config": {
+                "non_spoken_budget_while_listening": 12,
+                "non_spoken_budget_while_speaking": 12,
             }
-        )
+        }
+    )
+    assert runtime._select_non_spoken_budget(
+        SimpleNamespace(is_speaking=False), unit_index=0
+    ) == 12
+    assert runtime._select_non_spoken_budget(
+        SimpleNamespace(is_speaking=True), unit_index=0
+    ) == 12
+
+    partial = FcDuplexSessionRuntime(
+        session_id="sess_profile_partial",
+        backend=_FakeRuntimeBackend(),
+        send=send,
+    )
+    await partial.prepare({"config": {"non_spoken_budget_while_listening": 12}})
+    assert partial._select_non_spoken_budget(
+        SimpleNamespace(is_speaking=False), unit_index=0
+    ) == 12
+    assert partial._select_non_spoken_budget(
+        SimpleNamespace(is_speaking=True), unit_index=0
+    ) == 15
 
 
 @pytest.mark.asyncio
-async def test_runtime_rejects_variable_policy_conflicting_with_scalar_profile(
+async def test_runtime_session_variable_policy_overrides_scalar_profile_default(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """完整 UnitPolicy 不能绕过 launcher 已知的 legacy scalar checkpoint 事实。"""
+    """Session 的逐 Unit 策略优先于 Profile 的标量默认预算。"""
 
     async def send(_: str, **__: Any) -> None:
         return
@@ -585,10 +605,10 @@ async def test_runtime_rejects_variable_policy_conflicting_with_scalar_profile(
         send=send,
     )
 
-    with pytest.raises(RuntimeError, match="conflicts with Checkpoint Profile"):
-        await runtime.prepare(
-            {"unit_policy": policy.model_dump(mode="json")}
-        )
+    await runtime.prepare({"unit_policy": policy.model_dump(mode="json")})
+    assert runtime._select_non_spoken_budget(
+        SimpleNamespace(is_speaking=False), unit_index=1
+    ) == 31
 
 
 @pytest.mark.asyncio
@@ -620,10 +640,10 @@ async def test_runtime_rejects_checkpoint_profile_id_conflict(
 
 
 @pytest.mark.asyncio
-async def test_runtime_rejects_scheduling_conflicting_with_profile(
+async def test_runtime_session_scheduling_overrides_profile_default(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Session 不能把 Profile 绑定的 quality 静默切成 latency。"""
+    """Profile 的 quality 只是默认值；Session 传 latency 就用 latency。"""
 
     async def send(_: str, **__: Any) -> None:
         return
@@ -637,8 +657,8 @@ async def test_runtime_rejects_scheduling_conflicting_with_profile(
         send=send,
     )
 
-    with pytest.raises(RuntimeError, match="conflicts with Checkpoint Profile"):
-        await runtime.prepare({"config": {"non_spoken_scheduling": "latency"}})
+    await runtime.prepare({"config": {"non_spoken_scheduling": "latency"}})
+    assert runtime.session_config["non_spoken_scheduling"] == "latency"
 
 
 @pytest.mark.asyncio

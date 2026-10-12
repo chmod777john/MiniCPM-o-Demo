@@ -1,4 +1,4 @@
-"""协议 v4：音频只收 base64 WAV；v3 路径输入默认拒绝；tts_pad 由部署绑定。
+"""协议 v4：音频只收 base64 WAV；v3 路径输入默认拒绝；tts_pad 是 Session 参数、部署只给默认值。
 
 只用 tmp_path 与假 backend，不加载模型。
 """
@@ -156,27 +156,24 @@ async def test_v4_rejects_server_path_audio() -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("registered,requested,expected", [
+@pytest.mark.parametrize("default,requested,expected", [
     (None, None, "legacy"),
     (None, "revised", "revised"),
     ("revised", None, "revised"),
     ("revised", "revised", "revised"),
-    ("revised", "legacy", RuntimeError),
+    ("revised", "legacy", "legacy"),          # Session 传了就以 Session 为准
 ])
-async def test_tts_pad_is_bound_by_deployment(monkeypatch, registered, requested, expected) -> None:
-    if registered:
-        monkeypatch.setenv("FC_DUPLEX_TTS_PAD_PROTOCOL", registered)
+async def test_tts_pad_session_value_wins_over_deployment_default(monkeypatch, default, requested, expected) -> None:
+    if default:
+        monkeypatch.setenv("FC_DUPLEX_TTS_PAD_PROTOCOL", default)
     config = {"non_spoken_scheduling": "quality", "non_spoken_budget_while_listening": 30,
               "non_spoken_budget_while_speaking": 15}
     if requested:
         config["tts_pad_protocol"] = requested
     runtime = _runtime(_Backend())
-    if expected is RuntimeError:
-        with pytest.raises(RuntimeError, match="tts_pad_protocol"):
-            await runtime.prepare(_payload(protocol_version="4", config=config))
-        return
     await runtime.prepare(_payload(protocol_version="4", config=config))
     assert runtime.resume_identity["tts_pad_protocol"] == expected
+    assert runtime.session_config["tts_pad_protocol"] == expected
 
 
 def test_profile_projects_tts_pad(monkeypatch, tmp_path: Path) -> None:
@@ -193,7 +190,7 @@ def test_profile_projects_tts_pad(monkeypatch, tmp_path: Path) -> None:
 
     with patch.dict(os.environ, {"FC_DUPLEX_TTS_PAD_PROTOCOL": "stale"}):   # 投影会直接写 os.environ，测完还原
         apply_fc_deployment_profile_environment(O5FcDeploymentProfile(**base))
-        assert "FC_DUPLEX_TTS_PAD_PROTOCOL" not in os.environ          # 不绑定 → 清掉残留，由 Session 给
+        assert "FC_DUPLEX_TTS_PAD_PROTOCOL" not in os.environ          # 没写默认值 → 清掉残留
         apply_fc_deployment_profile_environment(O5FcDeploymentProfile(**base, tts_pad_protocol="revised"))
         assert os.environ["FC_DUPLEX_TTS_PAD_PROTOCOL"] == "revised"
 

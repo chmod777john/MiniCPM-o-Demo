@@ -35,18 +35,24 @@ console.log(JSON.stringify({{ out, bad }}));
 @needs_node
 def test_endpoint_info_summary() -> None:
     info = {"workers": [{"worker_id": "f9t4-1"}], "available_workers": 1, "queue_length": 0, "models": [{
-        "model": {"profile_id": "p", "tts_pad_protocol": "legacy", "non_spoken_scheduling": "quality",
-                  "unit_policy": {"unit_sec": 1.0, "non_spoken_budgets_while_listening": [45],
-                                  "non_spoken_budgets_while_speaking": [25]}}, "workers": 1, "available": 1}]}
+        "model": {"profile_id": "p", "session_defaults": {
+            "tts_pad_protocol": "legacy", "non_spoken_scheduling": "quality",
+            "unit_policy": {"unit_sec": 1.0, "non_spoken_budgets_while_listening": [45],
+                            "non_spoken_budgets_while_speaking": [25]}}}, "workers": 1, "available": 1}]}
     got = run_node(f"""
 const m = await import({json.dumps(repo_module_url('static/demo-gallery/core/api-endpoint.js'))});
 const s = m.summarizeEndpointInfo({json.dumps(info)});
 const empty = m.summarizeEndpointInfo({{ workers: [], models: [], available_workers: 0, queue_length: 0 }});
-console.log(JSON.stringify({{ s: {{ ...s, model: undefined }}, empty: empty.statusText }}));
+const created = m.summarizeSessionConfig({{ tts_pad_protocol: 'revised', non_spoken_scheduling: 'latency',
+  unit_policy: {{ unit_sec: 1.0, non_spoken_budgets_while_listening: [30], non_spoken_budgets_while_speaking: [10] }} }});
+console.log(JSON.stringify({{ s: {{ ...s, model: undefined }}, empty: empty.statusText, created }}));
 """)
     assert got["s"] == {"profileId": "p", "ttsPad": "legacy", "scheduling": "quality", "listening": "45",
                         "speaking": "25", "unitSec": 1.0, "statusText": "1 个 Worker · 可用 1 · 排队 0"}
     assert "没有 Worker" in got["empty"]
+    # 建会话后以 session.created.session_config（实际生效值）为准
+    assert got["created"] == {"ttsPad": "revised", "scheduling": "latency", "listening": "30",
+                              "speaking": "10", "unitSec": 1.0}
 
 
 def _wav(path: Path, *, sr: int = 16000, channels: int = 1, fmt: str = "WAV") -> bytes:
