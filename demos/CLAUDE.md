@@ -39,7 +39,7 @@ static/demo-gallery/        前端 core（shell、realtime client、通用组件
 4. **写 `web/<id>.css`**：每条顶层选择器以 `[data-demo="<id>"]` 开头。
 5. **测试 + 浏览器自检**（见下文「交付前自检」）。
 
-现成范例：`demos/board/`（工具调用 + 搜图 + 额外静态目录）、`demos/rejection/`（纯 think 解析）、`demos/standalone/`（向模型注入 standalone_event、展示 Unit 回执，不带工具）、`demos/subagent/`（工具调用交给 Claude Code，每会话独立工作区；API 需要访问密码，密码在部署入口的 `SUBAGENT_PASSWORD`）。
+现成范例：`demos/board/`（工具调用 + 搜图 + 额外静态目录）、`demos/rejection/`（纯 think 解析）、`demos/standalone/`（向模型注入 standalone_event、展示 Unit 回执，不带工具）、`demos/subagent/`（工具调用交给 Claude Code，每会话独立工作区；部署要求见下文「部署 subagent」）。
 做类似功能时先照抄它们的写法。
 
 ## [MUST] 硬约束
@@ -55,6 +55,9 @@ static/demo-gallery/        前端 core（shell、realtime client、通用组件
   不要改 `stageEl` 的 class 去「解除」shell 布局。
 - **通用的东西放共享层由用户决定**：别把麦克风提示、模型信息栏这类通用样式/逻辑复制进
   Demo，也别自己挪进共享层。
+- **代码里不许出现任何人的私人路径或凭证默认值**（家目录、`~/.claude/settings.json`、某人装的程序、
+  API key）。会动用账号 / 密钥 / 计费资源的配置一律走环境变量，**没配就拒绝服务**，不许回退到某人的默认值。
+  原因：集群容器都以 root 运行，别人的 `/user/<name>` 对你可读——默认值写的是谁，别人克隆部署后就悄悄用谁的账号。
 - **推理忠实**：Demo 只负责展示，**不许为了效果改推理语义**（加 logit bias、改 prompt、
   补写模型没生成的 token 等）。完整规则见 `.cursor/rules/model-faithful-inference.mdc`。
 
@@ -87,6 +90,20 @@ cd /user/sunweiyue/lib/MiniCPM-o-Demo-modelbest
 - 开发半成品时**不要直接在这个工作区里改**，用 `git worktree` 另开一份。要上线时再合回来，
   并按需重启 deploy job。
 - 新 Demo 上线要重启服务：Gallery 只在启动时扫描 `demos/`。
+
+## 部署 subagent：必须用你自己的 Claude Code 与网关账号
+
+subagent 会在后台起 Claude Code（联网、消耗网关额度），部署者必须在**自己的**入口脚本里设三个环境变量，
+缺任何一个，subagent 的 API 全部返回 503（其余 Demo 不受影响）：
+
+| 变量 | 含义 |
+|---|---|
+| `SUBAGENT_PASSWORD` | 页面进入 subagent 时要输的访问密码（公网端口无鉴权，必须设） |
+| `SUBAGENT_CLAUDE_BIN` | **你自己的** `claude` 可执行文件路径 |
+| `SUBAGENT_CLAUDE_SETTINGS` | **你自己的** Claude Code settings 文件；只取其中 `env` 段（网关地址、API key 等）传给后台 |
+
+**[MUST NOT] 不要把这两个路径指向别人的目录**——哪怕读得到。那等于用别人的 API key 替你付费。
+不想开放 subagent 就三个都不设，它会保持禁用。
 
 ## 删除 Demo
 

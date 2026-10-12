@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -28,10 +29,24 @@ def test_permission_settings_only_allow_workspace_and_deny_bash(tmp_path: Path) 
     assert perms["defaultMode"] == "dontAsk"          # 未放行的调用直接拒绝，不会等人批准
 
 
+def test_claude_env_refuses_without_explicit_settings(monkeypatch) -> None:
+    monkeypatch.delenv("SUBAGENT_CLAUDE_SETTINGS", raising=False)
+    with pytest.raises(RuntimeError, match="SUBAGENT_CLAUDE_SETTINGS"):
+        cr.claude_env()
+
+
+def test_no_personal_default_paths_in_demo_code() -> None:
+    """用谁的 Claude Code / 网关密钥只能由部署者配置；代码里出现任何人的家目录都会被克隆者悄悄用上。"""
+
+    for path in ("claude_runner.py", "demo.py"):
+        text = (Path(cr.__file__).parent / path).read_text(encoding="utf-8")
+        assert not re.search(r"/user/\w|/home/\w|\.npm-global|settings\.json", text), path
+
+
 def test_claude_env_isolates_config_and_drops_parent_claude_vars(tmp_path: Path, monkeypatch) -> None:
     user = tmp_path / "settings.json"
     user.write_text(json.dumps({"env": {"ANTHROPIC_BASE_URL": "https://gw", "ANTHROPIC_API_KEY": "k"}}))
-    monkeypatch.setattr(cr, "USER_SETTINGS", user)
+    monkeypatch.setenv("SUBAGENT_CLAUDE_SETTINGS", str(user))
     monkeypatch.setattr(cr, "CLAUDE_CONFIG_DIR", tmp_path / "cfg")
     monkeypatch.setenv("CLAUDECODE", "1")
     monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "parent")
@@ -57,13 +72,18 @@ def test_new_workspace_is_an_empty_directory_under_the_root(tmp_path: Path, monk
 PASSWORD = "test-pass-123"
 
 
-def _client(tmp_path: Path, monkeypatch, *, password: str | None = PASSWORD) -> TestClient:
+def _client(tmp_path: Path, monkeypatch, *, password: str | None = PASSWORD,
+            unset: tuple[str, ...] = ()) -> TestClient:
     monkeypatch.setattr(cr, "WORKSPACE_ROOT", tmp_path)
     monkeypatch.setattr(sd, "runner", cr.SubagentRunner())
+    monkeypatch.setenv("SUBAGENT_CLAUDE_BIN", "/nonexistent/claude")
+    monkeypatch.setenv("SUBAGENT_CLAUDE_SETTINGS", str(tmp_path / "settings.json"))
     if password is None:
         monkeypatch.delenv("SUBAGENT_PASSWORD", raising=False)
     else:
         monkeypatch.setenv("SUBAGENT_PASSWORD", password)
+    for name in unset:
+        monkeypatch.delenv(name, raising=False)
     app = FastAPI()
     app.include_router(sd.router, prefix="/api/demos/subagent")
     return TestClient(app, headers={"X-Subagent-Password": PASSWORD})
@@ -97,9 +117,13 @@ def test_all_endpoints_require_password(method: str, path: str, tmp_path: Path, 
 
 
 @pytest.mark.parametrize("method,path", ENDPOINTS)
-def test_unconfigured_password_disables_everything(method: str, path: str, tmp_path: Path, monkeypatch) -> None:
-    client = _client(tmp_path, monkeypatch, password=None)
-    assert getattr(client, method)(path, **({"json": {}} if method == "post" else {})).status_code == 503
+@pytest.mark.parametrize("missing", ["SUBAGENT_PASSWORD", "SUBAGENT_CLAUDE_BIN", "SUBAGENT_CLAUDE_SETTINGS"])
+def test_any_missing_config_disables_everything(missing: str, method: str, path: str, tmp_path: Path,
+                                                monkeypatch) -> None:
+    client = _client(tmp_path, monkeypatch, unset=(missing,))
+    r = getattr(client, method)(path, **({"json": {}} if method == "post" else {}))
+    assert r.status_code == 503 and missing in r.json()["detail"]
+    assert not (tmp_path / "ws_abcdef123").exists()
 
 
 def test_correct_password_passes(tmp_path: Path, monkeypatch) -> None:

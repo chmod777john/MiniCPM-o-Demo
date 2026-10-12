@@ -6,8 +6,12 @@
 - 权限只放行该目录内的 Read / Edit / Write（Glob、Grep 同受 Read 规则约束）与 WebSearch / WebFetch，
   **Bash 一律禁止**（Bash 能绕开路径规则），``defaultMode=dontAsk``：未放行的调用直接拒绝；
 - 用独立的 ``CLAUDE_CONFIG_DIR``，不读用户级 ``~/.claude``（那里放行了 Bash、带全局 CLAUDE.md，
-  且会话记录会混进用户的 CloudCLI 列表）。网关地址 / 密钥运行时从用户 settings 的 env 读出，
+  且会话记录会混进用户的 CloudCLI 列表）。网关地址 / 密钥运行时从部署者指定的 settings 文件的 env 读出，
   以环境变量传入，不写进仓库、不进日志。
+
+用谁的 Claude Code、谁的网关账号，**必须由部署者显式配置**（``SUBAGENT_CLAUDE_BIN`` /
+``SUBAGENT_CLAUDE_SETTINGS``），仓库里不放任何人的默认值：集群容器都以 root 运行，别人的
+``/user/<name>`` 对你可读，默认值指向谁，克隆者部署后就会悄悄用掉谁的密钥。
 
 回灌形态按 sub_agent 训练数据：
 
@@ -35,14 +39,20 @@ logger = logging.getLogger("demo_gallery.subagent")
 DEMO_DIR = Path(__file__).resolve().parent
 WORKSPACE_ROOT = Path(os.environ.get("SUBAGENT_WORKSPACE_ROOT") or (DEMO_DIR / "workspace"))
 CLAUDE_CONFIG_DIR = WORKSPACE_ROOT / ".claude-config"
-CLAUDE_BIN = os.environ.get("SUBAGENT_CLAUDE_BIN") or "/user/sunweiyue/home/.npm-global/bin/claude"
-USER_SETTINGS = Path(os.environ.get("SUBAGENT_USER_SETTINGS") or "/user/sunweiyue/home/.claude/settings.json")
 TASK_TIMEOUT_SEC = float(os.environ.get("SUBAGENT_TASK_TIMEOUT_SEC") or 900)
 MAX_TURNS = int(os.environ.get("SUBAGENT_MAX_TURNS") or 40)
 
 WORKSPACE_ID_RE = re.compile(r"^[A-Za-z0-9_-]{8,64}$")
 PROGRESS_RE = re.compile(r"^\s*PROGRESS\s*[:：]\s*(.+?)\s*$")
 HANDLED_TOOLS = ("delegate_task", "web_search", "calculate")
+# 部署者必须显式提供的环境变量（缺任何一个，本 Demo 的 API 全部 503）。
+REQUIRED_ENV = ("SUBAGENT_PASSWORD", "SUBAGENT_CLAUDE_BIN", "SUBAGENT_CLAUDE_SETTINGS")
+
+
+def missing_config() -> list[str]:
+    """还没配置的必需环境变量名。"""
+
+    return [name for name in REQUIRED_ENV if not os.environ.get(name)]
 
 EventKind = Literal["progress", "result", "error"]
 
@@ -169,7 +179,7 @@ class SubagentRunner:
 
     async def _run_claude(self, task: Task, ws: Workspace, *, resume: bool) -> None:
         prompt, system = build_prompt(task.tool_name, task.arguments, task.language)
-        cmd = [CLAUDE_BIN, "-p", prompt,
+        cmd = [os.environ["SUBAGENT_CLAUDE_BIN"], "-p", prompt,
                "--output-format", "stream-json", "--verbose",
                "--settings", json.dumps(permission_settings(ws.path)),
                "--setting-sources", "",
@@ -242,13 +252,16 @@ def permission_settings(workspace: Path) -> dict[str, Any]:
 
 
 def claude_env() -> dict[str, str]:
-    """子进程环境：去掉父进程里的 Claude / Anthropic 变量，网关配置取自用户 settings 的 env。"""
+    """子进程环境：去掉父进程里的 Claude / Anthropic 变量，网关配置取自 ``SUBAGENT_CLAUDE_SETTINGS`` 的 env。"""
 
     env = {k: v for k, v in os.environ.items() if not k.startswith(("CLAUDE", "ANTHROPIC"))}
+    settings = Path(os.environ.get("SUBAGENT_CLAUDE_SETTINGS") or "")
+    if not settings.name:
+        raise RuntimeError("未配置 SUBAGENT_CLAUDE_SETTINGS（Claude Code 网关配置文件）")
     try:
-        user_env = json.loads(USER_SETTINGS.read_text(encoding="utf-8")).get("env") or {}
+        user_env = json.loads(settings.read_text(encoding="utf-8")).get("env") or {}
     except (OSError, json.JSONDecodeError) as exc:
-        raise RuntimeError(f"读不到 Claude Code 网关配置 {USER_SETTINGS}: {exc}") from exc
+        raise RuntimeError(f"读不到 Claude Code 网关配置 {settings}: {exc}") from exc
     env.update({k: str(v) for k, v in user_env.items()})
     CLAUDE_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     env["CLAUDE_CONFIG_DIR"] = str(CLAUDE_CONFIG_DIR)

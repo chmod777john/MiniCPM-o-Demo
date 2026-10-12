@@ -13,8 +13,9 @@
 该目录；用户上传的文件也落在这里，并以 ``[FILE_UPLOADED] 文件名`` 的 standalone 通知模型（训练形态）。
 
 访问控制：本 Demo 的所有 API（会起 Claude Code，带联网、用网关密钥）都要求请求头
-``X-Subagent-Password`` 与环境变量 ``SUBAGENT_PASSWORD`` 一致；**未配置该环境变量时一律拒绝**
-（失败即关闭）。密码只放在部署入口，不进仓库。其余 Demo 不受影响。
+``X-Subagent-Password`` 与环境变量 ``SUBAGENT_PASSWORD`` 一致。``SUBAGENT_PASSWORD`` /
+``SUBAGENT_CLAUDE_BIN`` / ``SUBAGENT_CLAUDE_SETTINGS`` **缺任何一个都一律拒绝**（失败即关闭），
+三者只放在部署者自己的入口脚本里，不进仓库。其余 Demo 不受影响。
 """
 
 from __future__ import annotations
@@ -28,15 +29,16 @@ from typing import Any, Optional
 from fastapi import APIRouter, Body, Depends, Header, HTTPException
 
 from demo_gallery import demo
-from demos.subagent.claude_runner import HANDLED_TOOLS, runner
+from demos.subagent.claude_runner import HANDLED_TOOLS, missing_config, runner
 from demos.subagent.presets import subagent_presets
 
 def require_password(x_subagent_password: Optional[str] = Header(default=None)) -> None:
-    """本 Demo 全部 API 的访问门禁。"""
+    """本 Demo 全部 API 的访问门禁：先查部署配置齐不齐，再比密码。"""
 
-    expected = os.environ.get("SUBAGENT_PASSWORD") or ""
-    if not expected:
-        raise HTTPException(status_code=503, detail="subagent 未配置访问密码（SUBAGENT_PASSWORD），已禁用")
+    missing = missing_config()
+    if missing:
+        raise HTTPException(status_code=503, detail=f"subagent 未配置 {' / '.join(missing)}，已禁用")
+    expected = os.environ["SUBAGENT_PASSWORD"]
     if not hmac.compare_digest((x_subagent_password or "").encode(), expected.encode()):
         raise HTTPException(status_code=401, detail="密码错误")
 
