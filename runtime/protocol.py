@@ -5,6 +5,9 @@ from __future__ import annotations
 from typing import Dict, List
 
 
+API_PROTOCOL_VERSION = "4"
+"""公开 Realtime API 的现行协议版本（见 docs/fc-duplex/semantic-realtime-api-v4.md）。"""
+
 DEFAULT_WORKER_CAPABILITIES: List[str] = [
     "chat",
     "streaming",

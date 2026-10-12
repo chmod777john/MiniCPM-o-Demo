@@ -3,7 +3,7 @@
 定义 Gateway 层的 Pydantic 请求/响应模型、Worker 状态、队列模型等。
 """
 
-from typing import Optional, List, Dict
+from typing import Any, Optional, List, Dict
 from enum import Enum
 from datetime import datetime
 
@@ -42,6 +42,8 @@ class WorkerInfo(BaseModel):
     capabilities: List[str] = Field(default_factory=list)
     draining: bool = False
     """被摘流（drain）的 Worker 不再接新会话；手上的会话照常跑完。"""
+    model_info: Dict[str, Any] = Field(default_factory=dict)
+    """该 Worker 加载的模型（profile id、checkpoint、tts_pad、Unit 策略…），由注册方提供。"""
 
 
 class WorkerDrainRequest(BaseModel):
@@ -54,6 +56,10 @@ class WorkerRegistrationRequest(BaseModel):
     endpoint: str = Field(..., description="Worker endpoint in host:port form")
     gpu_group: Optional[str] = Field(default=None, description="Optional physical/shared GPU grouping hint")
     labels: Dict[str, str] = Field(default_factory=dict)
+    endpoint_name: Optional[str] = Field(
+        default=None, description="注册到哪个 API 端点；缺省为 default（兼容旧调用方）"
+    )
+    model_info: Dict[str, Any] = Field(default_factory=dict, description="该 Worker 加载的模型摘要")
 
 
 # ============ 队列模型 ============

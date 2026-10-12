@@ -75,6 +75,10 @@ class WorkerConnection:
     capabilities: Optional[List[str]] = None
     draining: bool = False
     """摘流中：不再接新会话，手上的会话照常跑完（见 ``WorkerPool.set_draining``）。"""
+    model_info: Dict[str, Any] = field(default_factory=dict)
+    """加载的模型摘要（注册方提供），供 ``/v1/info`` 与控制面板展示。"""
+    removed: bool = False
+    """已从池中移除：在跑会话结束时不再回到空闲（见 ``WorkerPool.remove_worker``）。"""
     _gateway_dispatched: bool = False
 
     @property
@@ -120,6 +124,7 @@ class WorkerConnection:
             task_started_at=self.task_started_at,
             capabilities=list(self.capabilities or DEFAULT_WORKER_CAPABILITIES),
             draining=self.draining,
+            model_info=dict(self.model_info),
         )
 
     def mark_busy(self, status: GatewayWorkerStatus, request_type: str,
@@ -331,6 +336,7 @@ class WorkerPool:
         endpoint: str,
         gpu_group: Optional[str] = None,
         labels: Optional[Dict[str, str]] = None,
+        model_info: Optional[Dict[str, Any]] = None,
     ) -> WorkerConnection:
         """Register or update a worker endpoint at runtime."""
         worker_id = worker_id.strip()
@@ -349,6 +355,7 @@ class WorkerPool:
                 gpu_id=self._next_dynamic_gpu_id,
                 gpu_group=gpu_group,
                 labels=dict(labels or {}),
+                model_info=dict(model_info or {}),
                 capabilities=list(DEFAULT_WORKER_CAPABILITIES),
                 registered_at=now,
                 updated_at=now,
@@ -362,6 +369,8 @@ class WorkerPool:
             worker.port = port
             worker.gpu_group = gpu_group
             worker.labels = dict(labels or {})
+            if model_info is not None:
+                worker.model_info = dict(model_info)
             worker.updated_at = now
             if endpoint_changed:
                 worker.status = GatewayWorkerStatus.OFFLINE
@@ -574,6 +583,23 @@ class WorkerPool:
             self._dispatch_next()
         return worker
 
+    # ---------- 移除 ----------
+
+    def remove_worker(self, worker_id: str) -> Optional[WorkerConnection]:
+        """把 Worker 移出池；返回它，未知 ID 返回 None。
+
+        移出后立即不可派发。若它手上还有会话，会话本身不受影响（打断由调用方决定），
+        会话结束时 ``release_worker`` 看到 ``removed`` 不会把它放回空闲。
+        """
+        worker = self.workers.pop(worker_id, None)
+        if worker is None:
+            return None
+        worker.removed = True
+        worker.draining = True
+        logger.info("Removed worker %s (busy=%s)", worker_id, worker.is_busy)
+        self._dispatch_next()
+        return worker
+
     # ========== FIFO 队列核心 ==========
 
     class QueueFullError(Exception):
@@ -706,15 +732,23 @@ class WorkerPool:
             self._recalc_positions_and_eta()
 
     def release_worker(self, worker: WorkerConnection, request_type: Optional[str] = None,
-                       duration_s: Optional[float] = None) -> None:
+                       duration_s: Optional[float] = None, *, failed: bool = False) -> None:
         """释放 Worker（任务完成后调用）
 
         Args:
             worker: 要释放的 Worker
             request_type: 完成的任务类型（用于 EMA 更新）
             duration_s: 任务实际耗时（用于 EMA 更新）
+            failed: 连不上该 Worker —— 标为离线而不是空闲，等健康检查确认恢复后才再派发。
+                    否则死掉的 Worker 会在下一次健康检查前（最多 10 秒）被当成空闲继续接单。
         """
-        worker.mark_idle()
+        if worker.removed:
+            worker._gateway_dispatched = False
+        elif failed:
+            worker.mark_idle()
+            worker.status = GatewayWorkerStatus.OFFLINE
+        else:
+            worker.mark_idle()
 
         # 更新 EMA
         if request_type and duration_s is not None and duration_s > 0:

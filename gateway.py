@@ -59,6 +59,9 @@ from gateway_modules.models import (
     EtaStatus,
 )
 from gateway_modules.worker_pool import WorkerPool, WorkerConnection
+from gateway_modules.endpoints import DEFAULT_ENDPOINT, EndpointError, EndpointRegistry
+from gateway_modules.live_sessions import LiveSession, LiveSessionRegistry
+from runtime.protocol import API_PROTOCOL_VERSION
 from gateway_modules.ref_audio_registry import (
     RefAudioRegistry,
     RefAudioListResponse,
@@ -196,6 +199,9 @@ def _identity_dict(
 # ============ 全局变量 ============
 
 worker_pool: Optional[WorkerPool] = None
+"""default 端点的池（旧地址 /v1/realtime、/workers、/api/queue、旧注册接口都用它）。"""
+endpoint_registry: Optional[EndpointRegistry] = None
+live_sessions = LiveSessionRegistry()
 ref_audio_registry: Optional[RefAudioRegistry] = None
 app_registry: AppRegistry = AppRegistry()
 
@@ -211,7 +217,7 @@ _cleanup_task: Optional[asyncio.Task] = None
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """应用生命周期"""
-    global worker_pool, ref_audio_registry, _cleanup_task
+    global worker_pool, endpoint_registry, ref_audio_registry, _cleanup_task
 
     workers = GATEWAY_CONFIG.get("workers", [])
     max_queue = GATEWAY_CONFIG.get("max_queue_size", 1000)
@@ -221,16 +227,19 @@ async def lifespan(app: FastAPI):
     eta_config_data = GATEWAY_CONFIG.get("eta_config")
     eta_config = EtaConfig(**eta_config_data) if eta_config_data else EtaConfig()
 
-    worker_pool = WorkerPool(
-        worker_addresses=workers,
-        max_queue_size=max_queue,
-        request_timeout=timeout,
-        eta_config=eta_config,
-        ema_alpha=GATEWAY_CONFIG.get("eta_ema_alpha", 0.3),
-        ema_min_samples=GATEWAY_CONFIG.get("eta_ema_min_samples", 3),
-        placement=GATEWAY_CONFIG.get("placement", "spread"),
-    )
-    await worker_pool.start()
+    def pool_factory(worker_addresses: Optional[List[str]] = None) -> WorkerPool:
+        return WorkerPool(
+            worker_addresses=worker_addresses or [],
+            max_queue_size=max_queue,
+            request_timeout=timeout,
+            eta_config=eta_config.model_copy(),
+            ema_alpha=GATEWAY_CONFIG.get("eta_ema_alpha", 0.3),
+            ema_min_samples=GATEWAY_CONFIG.get("eta_ema_min_samples", 3),
+            placement=GATEWAY_CONFIG.get("placement", "spread"),
+        )
+
+    endpoint_registry = EndpointRegistry(pool_factory)
+    worker_pool = await endpoint_registry.start(pool_factory(workers))
 
     # 初始化参考音频注册表
     data_dir = os.path.join(os.path.dirname(__file__), "data", "assets", "ref_audio")
@@ -245,7 +254,7 @@ async def lifespan(app: FastAPI):
 
     if _cleanup_task:
         _cleanup_task.cancel()
-    await worker_pool.stop()
+    await endpoint_registry.stop()
     logger.info("Gateway stopped")
 
 
@@ -293,6 +302,25 @@ internal_app = FastAPI(
 _PUBLIC_ADMIN_ENABLED = os.getenv("ENABLE_PUBLIC_ADMIN", "").lower() in {"1", "true", "yes", "on"}
 _BLOCKED_ADMIN_PATHS = {"/admin", "/admin/"}
 _BLOCKED_ADMIN_STATIC_PATHS = {"/static/admin.html", "/static/admin.html/"}
+
+
+# API-only 部署（对外公开的 API Gateway）：只放行 API、文档、控制面板，其余页面与接口一律 404。
+# 老页面（O45 时期的 /、/omni、/admin…）和会修改服务状态的旧接口（DELETE /api/queue、
+# PUT /api/config/eta、参考音频上传、会话录音）都不对外。评测本地网关不设这个开关，行为不变。
+_API_ONLY = os.getenv("GATEWAY_API_ONLY", "").lower() in {"1", "true", "yes", "on"}
+_API_ONLY_PREFIXES = ("/e/", "/api-docs", "/control")
+_API_ONLY_EXACT = {"/health"}
+
+
+def api_only_allows(path: str) -> bool:
+    return path in _API_ONLY_EXACT or path.startswith(_API_ONLY_PREFIXES)
+
+
+@app.middleware("http")
+async def restrict_api_only(request: Request, call_next):
+    if _API_ONLY and not api_only_allows(request.url.path):
+        return JSONResponse({"detail": "Not found"}, status_code=404)
+    return await call_next(request)
 
 
 @app.middleware("http")
@@ -406,15 +434,23 @@ async def internal_health():
 @internal_app.put("/internal/workers/{worker_id}")
 async def register_worker(worker_id: str, payload: WorkerRegistrationRequest):
     """Register or update a worker endpoint from the internal control plane."""
-    if worker_pool is None:
+    if endpoint_registry is None:
         raise HTTPException(status_code=503, detail="Service not ready")
 
+    target = payload.endpoint_name or DEFAULT_ENDPOINT
+    pool = endpoint_registry.get(target)
+    if pool is None:
+        raise HTTPException(status_code=404, detail=f"unknown endpoint {target}")
+    found = endpoint_registry.find_worker(worker_id)
+    if found is not None and found[0] != target:
+        raise HTTPException(status_code=409, detail=f"worker {worker_id} 已属于端点 {found[0]}")
     try:
-        worker = await worker_pool.register_worker(
+        worker = await pool.register_worker(
             worker_id=worker_id,
             endpoint=payload.endpoint,
             gpu_group=payload.gpu_group,
             labels=payload.labels,
+            model_info=payload.model_info or None,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -432,9 +468,10 @@ async def drain_worker(worker_id: str, payload: WorkerDrainRequest):
     离线评测的弹性缩容用它：控制器先摘流某台扩容主机的全部 Worker，确认都空闲后再让该主机退出，
     这样退出时不会掐断会话，也不会在退出前一刻又被分到新会话。
     """
-    if worker_pool is None:
+    if endpoint_registry is None:
         raise HTTPException(status_code=503, detail="Service not ready")
-    worker = worker_pool.set_draining(worker_id, payload.draining)
+    found = endpoint_registry.find_worker(worker_id)
+    worker = found[1].set_draining(worker_id, payload.draining) if found else None
     if worker is None:
         raise HTTPException(status_code=404, detail=f"unknown worker {worker_id}")
     return {"ok": True, "worker": worker.to_info()}
@@ -452,10 +489,13 @@ async def _api_worker_passthrough_ws(
     source_channel: str,
     source_mode: Optional[str],
     max_duration_s: Optional[float] = None,
+    pool: Optional[WorkerPool] = None,
+    endpoint_name: str = DEFAULT_ENDPOINT,
 ) -> None:
     """Queue, assign a worker, then pass API-shaped events through unchanged."""
 
-    if worker_pool is None:
+    pool = pool or worker_pool
+    if pool is None:
         await ws.close(code=1013, reason="Service not ready")
         return
 
@@ -513,81 +553,111 @@ async def _api_worker_passthrough_ws(
         finally:
             record_or_buffer("down", frame, recv_ts=produced, send_ts=sent, src="gateway")
 
-    try:
-        ticket, future = worker_pool.enqueue(request_type)
-    except WorkerPool.QueueFullError:
-        await gateway_send({
-            "type": "error",
-            "error": {"code": "queue_full", "message": "Queue full", "type": "server_error"},
-        })
-        await ws.close(code=1013, reason="Queue full")
-        return
+    async def acquire_worker() -> Optional[tuple]:
+        """排队直到分到一个 Worker；失败时已经通知客户端并关闭，返回 None。"""
 
-    worker: Optional[WorkerConnection] = None
-    if future.done():
-        worker = future.result()
-    else:
         try:
+            ticket, future = pool.enqueue(request_type)
+        except WorkerPool.QueueFullError:
             await gateway_send({
-                "type": "session.queued",
-                "position": ticket.position,
-                "estimated_wait_s": ticket.estimated_wait_s,
-                "ticket_id": ticket.ticket_id,
-                "queue_length": worker_pool.queue_length,
+                "type": "error",
+                "error": {"code": "queue_full", "message": "Queue full", "type": "server_error"},
             })
-            while not future.done():
-                try:
-                    worker = await asyncio.wait_for(asyncio.shield(future), timeout=3.0)
-                    break
-                except asyncio.TimeoutError:
-                    updated = worker_pool.get_ticket(ticket.ticket_id)
-                    if updated:
-                        await gateway_send({
-                            "type": "session.queue_update",
-                            "position": updated.position,
-                            "estimated_wait_s": updated.estimated_wait_s,
-                            "queue_length": worker_pool.queue_length,
-                        })
-                except asyncio.CancelledError:
-                    worker_pool.cancel(ticket.ticket_id)
-                    return
-        except (WebSocketDisconnect, Exception) as exc:
-            logger.info("API WS disconnected during queue: ticket=%s (%s)", ticket.ticket_id, exc)
-            worker_pool.cancel(ticket.ticket_id)
-            return
-        if worker is None and future.done():
-            worker = future.result()
+            await ws.close(code=1013, reason="Queue full")
+            return None
 
-    if worker is None:
+        worker: Optional[WorkerConnection] = None
+        if future.done():
+            worker = future.result()
+        else:
+            try:
+                await gateway_send({
+                    "type": "session.queued",
+                    "position": ticket.position,
+                    "estimated_wait_s": ticket.estimated_wait_s,
+                    "ticket_id": ticket.ticket_id,
+                    "queue_length": pool.queue_length,
+                })
+                while not future.done():
+                    try:
+                        worker = await asyncio.wait_for(asyncio.shield(future), timeout=3.0)
+                        break
+                    except asyncio.TimeoutError:
+                        updated = pool.get_ticket(ticket.ticket_id)
+                        if updated:
+                            await gateway_send({
+                                "type": "session.queue_update",
+                                "position": updated.position,
+                                "estimated_wait_s": updated.estimated_wait_s,
+                                "queue_length": pool.queue_length,
+                            })
+                    except asyncio.CancelledError:
+                        pool.cancel(ticket.ticket_id)
+                        return None
+            except (WebSocketDisconnect, Exception) as exc:
+                logger.info("API WS disconnected during queue: ticket=%s (%s)", ticket.ticket_id, exc)
+                pool.cancel(ticket.ticket_id)
+                return None
+            if worker is None and future.done():
+                worker = future.result()
+
+        if worker is None:
+            await gateway_send({
+                "type": "error",
+                "error": {"code": "worker_busy", "message": "No worker available", "type": "server_error"},
+            })
+            await ws.close(code=1013, reason="No worker available")
+            return None
+        return ticket, worker
+
+    import websockets
+    identity = _identity_dict(
+        ws,
+        source_channel=source_channel,
+        source_mode=source_mode,
+    )
+    identity["endpoint"] = endpoint_name
+    identity_qs = urlencode({k: v for k, v in identity.items() if v})
+
+    # 分到的 Worker 连不上（例如刚挂掉、健康检查还没发现）：标为离线并重新排队一次，
+    # 而不是直接让这次会话失败。
+    worker_ws = None
+    for attempt in range(2):
+        acquired = await acquire_worker()
+        if acquired is None:
+            return
+        ticket, worker = acquired
+        worker.mark_busy(worker_status, request_type, ticket_id=ticket.ticket_id)
+        ws_url = f"ws://{worker.host}:{worker.port}{worker_path}?{identity_qs}"
+        try:
+            worker_ws = await websockets.connect(
+                ws_url,
+                open_timeout=5,
+                max_size=128 * 1024 * 1024,
+            )
+            break
+        except Exception as exc:
+            logger.warning(
+                "Worker %s unreachable (%s), marking offline; attempt=%d ticket=%s",
+                worker.worker_id, exc, attempt + 1, ticket.ticket_id,
+            )
+            pool.release_worker(worker, failed=True)
+    if worker_ws is None:
         await gateway_send({
             "type": "error",
-            "error": {"code": "worker_busy", "message": "No worker available", "type": "server_error"},
+            "error": {"code": "session_failed", "message": "Assigned worker is unreachable", "type": "server_error"},
         })
-        await ws.close(code=1013, reason="No worker available")
+        await ws.close(code=1011, reason="Worker unreachable")
         return
 
     await gateway_send({"type": "session.queue_done"})
-    worker.mark_busy(worker_status, request_type, ticket_id=ticket.ticket_id)
     task_start = datetime.now()
-    worker_ws = None
     session_closed = asyncio.Event()
+    live = LiveSession(worker_id=worker.worker_id, ticket_id=ticket.ticket_id, endpoint=endpoint_name)
+    live_sessions.register(live)
+    recorder_worker = {"host": worker.host, "port": worker.port, "gpu_id": getattr(worker, "gpu_id", None)}
 
     try:
-        import websockets
-        identity = _identity_dict(
-            ws,
-            source_channel=source_channel,
-            source_mode=source_mode,
-        )
-        identity_qs = urlencode({k: v for k, v in identity.items() if v})
-        recorder_worker = {"host": worker.host, "port": worker.port, "gpu_id": getattr(worker, "gpu_id", None)}
-
-        ws_url = f"ws://{worker.host}:{worker.port}{worker_path}?{identity_qs}"
-        worker_ws = await websockets.connect(
-            ws_url,
-            open_timeout=5,
-            max_size=128 * 1024 * 1024,
-        )
 
         def ensure_recorder(session_id: Optional[str]) -> None:
             nonlocal recorder
@@ -678,6 +748,16 @@ async def _api_worker_passthrough_ws(
 
             tasks.append(asyncio.create_task(session_timeout_watchdog()))
 
+        async def forced_close_watcher() -> None:
+            # 控制面强制关闭该 Worker：告诉客户端会话被服务端终止，然后收尾。
+            await live.close_event.wait()
+            logger.info("API session force-closed (%s): worker=%s ticket=%s",
+                        live.close_reason, worker.worker_id, ticket.ticket_id)
+            await gateway_send({"type": "session.closed", "reason": live.close_reason or "worker_removed"})
+            session_closed.set()
+
+        tasks.append(asyncio.create_task(forced_close_watcher()))
+
         done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
         for task in pending:
             task.cancel()
@@ -704,8 +784,9 @@ async def _api_worker_passthrough_ws(
                 await worker_ws.close()
             except Exception:
                 pass
+        live_sessions.unregister(live)
         duration = (datetime.now() - task_start).total_seconds()
-        worker_pool.release_worker(worker, request_type=request_type, duration_s=duration)
+        pool.release_worker(worker, request_type=request_type, duration_s=duration)
         try:
             await ws.close()
         except Exception:
@@ -1511,11 +1592,28 @@ app.mount("/docs", StaticFiles(directory=docs_static_dir, html=True, check_dir=F
 
 @app.websocket("/v1/realtime")
 async def realtime_ws(ws: WebSocket):
-    """Unified API V2 WebSocket for chat and realtime duplex modes."""
+    """Unified API WebSocket（default 端点）：chat 与 realtime duplex。"""
 
+    await _realtime_entry(ws, pool=worker_pool, endpoint_name=DEFAULT_ENDPOINT, allow_chat=True)
+
+
+@app.websocket("/e/{endpoint}/v1/realtime")
+async def endpoint_realtime_ws(ws: WebSocket, endpoint: str):
+    """某个 API 端点的 realtime 会话：排队到该端点自己的 Worker 组。"""
+
+    pool = endpoint_registry.get(endpoint) if endpoint_registry is not None else None
+    if pool is None:
+        await ws.close(code=4404, reason=f"Unknown endpoint: {endpoint}")
+        return
+    await _realtime_entry(ws, pool=pool, endpoint_name=endpoint, allow_chat=False)
+
+
+async def _realtime_entry(
+    ws: WebSocket, *, pool: Optional[WorkerPool], endpoint_name: str, allow_chat: bool,
+) -> None:
     mode = ws.query_params.get("mode", "video")
 
-    if mode == "chat":
+    if mode == "chat" and allow_chat:
         if not app_registry.is_enabled("turnbased"):
             await ws.close(code=1008, reason="Turn-based Chat is currently disabled")
             return
@@ -1526,6 +1624,8 @@ async def realtime_ws(ws: WebSocket):
             worker_path="/v1/worker/chat",
             source_channel="realtime_api",
             source_mode=mode,
+            pool=pool,
+            endpoint_name=endpoint_name,
         )
         return
 
@@ -1552,7 +1652,51 @@ async def realtime_ws(ws: WebSocket):
         source_channel="realtime_api",
         source_mode=mode,
         max_duration_s=max_duration_s,
+        pool=pool,
+        endpoint_name=endpoint_name,
     )
+
+
+@app.get("/e/{endpoint}/v1/info")
+async def endpoint_info(endpoint: str):
+    """端点公开信息：会话前可查用哪个模型、有几个 Worker、排队多长。允许跨域（Demo 在别的域名）。"""
+
+    pool = endpoint_registry.get(endpoint) if endpoint_registry is not None else None
+    if pool is None:
+        return JSONResponse({"detail": f"unknown endpoint {endpoint}"}, status_code=404,
+                            headers=_PUBLIC_CORS_HEADERS)
+    return JSONResponse(build_endpoint_info(endpoint, pool), headers=_PUBLIC_CORS_HEADERS)
+
+
+_PUBLIC_CORS_HEADERS = {"Access-Control-Allow-Origin": "*", "Cache-Control": "no-store"}
+
+
+def build_endpoint_info(endpoint: str, pool: WorkerPool) -> Dict[str, Any]:
+    """公开的端点描述。不含 Worker 的内网地址。"""
+
+    workers = []
+    models: Dict[str, Dict[str, Any]] = {}
+    for w in pool.workers.values():
+        key = json.dumps(w.model_info, sort_keys=True, ensure_ascii=False)
+        models.setdefault(key, {"model": w.model_info, "workers": 0, "available": 0})
+        models[key]["workers"] += 1
+        if w.is_idle:
+            models[key]["available"] += 1
+        workers.append({
+            "worker_id": w.worker_id,
+            "status": w.status.value,
+            "draining": w.draining,
+            "profile_id": w.model_info.get("profile_id"),
+        })
+    return {
+        "endpoint": endpoint,
+        "protocol_version": API_PROTOCOL_VERSION,
+        "realtime_path": f"/e/{endpoint}/v1/realtime?mode=audio",
+        "workers": workers,
+        "available_workers": pool.idle_count,
+        "queue_length": pool.queue_length,
+        "models": list(models.values()),
+    }
 
 
 @app.get("/mobile-omni", include_in_schema=False)
@@ -1627,6 +1771,8 @@ def main():
     parser.add_argument("--port", type=int, default=None, help=f"Gateway port (default: {cfg.gateway_port})")
     parser.add_argument("--internal-port", type=int, default=8007, help="Internal worker registration port")
     parser.add_argument("--host", type=str, default="0.0.0.0", help="Host")
+    parser.add_argument("--internal-host", type=str, default=None,
+                        help="内部注册接口绑定地址（默认同 --host；对外部署设 127.0.0.1，注册接口没有鉴权）")
     parser.add_argument("--max-queue-size", type=int, default=None, help="Max queue size")
     parser.add_argument("--timeout", type=float, default=None, help="Request timeout (s)")
     # 协议选择：默认 HTTPS，--http 可降级为 HTTP
@@ -1700,7 +1846,7 @@ def main():
         )
         internal_config = uvicorn.Config(
             internal_app,
-            host=args.host,
+            host=args.internal_host or args.host,
             port=args.internal_port,
             log_level="info",
             log_config=_uvicorn_log_config(debug=ws_debug),
