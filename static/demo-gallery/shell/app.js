@@ -10,6 +10,7 @@ import { DEFAULT_PLAYBACK_DELAY_MS, resolvePlaybackDelayMs } from '../core/playb
 import { MIC_SPEECH_DB, openingSilenceWarning } from '../core/mic-policy.js';
 import { MODEL_IDENTITY_HINTS, MODEL_IDENTITY_ROWS } from '../core/model-identity.js';
 import { escapeHtml, textFromSteps } from '../core/ui-utils.js';
+import { normalizeEndpoint, summarizeEndpointInfo } from '../core/api-endpoint.js';
 
 // 后端注入的当前 demo 元信息（入口模块 URL / API 前缀 / 标题）。
 const bootstrap = JSON.parse(document.getElementById('gallery-bootstrap').textContent);
@@ -57,8 +58,13 @@ let micSpeechSeen = false;
 let fcBoardDefaults = null;
 let systemSegments = [];
 let quickSettings = new Map();
-// 当前 preset 的 tts_pad 协议口径（per-ckpt，没有 UI 控件，随 preset 一起切换）。
-let ttsPadProtocol = 'legacy';
+// 所选 API 端点（normalizeEndpoint 的结果）与它的 /v1/info。模型口径（预算、调度、tts_pad）
+// 由端点上部署的模型决定：这里只用于展示，不进 session.init。
+let apiEndpoint = null;
+let endpointInfo = null;
+const API_ENDPOINT_KEY = 'demo_gallery_api_endpoint';
+// 音频路径 → v4 base64 音频对象（由 Demo 服务读本机文件）；同一页面内复用。
+const audioCache = new Map();
 let micLiveState = 'idle';
 let streamEventSeq = 0;
 const speechQueue = [];
@@ -104,6 +110,10 @@ const el = {
   aiSpeech: document.getElementById('aiSpeech'),
   nsStream: document.getElementById('nonSpokenStream'),
   kvMode: document.getElementById('kvMode'),
+  apiEndpoint: document.getElementById('apiEndpoint'),
+  apiEndpointOptions: document.getElementById('apiEndpointOptions'),
+  applyApiEndpoint: document.getElementById('applyApiEndpoint'),
+  apiEndpointStatus: document.getElementById('apiEndpointStatus'),
   kvCkpt: document.getElementById('kvCkpt'),
   kvTools: document.getElementById('kvTools'),
   quickSetting: document.getElementById('quickSetting'),
@@ -149,8 +159,8 @@ initPage();
 function initPage() {
   el.modeBadge.textContent = 'Realtime API';
   el.modeBadge.className = 'mode-tag mode-real';
-  el.kvMode.textContent = '/v1/realtime?mode=audio';
-  el.kvCkpt.textContent = 'No checkpoint';
+  el.kvMode.textContent = '—';
+  el.kvCkpt.textContent = '—';
   document.title = scene.pageTitle;
   if (el.pageTitle) el.pageTitle.textContent = scene.pageTitle;
   if (el.scenePanelTitle) el.scenePanelTitle.textContent = scene.panelTitle;
@@ -261,7 +271,8 @@ el.startMicLive.addEventListener('click', async () => {
   if (micLiveState !== 'idle' && micLiveState !== 'stopped' && micLiveState !== 'closed' && micLiveState !== 'error') return;
   let sessionInitPayload;
   try {
-    sessionInitPayload = buildSessionInitPayload();
+    setStatus('Preparing session (reading reference audio)…');
+    sessionInitPayload = await buildSessionInitPayload();
   } catch (err) {
     setStatus(`Cannot start: ${err.message}`);
     return;
@@ -348,7 +359,7 @@ el.runFileReplay.addEventListener('click', async () => {
   }
   let sessionInitPayload;
   try {
-    sessionInitPayload = buildSessionInitPayload();
+    sessionInitPayload = await buildSessionInitPayload();
   } catch (err) {
     setStatus(`Cannot start: ${err.message}`);
     return;
@@ -375,7 +386,7 @@ el.runFileReplay.addEventListener('click', async () => {
   setStatus('File replay finished');
 });
 
-async function createRealtimeSession(payload = buildSessionInitPayload()) {
+async function createRealtimeSession(payload) {
   let resolveCreated;
   let rejectCreated;
   const created = new Promise((resolve, reject) => {
@@ -407,8 +418,9 @@ async function createConnectedClient(onControlEvent = null) {
     onSend: (message) => appendStreamEvent('tx', message),
     onStatus: setStatus,
   });
-  setStatus('Connecting to /v1/realtime...');
-  await client.connect();
+  if (!apiEndpoint) throw new Error('No API endpoint selected');
+  setStatus(`Connecting to ${apiEndpoint.realtime} …`);
+  await client.connect(apiEndpoint.realtime);
   setWsState('connected');
   return client;
 }
@@ -453,7 +465,21 @@ function createMicProvider(client) {
   });
 }
 
-function buildSessionInitPayload() {
+/** 把 Demo 侧的路径音频读成协议 v4 的 base64 WAV（Demo 服务读本机白名单目录里的文件）。 */
+async function resolveAudio(filePath) {
+  const path = String(filePath || '').trim();
+  if (!path) throw new Error('Audio path is empty');
+  if (!audioCache.has(path)) {
+    const response = await fetch(`/api/demos/_audio?path=${encodeURIComponent(path)}`, { cache: 'no-store' });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(body.detail || `HTTP ${response.status} reading ${path}`);
+    audioCache.set(path, { source: 'base64', format: 'wav', data: body.data });
+  }
+  return audioCache.get(path);
+}
+
+async function buildSessionInitPayload() {
+  if (!apiEndpoint) throw new Error('No API endpoint selected');
   const validatedSegments = systemSegments.map((segment, index) => (
     validateSystemSegment(segment, index)
   ));
@@ -461,48 +487,35 @@ function buildSessionInitPayload() {
   if (!ttsPromptAudioPath) {
     throw new Error('TTS prompt audio path is required when generate_audio is true');
   }
-  const checkpointProfileId = (el.checkpointProfileId?.value || '').trim();
-  if (!checkpointProfileId) throw new Error('Checkpoint Profile is not configured');
-  const nonSpokenScheduling = ['quality', 'latency'].includes(el.nonSpokenScheduling?.value)
-    ? el.nonSpokenScheduling.value
-    : 'quality';
-  const nonSpokenBudgetWhileListening = requirePositiveInt(
-    el.nonSpokenBudgetWhileListening?.value,
-    'Listening budget',
-  );
-  const nonSpokenBudgetWhileSpeaking = requirePositiveInt(
-    el.nonSpokenBudgetWhileSpeaking?.value,
-    'Speaking budget',
-  );
+  const segments = [];
+  for (const segment of validatedSegments) {
+    segments.push(segment.kind === 'audio'
+      ? { kind: 'audio', audio: await resolveAudio(segment.audio.file_path) }
+      : segment);
+  }
+  // 协议 v4：音频以 base64 上传；预算、调度、tts_pad、checkpoint profile 由端点上的模型决定，不发送。
   const payload = {
-    protocol_version: '3',
+    protocol_version: '4',
     mode: 'full_duplex',
     fc_duplex: true,
-    checkpoint_profile_id: checkpointProfileId,
     system: {
-      segments: validatedSegments,
+      segments,
       tools: validatedTools(),
     },
-    tts_prompt_audio: {
-      source: 'path',
-      file_path: ttsPromptAudioPath,
-    },
+    tts_prompt_audio: await resolveAudio(ttsPromptAudioPath),
     generate_audio: true,
     config: {
       runtime: 'fc_duplex',
       auto_execute_tools: false,
-      non_spoken_scheduling: nonSpokenScheduling,
       sample_rate: 16000,
       max_spoken_tokens: 24,
-      non_spoken_budget_while_listening: nonSpokenBudgetWhileListening,
-      non_spoken_budget_while_speaking: nonSpokenBudgetWhileSpeaking,
       decode_mode: 'greedy',
-      tts_pad_protocol: ttsPadProtocol,
-      // Demo 部署用协议状态机约束解码（FDB 这类测基本能力的评测才用 raise_protocol_error）。
+      // Demo 用协议状态机约束解码（FDB 这类测基本能力的评测才用 raise_protocol_error）。
       decoding_policy: 'constrained_decoding',
     },
   };
-  nsView.setBudgets(nonSpokenBudgetWhileListening, nonSpokenBudgetWhileSpeaking);
+  const summary = summarizeEndpointInfo(endpointInfo);
+  nsView.setBudgets(Number(summary.listening) || 0, Number(summary.speaking) || 0);
   return payload;
 }
 
@@ -519,11 +532,66 @@ async function loadFcBoardDefaults() {
     applyDefaults({});
     setStatus('Click Start to begin. Defaults endpoint unavailable; using fallback prompt.');
   }
+  setupApiEndpoints(fcBoardDefaults || {});
 }
+
+// ---------------------------------------------------------------- API 端点
+
+function setupApiEndpoints(defaults) {
+  const options = Array.isArray(defaults.api_endpoints) ? defaults.api_endpoints : [];
+  if (el.apiEndpointOptions) {
+    el.apiEndpointOptions.innerHTML = options.map((option) => (
+      `<option value="${escapeHtml(option.url)}">${escapeHtml(option.name)}</option>`
+    )).join('');
+  }
+  const saved = globalThis.localStorage?.getItem(API_ENDPOINT_KEY);
+  const initial = saved || defaults.default_api_endpoint || options[0]?.url || '';
+  if (el.apiEndpoint) el.apiEndpoint.value = initial;
+  if (initial) selectApiEndpoint(initial);
+  else renderEndpoint('请填写 API 端点地址（https://<host>:<port>/e/<端点名>）');
+}
+
+async function selectApiEndpoint(raw) {
+  try {
+    apiEndpoint = normalizeEndpoint(raw);
+  } catch (err) {
+    apiEndpoint = null;
+    endpointInfo = null;
+    renderEndpoint(err.message);
+    return;
+  }
+  globalThis.localStorage?.setItem(API_ENDPOINT_KEY, apiEndpoint.base);
+  if (el.apiEndpoint) el.apiEndpoint.value = apiEndpoint.base;
+  el.kvMode.textContent = apiEndpoint.realtime;
+  renderEndpoint('查询端点信息…');
+  try {
+    const response = await fetch(apiEndpoint.info, { cache: 'no-store' });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    endpointInfo = await response.json();
+    renderEndpoint();
+  } catch (err) {
+    endpointInfo = null;
+    renderEndpoint(`查不到端点信息（${err.message}）。若是自签证书，先在新标签页打开 ${apiEndpoint.info} 并选择继续访问。`);
+  }
+}
+
+function renderEndpoint(message = '') {
+  const summary = summarizeEndpointInfo(endpointInfo);
+  if (el.apiEndpointStatus) el.apiEndpointStatus.textContent = message || summary.statusText;
+  if (el.kvCkpt) el.kvCkpt.textContent = summary.profileId || '—';
+  if (el.checkpointProfileId) el.checkpointProfileId.value = summary.profileId;
+  if (el.nonSpokenBudgetWhileListening) el.nonSpokenBudgetWhileListening.value = summary.listening;
+  if (el.nonSpokenBudgetWhileSpeaking) el.nonSpokenBudgetWhileSpeaking.value = summary.speaking;
+  if (el.nonSpokenScheduling && summary.scheduling) el.nonSpokenScheduling.value = summary.scheduling;
+  if (el.ttsPadProtocolView) el.ttsPadProtocolView.value = summary.ttsPad;
+  renderModelIdentity(summary.model);
+}
+
+el.applyApiEndpoint?.addEventListener('click', () => selectApiEndpoint(el.apiEndpoint?.value));
+el.apiEndpoint?.addEventListener('change', () => selectApiEndpoint(el.apiEndpoint?.value));
 
 function applyDefaults(defaults) {
   quickSettings = scene.buildQuickSettings(defaults);
-  if (el.checkpointProfileId) el.checkpointProfileId.value = defaults.checkpoint_profile_id || '';
   // 部署方按 checkpoint 指定启动 preset；不属于本场景的 preset id 回退到场景自己的默认值。
   // 没有任何 preset 的 demo（例如脚手架）是合法的：此时跳过 quick setting，不要去查空表。
   const initialSetting = quickSettings.has(defaults.default_quick_setting)
@@ -535,9 +603,7 @@ function applyDefaults(defaults) {
     systemSegments = [];
     renderSystemSegments();
   }
-  if (el.kvCkpt) el.kvCkpt.textContent = defaults.checkpoint_profile_id || 'No checkpoint profile';
   renderToolsSummary();
-  renderModelIdentity(defaults);
 }
 
 /** Session 面板的 Tools 一栏；工具可以随 preset 变，所以切 preset 时也要刷新。 */
@@ -547,12 +613,12 @@ function renderToolsSummary() {
   el.kvTools.textContent = names.length ? names.join(', ') : 'none';
 }
 
-function renderModelIdentity(defaults) {
-  if (el.kvProfileId) el.kvProfileId.textContent = defaults?.checkpoint_profile_id || '—';
+/** 展示端点上部署的模型（会话前来自 /v1/info，会话建立后以 session.created.model 为准）。 */
+function renderModelIdentity(identity) {
+  if (el.kvProfileId) el.kvProfileId.textContent = identity?.profile_id || '—';
   if (!el.modelIdentity) return;
-  const identity = defaults?.model_identity;
   if (!identity) {
-    el.modelIdentity.innerHTML = '<dd class="placeholder">部署 Profile 不可读</dd>';
+    el.modelIdentity.innerHTML = '<dd class="placeholder">端点信息不可用</dd>';
     return;
   }
   el.modelIdentity.innerHTML = MODEL_IDENTITY_ROWS.map(([key, label]) => {
@@ -583,25 +649,6 @@ function applyQuickSetting(settingId) {
   if (el.ttsPromptAudioPath) {
     el.ttsPromptAudioPath.value = cloned.ttsPromptAudioPath;
   }
-  if (
-    el.nonSpokenScheduling
-    && ['quality', 'latency'].includes(cloned.runtime.nonSpokenScheduling)
-  ) {
-    el.nonSpokenScheduling.value = cloned.runtime.nonSpokenScheduling;
-  }
-  if (el.nonSpokenBudgetWhileListening) {
-    el.nonSpokenBudgetWhileListening.value = (
-      cloned.runtime.nonSpokenBudgetWhileListening ?? ''
-    );
-  }
-  if (el.nonSpokenBudgetWhileSpeaking) {
-    el.nonSpokenBudgetWhileSpeaking.value = (
-      cloned.runtime.nonSpokenBudgetWhileSpeaking ?? ''
-    );
-  }
-  // tts_pad 形态是 checkpoint 的训练口径：部署方声明了就以部署为准，否则用 preset 自带的。
-  ttsPadProtocol = fcBoardDefaults?.tts_pad_protocol || cloned.runtime.ttsPadProtocol || 'legacy';
-  if (el.ttsPadProtocolView) el.ttsPadProtocolView.value = ttsPadProtocol;
   if (el.quickSetting) el.quickSetting.value = settingId;
   renderSystemSegments();
   renderToolsSummary();
@@ -681,6 +728,10 @@ function applyApiEvent(event) {
   appendTimeline(`${event.type} ${event.kind || ''} ${event.tool_call_id || ''}`.trim());
   switch (event.type) {
     case 'session.created':
+      if (event.model) {
+        renderModelIdentity(event.model);
+        if (el.kvCkpt) el.kvCkpt.textContent = event.model.profile_id || '—';
+      }
       setStatus('Session created');
       return;
     case 'session.resumed':

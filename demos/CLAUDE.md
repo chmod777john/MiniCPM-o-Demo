@@ -2,6 +2,11 @@
 
 # Demo Gallery：怎么新加 / 修改一个 Demo
 
+**Demo 与 API 是两件事。** Demo 服务（`demo_server.py`）只有页面与各 Demo 自己的后端，不加载模型；
+页面上选一个 API 端点，浏览器按协议 v4 直接连它（`docs/fc-duplex/semantic-realtime-api-v4.md`）。
+Demo 侧代码**不许 import API 侧任何模块**（`core/`、`py_backend/`、`gateway*`、`control_plane/`…），
+有守卫测试 `tests/test_api_demo_boundary.py`。
+
 **核心性质：一个 Demo = `demos/<id>/` 一个文件夹。加、改、删 Demo 都不碰任何共享文件。**
 这条有测试强制（`tests/test_gallery_pluggability.py`），不是靠自觉。
 
@@ -13,14 +18,14 @@ API 细节（`@demo` 参数、场景契约字段、工具调用链路）的单�
 新 Demo 的开发**不得修改**以下任何文件：
 
 ```text
-gateway.py                  Gateway 主程序
+demo_server.py              Demo 服务主程序
 demo_gallery/               后端 core（注册 / 发现 / 挂载 / 页面模板）
 static/demo-gallery/        前端 core（shell、realtime client、通用组件）
 ```
 
 - 共享层里**不允许出现任何具体 Demo 的名字**（有 `git grep` 守卫测试）。
 - Demo 的 API（包括工具接口）只能挂在自己的 `router` 上，由 Gallery 挂到
-  `/api/demos/<id>/**`。**禁止**往 Gateway 主路由加接口。
+  `/api/demos/<id>/**`。**禁止**往 Demo 服务主路由加接口。
 - 如果你觉得「不改共享层就做不出来」，那是共享层缺了一个通用扩展点。**停下来问用户**，
   不要在共享层里写 `if demo_id == ...` 这种特判。
 
@@ -58,6 +63,11 @@ static/demo-gallery/        前端 core（shell、realtime client、通用组件
 - **代码里不许出现任何人的私人路径或凭证默认值**（家目录、`~/.claude/settings.json`、某人装的程序、
   API key）。会动用账号 / 密钥 / 计费资源的配置一律走环境变量，**没配就拒绝服务**，不许回退到某人的默认值。
   原因：集群容器都以 root 运行，别人的 `/user/<name>` 对你可读——默认值写的是谁，别人克隆部署后就悄悄用谁的账号。
+- **模型口径不归 Demo 管**：预算、调度方式、tts_pad、checkpoint profile 是 API 端点上部署的模型的事实，
+  页面从 `<端点>/v1/info` 读来展示，**不发送、不覆盖**。preset 只描述 system segments 与 TTS prompt 音频，
+  不要再做「只差 tts_pad / 只差 budget」的成对 preset。
+- **音频写 Demo 服务所在机器上的绝对路径**，建会话时由 shell 读成 base64（`/api/demos/_audio`）。
+  只能读 `DEMO_AUDIO_ROOTS` 白名单内的 16 kHz 单声道 WAV；新素材放不进白名单就加白名单目录，别改代码绕过。
 - **推理忠实**：Demo 只负责展示，**不许为了效果改推理语义**（加 logit bias、改 prompt、
   补写模型没生成的 token 等）。完整规则见 `.cursor/rules/model-faithful-inference.mdc`。
 

@@ -17,10 +17,10 @@ from demo_gallery.training_data import (
 
 logger = logging.getLogger("demo_gallery.board")
 
-# 环境变量名保持 FC_BOARD_CASE_FOLDER 不变：core/fc_duplex/profiles.py 在按部署 Profile
-# 注入它，改名会连带动到 Profile 投影链路。
+# Demo 服务自己的配置（由 Demo 服务的启动脚本设置）：board 默认 system 取自哪份训练数据。
+# Demo 与 API 是两个进程，API 部署 Profile 里的任何字段都不会传到这里。
 CASE_FOLDER_CANDIDATES = (
-    os.environ.get("FC_BOARD_CASE_FOLDER"),
+    os.environ.get("DEMO_BOARD_CASE_FOLDER"),
     "/home/weihongliang/o45_fc_assets/training/delivery_train_data",
     "/user/weihongliang/o45_fc_assets/training/delivery_train_data",
 )

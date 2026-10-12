@@ -1157,3 +1157,29 @@ body.gallery-index { overflow: auto; }
   text-align: center; border-radius: 50%;
   background: #ddd; color: #666; font-size: 9px; cursor: help;
 }
+
+/* API 端点选择（Demo 与 API 是两个服务） */
+.api-endpoint-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  margin-bottom: 4px;
+}
+.api-endpoint-row label {
+  font-size: 12px;
+  white-space: nowrap;
+}
+.api-endpoint-row input {
+  flex: 1;
+  min-width: 0;
+  font-family: ui-monospace, Menlo, monospace;
+  font-size: 12px;
+  padding: 3px 6px;
+}
+.api-endpoint-status {
+  margin: 0 0 6px;
+  color: #666;
+  font-size: 11px;
+  line-height: 1.4;
+  word-break: break-all;
+}

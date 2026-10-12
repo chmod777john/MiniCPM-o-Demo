@@ -37,19 +37,13 @@ export function presetLanguage(presetId) {
   return String(presetId || '').startsWith('en_') ? 'en' : 'zh';
 }
 
-/** 构造 quick setting；budget / 调度来自部署 defaults（与 checkpoint 绑定）。 */
-export function buildStandaloneQuickSettings(defaults) {
-  const runtime = {
-    nonSpokenScheduling: defaults?.non_spoken_scheduling,
-    nonSpokenBudgetWhileListening: defaults?.non_spoken_budget_while_listening,
-    nonSpokenBudgetWhileSpeaking: defaults?.non_spoken_budget_while_speaking,
-  };
+/** 构造 quick setting（预算 / 调度 / tts_pad 由所选端点的模型决定，不在 preset 里）。 */
+export function buildStandaloneQuickSettings() {
   return new Map(PRESETS.map(({ id, prefix, ref }) => [id, {
     segments: [
       { kind: 'text', text: prefix },
       { kind: 'audio', audio: { source: 'path', file_path: ref } },
     ],
     ttsPromptAudioPath: ref,
-    runtime: { ...runtime },
   }]));
 }

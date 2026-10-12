@@ -256,7 +256,7 @@ console.log(JSON.stringify({{
 """)
     assert result["ids"] == ["board"]
     assert result["options"] == result["built"]
-    assert "latest_mvp_zh_revised" in result["built"]
+    assert "latest_mvp_zh_revised" not in result["built"]     # tts_pad 由端点上的模型决定，不再成对出 preset
     assert result["tools"] == ["display_object_on_board"]
     assert result["fallbackTools"] == ["display_object_on_board"]
     assert result["fallback"] == "0730"
@@ -272,7 +272,10 @@ console.log(JSON.stringify({{
     ],
 )
 def test_rejection_presets_match_training_data_system(preset_id: str, bundle: str) -> None:
-    """预设 system 必须与训练数据主形态逐字一致（参考音频 + 规则文本），budget 一致。"""
+    """预设 system 必须与训练数据主形态逐字一致（参考音频 + 规则文本）。
+
+    budget 不在 preset 里：由所选 API 端点上部署的模型决定（Worker 模板默认 45/25，与该训练数据一致）。
+    """
 
     rows = (REJECTION_ROOT / bundle / "traindata.jsonl").open(encoding="utf-8")
     sample = next(
@@ -301,8 +304,7 @@ console.log(JSON.stringify(m[{json.dumps(export_name)}]));
     ]
     assert preset["ttsPromptAudioPath"] == expected_audio
     assert sample["system"]["tools"] == []
-    assert preset["runtime"]["nonSpokenBudgetWhileListening"] == sample["unit_policy"]["non_spoken_budgets_while_listening"][0]
-    assert preset["runtime"]["nonSpokenBudgetWhileSpeaking"] == sample["unit_policy"]["non_spoken_budgets_while_speaking"][0]
+    assert set(preset) == {"segments", "ttsPromptAudioPath"}
 
 
 def test_gallery_serves_demo_pages_with_injected_entry(
@@ -310,10 +312,10 @@ def test_gallery_serves_demo_pages_with_injected_entry(
 ) -> None:
     """每个 demo 页面都由同一份骨架渲染，注入自己的 data-demo / 入口 URL / 样式。"""
 
-    import gateway
+    import demo_server
     from fastapi.testclient import TestClient
 
-    client = TestClient(gateway.app)
+    client = TestClient(demo_server.app)        # Demo 是独立服务，不在 API Gateway 里
     for demo_id in ("board", "rejection"):
         page = client.get(f"/demos/{demo_id}").text
         assert f'<body data-demo="{demo_id}">' in page
@@ -324,12 +326,15 @@ def test_gallery_serves_demo_pages_with_injected_entry(
     index = client.get("/demos").text
     assert "/demos/board" in index and "/demos/rejection" in index
 
-    monkeypatch.setenv("FC_DUPLEX_TTS_PAD_PROTOCOL", "revised")
-    from demo_gallery.deployment import gallery_runtime
+    # Demo 侧配置只描述「能连哪些 API 端点」，不读 API 进程的任何环境变量。
+    from demo_gallery.runtime import gallery_runtime
 
-    assert gallery_runtime()["tts_pad_protocol"] == "revised"
-    monkeypatch.delenv("FC_DUPLEX_TTS_PAD_PROTOCOL")
-    assert gallery_runtime()["tts_pad_protocol"] is None
+    monkeypatch.setenv("DEMO_API_ENDPOINTS", json.dumps([{"name": "a", "url": "https://h:1/e/a/"}, {"bad": 1}]))
+    monkeypatch.setenv("FC_DUPLEX_TTS_PAD_PROTOCOL", "revised")
+    runtime = gallery_runtime()
+    assert runtime["api_endpoints"] == [{"name": "a", "url": "https://h:1/e/a"}]
+    assert runtime["default_api_endpoint"] == "https://h:1/e/a"
+    assert "tts_pad_protocol" not in runtime
 
 
 @needs_node
@@ -420,12 +425,12 @@ console.log(JSON.stringify({{
     assert got["boardSharesZh"] is True
 
 
-def test_defaults_expose_full_model_identity(
+def test_worker_model_info_reports_full_paths(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """部署信息必须原样给出当前加载模型的完整路径，不缩写、不省略。"""
+    """API 侧（/v1/info、session.created.model）必须原样给出当前加载模型的完整路径，不缩写、不省略。"""
 
-    from demo_gallery.deployment import deployment_model_identity
+    from core.fc_duplex.model_info import worker_model_info
 
     profile = tmp_path / "deployment_profile.json"
     profile.write_text(
@@ -443,20 +448,19 @@ def test_defaults_expose_full_model_identity(
         encoding="utf-8",
     )
     monkeypatch.setenv("FC_DEPLOYMENT_PROFILE", str(profile))
+    monkeypatch.setenv("O5_DEPLOY_MODE", "tp2")
 
-    identity = deployment_model_identity()
+    identity = worker_model_info()
     assert identity["pt_path"] == "/backup/user/someone/ckpt/iter_500.pt"
     assert identity["backbone_dir"] == "/backup/user/sunweiyue/delivery/ckpt/iter_500/backbone"
     assert identity["base_model_path"] == "/user/sunweiyue/models/MiniCPM-o-4_6"
     assert identity["deployment_mode"] == "tp2"
-    assert identity["sdk_version"] == "0.0.6"
     assert identity["checkpoint_sha256"] is None
-    assert identity["profile_path"] == str(profile)
 
-    # Profile 不可读时不能把整个 defaults 拖垮，各项给 None 即可。
+    # Profile 不可读时不能拖垮会话，各项给 None 即可。
     monkeypatch.setenv("FC_DEPLOYMENT_PROFILE", str(tmp_path / "missing.json"))
-    degraded = deployment_model_identity()
-    assert degraded["pt_path"] is None and degraded["deployment_mode"] is None
+    degraded = worker_model_info()
+    assert degraded["pt_path"] is None and degraded["backbone_dir"] is None
 
 
 @needs_node
@@ -468,10 +472,12 @@ def test_model_identity_rows_cover_every_identity_field(
     前端侧直接 import `model-identity.js`，不再从 app.js 正则抠数组字面量。
     """
 
-    from demo_gallery.deployment import deployment_model_identity
+    from core.fc_duplex.model_info import worker_model_info
 
     monkeypatch.setenv("FC_DEPLOYMENT_PROFILE", str(tmp_path / "missing.json"))
-    backend_fields = set(deployment_model_identity())
+    # 这几项在 Session 面板的其他位置展示（profile id、Runtime 一栏），不进路径列表。
+    shown_elsewhere = {"profile_id", "model_family", "non_spoken_scheduling", "unit_policy"}
+    backend_fields = set(worker_model_info()) - shown_elsewhere
 
     got = run_node(f"""
 const m = await import({json.dumps(module_url('model-identity.js'))});

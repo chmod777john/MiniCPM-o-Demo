@@ -33,18 +33,14 @@ const defaults = {{
   ],
   tools: [],
 }};
-const presets = module.buildBoardQuickSettings(defaults, '/tts.wav', {{
-  nonSpokenScheduling: 'quality',
-  nonSpokenBudgetWhileListening: 30,
-  nonSpokenBudgetWhileSpeaking: 15,
-}});
+const presets = module.buildBoardQuickSettings(defaults, '/tts.wav');
 console.log(JSON.stringify({{
   old: presets.get(module.QUICK_SETTING_0730),
   aligned: presets.get(module.QUICK_SETTING_0807_SYSALIGN),
   family4Full: presets.get(module.QUICK_SETTING_0808_FAMILY4_FULL),
   family4Short: presets.get(module.QUICK_SETTING_0808_FAMILY4_SHORT),
   latestMvpZh: presets.get(module.QUICK_SETTING_LATEST_MVP_ZH),
-  latestMvpZhRevised: presets.get(module.QUICK_SETTING_LATEST_MVP_ZH_REVISED),
+  ids: [...presets.keys()],
   latestMvpZhPrefix: module.LATEST_MVP_ZH_PREFIX_TEXT,
   f224: module.F224_REF_AUDIO_PATH,
   family3Prefix: module.SYSALIGN_0807_PREFIX_TEXT,
@@ -62,12 +58,6 @@ console.log(JSON.stringify({{
 
     assert result["old"]["segments"] == defaults_for_assertion()
     assert result["old"]["ttsPromptAudioPath"] == "/tts.wav"
-    assert result["old"]["runtime"] == {
-        "nonSpokenScheduling": "quality",
-        "nonSpokenBudgetWhileListening": 30,
-        "nonSpokenBudgetWhileSpeaking": 15,
-        "ttsPadProtocol": "legacy",
-    }
     assert [item["kind"] for item in result["aligned"]["segments"]] == [
         "text",
         "audio",
@@ -86,12 +76,6 @@ console.log(JSON.stringify({{
     assert result["aligned"]["segments"][1]["audio"]["file_path"] == "/ref.wav"
     assert result["aligned"]["segments"][2]["text"] == "board-task"
     assert result["aligned"]["ttsPromptAudioPath"] == "/tts.wav"
-    assert result["aligned"]["runtime"] == {
-        "nonSpokenScheduling": "quality",
-        "nonSpokenBudgetWhileListening": 30,
-        "nonSpokenBudgetWhileSpeaking": 15,
-        "ttsPadProtocol": "legacy",
-    }
 
     expected_full_prefix = (
         "你处于双工 Agent 模式，时间轴按约一秒一个的 unit 组织。"
@@ -114,12 +98,6 @@ console.log(JSON.stringify({{
         assert preset["segments"][0] == {"kind": "text", "text": expected_prefix}
         assert preset["segments"][1:] == defaults_for_assertion()
         assert preset["ttsPromptAudioPath"] == "/tts.wav"
-        assert preset["runtime"] == {
-            "nonSpokenScheduling": "quality",
-            "nonSpokenBudgetWhileListening": 45,
-            "nonSpokenBudgetWhileSpeaking": 25,
-            "ttsPadProtocol": "legacy",
-        }
 
 
     # 最新训练前缀（评测控制台 mvp/zh）：[prefix, F224] 替换 case 首个 audio，任务文本原样保留。
@@ -141,18 +119,12 @@ console.log(JSON.stringify({{
         {"kind": "text", "text": "board-task"},
     ]
     assert latest["ttsPromptAudioPath"] == result["f224"]
-    assert latest["runtime"] == {
-        "nonSpokenScheduling": "quality",
-        "nonSpokenBudgetWhileListening": 45,
-        "nonSpokenBudgetWhileSpeaking": 25,
-        "ttsPadProtocol": "legacy",
-    }
 
-    # revised 档与 legacy 档只差 tts_pad 形态：system / TTS prompt / budget 必须逐字相同。
-    revised = result["latestMvpZhRevised"]
-    assert revised["segments"] == latest["segments"]
-    assert revised["ttsPromptAudioPath"] == latest["ttsPromptAudioPath"]
-    assert revised["runtime"] == {**latest["runtime"], "ttsPadProtocol": "revised"}
+    # 预算 / 调度 / tts_pad 由所选端点上的模型决定：preset 只含 system 与 TTS prompt，
+    # 也不再有「只差 tts_pad」的成对 preset。
+    for preset in (result["old"], result["aligned"], result["family4Full"], result["family4Short"], latest):
+        assert set(preset) == {"segments", "ttsPromptAudioPath"}
+    assert "latest_mvp_zh_revised" not in result["ids"]
 
 
 def defaults_for_assertion() -> list[dict[str, str | dict[str, str]]]:

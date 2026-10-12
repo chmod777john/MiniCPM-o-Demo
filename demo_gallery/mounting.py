@@ -9,11 +9,12 @@ from __future__ import annotations
 import logging
 from typing import Any, Callable
 
-from fastapi import APIRouter, FastAPI
+from fastapi import APIRouter, FastAPI, HTTPException
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
-from demo_gallery.deployment import gallery_runtime
+from demo_gallery.audio import AudioResolveError, resolve_wav_base64
+from demo_gallery.runtime import gallery_runtime
 from demo_gallery.discovery import discover_demos
 from demo_gallery.page import render_index, render_shell
 from demo_gallery.registry import DemoSpec, registry
@@ -57,8 +58,19 @@ def install_gallery(app: FastAPI, *, package: str = "demos") -> list[DemoSpec]:
 
     @gallery_api.get("/runtime")
     async def runtime() -> dict[str, Any]:
-        """Gallery 级通用部署信息（与具体 demo 无关）。"""
+        """Gallery 级 Demo 侧配置（可选的 API 端点等，与具体 demo 无关）。"""
         return gallery_runtime()
+
+    @gallery_api.get("/_audio")
+    async def audio(path: str) -> dict[str, Any]:
+        """把本机（Demo 服务所在机器）白名单目录里的 WAV 读成协议 v4 的 base64 音频。
+
+        ``_`` 开头的段不会和 demo id 冲突（``_`` 开头的目录不会被注册成 demo）。
+        """
+        try:
+            return resolve_wav_base64(path)
+        except AudioResolveError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     app.include_router(gallery_api)
     INSTALLED_PATHS.append(("api", "/api/demos"))

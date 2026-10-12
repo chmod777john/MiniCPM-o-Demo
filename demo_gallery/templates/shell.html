@@ -47,6 +47,15 @@
 
       <section class="panel settings-panel">
         <div class="panel-title">Session</div>
+        <!-- Demo 与 API 是两个服务：这里选要连的 API 端点（https://<host>:<port>/e/<端点名>）。 -->
+        <div class="api-endpoint-row">
+          <label for="apiEndpoint">API endpoint</label>
+          <input id="apiEndpoint" list="apiEndpointOptions" type="text" spellcheck="false"
+                 placeholder="https://host:port/e/&lt;端点名&gt;" />
+          <datalist id="apiEndpointOptions"></datalist>
+          <button id="applyApiEndpoint" class="ctrl-btn tiny" type="button">Use</button>
+        </div>
+        <p id="apiEndpointStatus" class="hint api-endpoint-status"></p>
         <ul class="kv">
           <li><span class="k">Mode</span><span class="v" id="kvMode">—</span></li>
           <li><span class="k">Checkpoint</span><span class="v" id="kvCkpt">—</span></li>
@@ -59,8 +68,8 @@
         </details>
       </section>
 
-      <!-- Ordered v3 system segments and the independent TTS prompt audio.
-           Changes take effect on the next Start mic click. -->
+      <!-- Ordered system segments and the independent TTS prompt audio (paths on the Demo server;
+           read into base64 for protocol v4). Changes take effect on the next Start mic click. -->
       <section class="panel settings-edit-panel">
         <div class="quick-settings-row">
           <label for="quickSetting">Quick settings</label>
@@ -117,8 +126,8 @@
           </label>
           <p class="hint">Playback buffer is how long the player waits before starting a SPEAK turn;
             it absorbs per-Unit jitter. Larger = fewer dropouts, later first word. Takes effect on the next turn.</p>
-          <p class="hint">Budgets are injected from the selected checkpoint deployment Profile;
-            the TTS pad protocol follows the deployed checkpoint when the deployment declares it.</p>
+          <p class="hint">Checkpoint profile, budgets, scheduling and tts_pad are facts of the model deployed
+            on the selected API endpoint (read from its /v1/info); the Demo shows them but does not send them.</p>
         </details>
       </section>
 

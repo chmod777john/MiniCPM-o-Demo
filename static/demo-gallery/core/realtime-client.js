@@ -12,9 +12,12 @@ export class FcRealtimeClient {
     this._inputSeq = 0;
   }
 
-  async connect() {
-    const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-    const url = `${proto}://${location.host}/v1/realtime?mode=audio`;
+  /**
+   * @param {string} url  所选 API 端点的 realtime 地址（wss://host:port/e/<端点>/v1/realtime?mode=audio）。
+   *   Demo 与 API 是两个服务，不再假设 API 与页面同源。
+   */
+  async connect(url) {
+    if (!url) throw new Error('No API endpoint selected');
     this.ws = new WebSocket(url);
     this.ws.onmessage = (message) => this._handleMessage(message);
     this.ws.onclose = () => {
@@ -23,7 +26,7 @@ export class FcRealtimeClient {
     };
     await new Promise((resolve, reject) => {
       this.ws.onopen = resolve;
-      this.ws.onerror = () => reject(new Error('WebSocket connection failed'));
+      this.ws.onerror = () => reject(new Error(`WebSocket connection failed: ${url}`));
     });
   }
 

@@ -7,7 +7,6 @@
 
 import {
   buildPrependedSetting,
-  cloneRuntime,
   cloneSegments,
   firstAudioPath,
 } from '../../../static/demo-gallery/core/quick-settings.js';
@@ -18,7 +17,6 @@ export const QUICK_SETTING_0807_SYSALIGN = '0807_sysalign';
 export const QUICK_SETTING_0808_FAMILY4_FULL = '0808_family4_full';
 export const QUICK_SETTING_0808_FAMILY4_SHORT = '0808_family4_short';
 export const QUICK_SETTING_LATEST_MVP_ZH = 'latest_mvp_zh';
-export const QUICK_SETTING_LATEST_MVP_ZH_REVISED = 'latest_mvp_zh_revised';
 
 export const SYSALIGN_0807_PREFIX_TEXT = [
   '扮演一个具有以上声音特征的助手。请认真、高质量地回复用户的问题。',
@@ -49,36 +47,10 @@ export const LATEST_MVP_ZH_PREFIX_TEXT = SYSTEM_PREFIX_ZH_THINK;
 // 训练侧中文 system 参考音频（skill o5-ai-spoken-regulation 的 ref_audio_mapping.json → F224）。
 export const F224_REF_AUDIO_PATH = '/user/sunweiyue/lib/swy-dev/.claude/skills/o5-ai-spoken-regulation/media/ref_audio_in_training_data/MB-HT/ref_minicpm_signature_fix.wav';
 
-// ttsPadProtocol 是 per-ckpt 训练口径：SDK 0.0.6a3 及以前训的 ckpt 一律 legacy。
-const FAMILY3_RUNTIME = Object.freeze({
-  nonSpokenScheduling: 'quality',
-  nonSpokenBudgetWhileListening: 30,
-  nonSpokenBudgetWhileSpeaking: 15,
-  ttsPadProtocol: 'legacy',
-});
+// 预算（0807 是 Family3 的 30/15，其余 45/25）与 tts_pad 口径是 checkpoint 的训练事实，
+// 由所选 API 端点上部署的模型决定，preset 里不再携带（见 core/quick-settings.js）。
 
-const FAMILY4_RUNTIME = Object.freeze({
-  nonSpokenScheduling: 'quality',
-  nonSpokenBudgetWhileListening: 45,
-  nonSpokenBudgetWhileSpeaking: 25,
-  ttsPadProtocol: 'legacy',
-});
-
-const LATEST_MVP_ZH_RUNTIME = FAMILY4_RUNTIME;
-
-// 同一份 system / budget，只有 tts_pad 的 token 形态不同 —— 取决于该 ckpt 的训练数据
-// 是用哪版 SDK tokenize 的：0.0.6a3 及以前 legacy，0.0.6a4 及以后 revised。
-// ⚠️ 不能按 ckpt 目录名的日期推断：0930_final_merge 目录名带 0930，实际是 0.0.6a4 训的。
-const LATEST_MVP_ZH_REVISED_RUNTIME = Object.freeze({
-  ...FAMILY4_RUNTIME,
-  ttsPadProtocol: 'revised',
-});
-
-export function buildBoardQuickSettings(
-  defaultSystem,
-  defaultTtsPromptAudioPath,
-  defaultRuntime = {},
-) {
+export function buildBoardQuickSettings(defaultSystem, defaultTtsPromptAudioPath) {
   const sourceSegments = cloneSegments(defaultSystem?.segments || []);
   const audioSegments = sourceSegments.filter((segment) => segment.kind === 'audio');
   const textSegments = sourceSegments.filter((segment) => segment.kind === 'text');
@@ -89,7 +61,6 @@ export function buildBoardQuickSettings(
       {
         segments: sourceSegments,
         ttsPromptAudioPath: defaultTtsPromptAudioPath || '',
-        runtime: cloneRuntime(defaultRuntime),
       },
     ],
     [
@@ -101,39 +72,21 @@ export function buildBoardQuickSettings(
           ...cloneSegments(textSegments),
         ],
         ttsPromptAudioPath: defaultTtsPromptAudioPath || firstAudioPath(audioSegments),
-        runtime: cloneRuntime(FAMILY3_RUNTIME),
       },
     ],
     [
       QUICK_SETTING_0808_FAMILY4_FULL,
-      buildPrependedSetting(
-        FAMILY4_0808_FULL_PREFIX_TEXT,
-        sourceSegments,
-        defaultTtsPromptAudioPath,
-        FAMILY4_RUNTIME,
-      ),
+      buildPrependedSetting(FAMILY4_0808_FULL_PREFIX_TEXT, sourceSegments, defaultTtsPromptAudioPath),
     ],
     [
       QUICK_SETTING_0808_FAMILY4_SHORT,
-      buildPrependedSetting(
-        FAMILY4_0808_SHORT_PREFIX_TEXT,
-        sourceSegments,
-        defaultTtsPromptAudioPath,
-        FAMILY4_RUNTIME,
-      ),
+      buildPrependedSetting(FAMILY4_0808_SHORT_PREFIX_TEXT, sourceSegments, defaultTtsPromptAudioPath),
     ],
-    [
-      QUICK_SETTING_LATEST_MVP_ZH,
-      buildLatestMvpZhSetting(sourceSegments, LATEST_MVP_ZH_RUNTIME),
-    ],
-    [
-      QUICK_SETTING_LATEST_MVP_ZH_REVISED,
-      buildLatestMvpZhSetting(sourceSegments, LATEST_MVP_ZH_REVISED_RUNTIME),
-    ],
+    [QUICK_SETTING_LATEST_MVP_ZH, buildLatestMvpZhSetting(sourceSegments)],
   ]);
 }
 
-function buildLatestMvpZhSetting(sourceSegments, runtime) {
+function buildLatestMvpZhSetting(sourceSegments) {
   return {
     segments: [
       { kind: 'text', text: LATEST_MVP_ZH_PREFIX_TEXT },
@@ -141,7 +94,6 @@ function buildLatestMvpZhSetting(sourceSegments, runtime) {
       ...cloneSegments(dropLeadingAudio(sourceSegments)),
     ],
     ttsPromptAudioPath: F224_REF_AUDIO_PATH,
-    runtime: cloneRuntime(runtime),
   };
 }
 

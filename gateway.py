@@ -37,17 +37,6 @@ from fastapi.responses import HTMLResponse, FileResponse, StreamingResponse, Res
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from core.fc_duplex.system_input import (
-    FcAudioPathInput,
-    FcSystemAudioInput,
-    FcSystemContentInput,
-    FcSystemTextInput,
-)
-from minicpm_o5_sdk import (
-    OpenAIFunctionDefinition,
-    OpenAIToolDefinition,
-)
-
 from gateway_modules.models import (
     GatewayWorkerStatus,
     ServiceStatus,
@@ -81,23 +70,8 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
-from demo_gallery import install_gallery
-from demo_gallery.deployment import (
-    deployment_model_identity,
-    optional_environment_number,
-)
-from demo_gallery.training_data import (
-    TrainingDataDefaults,
-    extract_defaults_from_case,
-    load_training_data_structure,
-    pick_default_case,
-    resolve_case_folder,
-)
-
 logger = logging.getLogger("gateway")
 
-
-_optional_environment_number = optional_environment_number
 
 
 def _ws_debug_enabled() -> bool:
@@ -1485,10 +1459,7 @@ static_dir = os.path.join(os.path.dirname(__file__), "static")
 if os.path.exists(static_dir):
     app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
-# ============ Demo Gallery ============
-# demos/ 下每个子包各管各的页面 / 静态资源 / API 前缀；本文件不认识任何具体 demo。
-# 加一个 demo 不改这两行。
-install_gallery(app)
+# Demo 页面不在 API Gateway 里：Demo 是独立服务（demo_server.py），只通过协议访问 API。
 
 @app.get("/", response_class=HTMLResponse)
 async def index():

@@ -1,6 +1,7 @@
 // 「当前加载的模型」展示行定义。
 //
-// 行集合必须与后端 model_identity 的字段集合一一对应（有测试对拍：后端新增字段而这里漏显示会红）。
+// 数据来自所选 API 端点的 /v1/info（models[].model）与 session.created.model，字段由 API 侧
+// core/fc_duplex/model_info.py 定义（有测试对拍：那边新增路径类字段而这里漏显示会红）。
 // 路径一律完整展示、不截断 —— 截断会让「到底跑的哪个 ckpt」要靠猜。
 
 /** @type {ReadonlyArray<[string, string]>} [后端字段名, 展示标签] */
@@ -12,7 +13,6 @@ export const MODEL_IDENTITY_ROWS = [
   ['deployment_mode', 'Deployment'],
   ['sdk_version', 'SDK (推理侧)'],
   ['tts_pad_protocol', 'tts_pad (训练侧)'],
-  ['profile_path', 'Profile'],
 ];
 
 /** 悬停说明：只给容易被误读的行。 */

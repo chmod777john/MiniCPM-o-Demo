@@ -17,12 +17,12 @@ const qs = await import({json.dumps(repo_module_url('demos/standalone/web/quick-
 const px = await import({json.dumps(repo_module_url('static/demo-gallery/core/system-prefixes.js'))});
 const reg = await import({json.dumps(repo_module_url('static/demo-gallery/core/registry.js'))});
 await import({json.dumps(repo_module_url('demos/standalone/web/index.js'))});
-const map = qs.buildStandaloneQuickSettings({{ non_spoken_budget_while_listening: 45, non_spoken_budget_while_speaking: 25 }});
+const map = qs.buildStandaloneQuickSettings();
 const stage = {{ innerHTML: '', classList: {{ add() {{}}, remove() {{}} }} }};
 const scene = reg.getRegisteredDemo('standalone').createScene({{ stageEl: stage, getClient: () => null }});
 const out = {{}};
 for (const [id, s] of map) out[id] = {{ kinds: s.segments.map(x => x.kind), prefix: s.segments[0].text,
-  ref: s.segments[1].audio.file_path, tts: s.ttsPromptAudioPath, budgets: [s.runtime.nonSpokenBudgetWhileListening, s.runtime.nonSpokenBudgetWhileSpeaking],
+  ref: s.segments[1].audio.file_path, tts: s.ttsPromptAudioPath, keys: Object.keys(s).sort(),
   tools: scene.tools({{}}, id) }};
 console.log(JSON.stringify({{ out, px: {{ zh_think: px.SYSTEM_PREFIX_ZH_THINK, zh_nothink: px.SYSTEM_PREFIX_ZH_NO_THINK,
   en_general: px.SYSTEM_PREFIX_EN_GENERAL, en_nothink: px.SYSTEM_PREFIX_EN_NO_THINK }} }}));
@@ -33,7 +33,7 @@ console.log(JSON.stringify({{ out, px: {{ zh_think: px.SYSTEM_PREFIX_ZH_THINK, z
         assert row["prefix"] == got["px"][preset_id]
         assert Path(row["ref"]).is_file(), row["ref"]
         assert row["tts"] == row["ref"]
-        assert row["budgets"] == [45, 25]
+        assert row["keys"] == ["segments", "ttsPromptAudioPath"]     # 预算由端点上的模型决定
         assert row["tools"] == []
         assert ("F409" in row["ref"]) == preset_id.startswith("en_")
 

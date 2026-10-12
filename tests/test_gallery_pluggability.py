@@ -22,7 +22,7 @@ from .conftest import PROJECT_ROOT, needs_node, repo_module_url, run_node
 FIXTURE_PACKAGE = "tests.fixtures.gallery_demos"
 
 #: 共享层：这里面**不允许**出现任何 demo 的名字。
-SHARED_PATHS = ("gateway.py", "demo_gallery", "static/demo-gallery")
+SHARED_PATHS = ("demo_server.py", "demo_gallery", "static/demo-gallery")
 
 
 @pytest.fixture
@@ -61,7 +61,7 @@ def test_fixture_demo_works_end_to_end_without_touching_shared_code(fixture_app)
     # defaults = Gallery 通用运行时 + demo 专属
     defaults = client.get("/api/demos/hello_gallery/defaults").json()
     assert defaults["hello"] == "world"
-    assert "model_identity" in defaults
+    assert "api_endpoints" in defaults          # Gallery 的 Demo 侧配置（模型信息走 API 的 /v1/info）
     # 索引页自动收录，不需要改任何页面
     assert "/demos/hello_gallery" in client.get("/demos").text
 
@@ -257,7 +257,7 @@ def test_copying_the_template_yields_a_working_demo(tmp_path, monkeypatch) -> No
         for asset in ("index.js", "scene.js", f"{new_id}.css"):
             assert client.get(f"/demos/{new_id}/web/{asset}").status_code == 200, asset
         assert client.get(f"/api/demos/{new_id}/example").json() == {"ok": True}
-        assert "model_identity" in client.get(f"/api/demos/{new_id}/defaults").json()
+        assert "api_endpoints" in client.get(f"/api/demos/{new_id}/defaults").json()
         assert f"/demos/{new_id}" in client.get("/demos").text
     finally:
         registry.reset()

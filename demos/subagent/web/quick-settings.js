@@ -36,11 +36,6 @@ export function presetLanguage(defaults, presetId) {
 }
 
 export function buildSubagentQuickSettings(defaults) {
-  const runtime = {
-    nonSpokenScheduling: defaults?.non_spoken_scheduling,
-    nonSpokenBudgetWhileListening: defaults?.non_spoken_budget_while_listening,
-    nonSpokenBudgetWhileSpeaking: defaults?.non_spoken_budget_while_speaking,
-  };
   const settings = new Map();
   for (const { id } of PRESET_OPTIONS) {
     const preset = presetSource(defaults, id);
@@ -49,7 +44,6 @@ export function buildSubagentQuickSettings(defaults) {
       PREFIX_BY_PRESET[id],
       preset.system.segments,
       preset.tts_prompt_audio?.file_path || '',
-      runtime,
     ));
   }
   return settings;

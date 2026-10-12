@@ -30,8 +30,7 @@ const PRESET_OPTIONS = [
   { id: '0807_sysalign', label: '0807 · SYS-ALIGN' },
   { id: '0808_family4_full', label: '0808 · Family4 Full (T1/T2/T4)' },
   { id: '0808_family4_short', label: '0808 · Family4 Short (T3)' },
-  { id: 'latest_mvp_zh', label: '最新训练前缀 · MVP 中文 (F224, 45/25, tts_pad legacy)' },
-  { id: 'latest_mvp_zh_revised', label: '最新训练前缀 · MVP 中文 (F224, 45/25, tts_pad revised)' },
+  { id: 'latest_mvp_zh', label: '最新训练前缀 · MVP 中文 (F224)' },
 ];
 
 export function createBoardScene({ stageEl, getClient, api }) {
@@ -149,11 +148,7 @@ export function createBoardScene({ stageEl, getClient, api }) {
     fallbackQuickSetting: QUICK_SETTING_0730,
 
     buildQuickSettings(defaults) {
-      return buildBoardQuickSettings(defaultSystem(defaults), defaultTtsPromptAudioPath(defaults), {
-        nonSpokenScheduling: defaults?.non_spoken_scheduling,
-        nonSpokenBudgetWhileListening: defaults?.non_spoken_budget_while_listening,
-        nonSpokenBudgetWhileSpeaking: defaults?.non_spoken_budget_while_speaking,
-      });
+      return buildBoardQuickSettings(defaultSystem(defaults), defaultTtsPromptAudioPath(defaults));
     },
 
     tools(defaults) {

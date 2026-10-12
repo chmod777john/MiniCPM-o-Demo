@@ -1,7 +1,10 @@
-"""从 O5 TrainingData 抽取推理侧默认值。
+"""从 O5 TrainingData 抽取 Demo 的默认 system / tools / TTS prompt。
 
-这是 Gallery 级能力：任何想「用训练数据当默认 system / tools / TTS prompt」的 demo 都能用，
-不属于任何一个具体 demo（原先长在 gateway.py 里、名字叫 board，实际逻辑是通用的）。
+这是 Gallery 级能力：任何想「用训练数据当默认 system / tools / TTS prompt」的 demo 都能用。
+
+音频在这里一律用 **Demo 服务所在机器上的绝对路径** 描述（``{source:"path", file_path}``）；
+建会话前由 shell 经 ``/api/demos/_audio`` 读成 base64 再按协议 v4 上传 —— API 本身不收路径。
+本模块只依赖 SDK 的公开类型，不 import API 侧的任何内部模块（有守卫测试）。
 """
 
 from __future__ import annotations
@@ -11,22 +14,51 @@ import os
 from pathlib import Path
 from typing import Any, Sequence
 
-from pydantic import BaseModel, Field
+from typing import Annotated, Literal
 
-from core.fc_duplex.system_input import (
-    FcAudioPathInput,
-    FcSystemAudioInput,
-    FcSystemContentInput,
-    FcSystemTextInput,
-)
 from minicpm_o5_sdk import OpenAIToolDefinition
+from pydantic import BaseModel, ConfigDict, Field
+
+
+class DemoAudioPath(BaseModel):
+    """Demo 服务所在机器上的一段音频（绝对路径）。"""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    source: Literal["path"] = "path"
+    file_path: str = Field(min_length=1)
+
+
+class DemoTextSegment(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    kind: Literal["text"] = "text"
+    text: str
+
+
+class DemoAudioSegment(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    kind: Literal["audio"] = "audio"
+    audio: DemoAudioPath
+
+
+class DemoSystemContent(BaseModel):
+    """有序 system segments（段序是训练口径的一部分，不能重排）与工具定义。"""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    segments: list[Annotated[DemoTextSegment | DemoAudioSegment, Field(discriminator="kind")]] = Field(
+        default_factory=list
+    )
+    tools: list[OpenAIToolDefinition] = Field(default_factory=list)
 
 
 class TrainingDataDefaults(BaseModel):
-    """从一条 TrainingData 投影出的、可直接喂给 session.init 的默认值。"""
+    """从一条 TrainingData 投影出的默认 system 与独立 TTS prompt 音频。"""
 
-    default_system: FcSystemContentInput = Field(default_factory=FcSystemContentInput)
-    default_tts_prompt_audio: FcAudioPathInput | None = None
+    default_system: DemoSystemContent = Field(default_factory=DemoSystemContent)
+    default_tts_prompt_audio: DemoAudioPath | None = None
 
 
 def resolve_case_folder(*candidates: str | None) -> str | None:
@@ -107,7 +139,7 @@ def extract_defaults_from_case(
     *,
     fallback_tools: Sequence[OpenAIToolDefinition] = (),
 ) -> TrainingDataDefaults:
-    """从训练 case 提取 Semantic Realtime API v3 的默认值。
+    """从训练 case 提取 Demo 默认值。
 
     参数:
         case_path: 训练 case JSON / canonical JSONL 路径。
@@ -121,21 +153,21 @@ def extract_defaults_from_case(
     structure = load_training_data_structure(case_path)
 
     data_root = os.path.dirname(str(case_path))
-    system_segments: list[FcSystemTextInput | FcSystemAudioInput] = []
-    first_system_audio: FcAudioPathInput | None = None
+    system_segments: list[DemoTextSegment | DemoAudioSegment] = []
+    first_system_audio: DemoAudioPath | None = None
     for segment in (structure.get("system", {}) or {}).get("segments", []) or []:
         kind = segment.get("kind")
         if kind == "text":
             text = segment.get("text")
             if isinstance(text, str):
-                system_segments.append(FcSystemTextInput(text=text))
+                system_segments.append(DemoTextSegment(text=text))
         elif kind == "audio":
             file_path = (segment.get("audio") or {}).get("file_path")
             if isinstance(file_path, str) and file_path:
-                audio_input = FcAudioPathInput(
+                audio_input = DemoAudioPath(
                     file_path=os.path.realpath(os.path.join(data_root, file_path))
                 )
-                system_segments.append(FcSystemAudioInput(audio=audio_input))
+                system_segments.append(DemoAudioSegment(audio=audio_input))
                 if first_system_audio is None:
                     first_system_audio = audio_input
 
@@ -154,16 +186,16 @@ def extract_defaults_from_case(
         if isinstance(source_tts_prompt_audio, dict)
         else None
     )
-    default_tts_prompt_audio: FcAudioPathInput | None = None
+    default_tts_prompt_audio: DemoAudioPath | None = None
     if isinstance(tts_file_path, str) and tts_file_path:
-        default_tts_prompt_audio = FcAudioPathInput(
+        default_tts_prompt_audio = DemoAudioPath(
             file_path=os.path.realpath(os.path.join(data_root, tts_file_path))
         )
     elif first_system_audio is not None:
         default_tts_prompt_audio = first_system_audio
 
     return TrainingDataDefaults(
-        default_system=FcSystemContentInput(
+        default_system=DemoSystemContent(
             segments=system_segments,
             tools=typed_tools,
         ),

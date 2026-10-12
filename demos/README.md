@@ -1,10 +1,15 @@
 # Demo Gallery 开发规范
 
 > **一句话**：加一个 Demo = 复制 `demos/_template/` 成 `demos/<id>/`，改三处名字。
-> **不需要改任何共享文件**（`gateway.py`、`demo_gallery/`、`static/demo-gallery/`）——
+> **不需要改任何共享文件**（`demo_server.py`、`demo_gallery/`、`static/demo-gallery/`）——
 > 这一条不是约定，是测试：`tests/test_gallery_pluggability.py` 会按本文的步骤逐字复制一遍脚手架并挂载验证。
 
-上线后的入口：
+**Demo 与 API 是两个服务。** Demo 服务（`demo_server.py`）只提供页面和各 Demo 自己的后端，
+不加载模型；页面上选一个 API 端点（`https://<host>:<port>/e/<端点名>`），浏览器直接按协议 v4
+（见 `docs/fc-duplex/semantic-realtime-api-v4.md`）连那个端点。Demo 侧代码不许 import API 侧任何模块
+（`tests/test_api_demo_boundary.py`）。
+
+上线后的入口（都在 Demo 服务上）：
 
 | 页面 | URL |
 |---|---|
@@ -30,7 +35,7 @@ mv web/_template.css web/my_demo.css
 2. **`__init__.py`** 的 import 路径（`demos.my_demo.demo`）；
 3. **`web/<id>.css`** 的文件名，以及 CSS 里的 `[data-demo="<id>"]` 命名空间。
 
-重启 Gateway，`/demos` 上就会出现它。
+重启 Demo 服务（`demo_server.py`），`/demos` 上就会出现它。
 
 > ⚠️ **id 的硬约束**：目录名 = `@demo(demo_id=...)` = 前端 `registerDemo({ id })`，三者必须完全一致
 > （它同时是 URL 段；不一致在注册时直接抛错，并有测试盯着）。
@@ -79,16 +84,23 @@ class MyDemo:
 | `title` / `summary` / `order` | 索引页与页面标题 |
 | `entry` | 前端入口，默认 `web/index.js` |
 | `styles` | 本 Demo 的 CSS，相对 `web/`，注入在共享 `shell.css` 之后；文件不存在注册即报错 |
-| `router` | 本 Demo 的 API。**工具接口只能放这里**，不允许挂到 Gateway 主路由（有测试盯着） |
+| `router` | 本 Demo 的 API。**工具接口只能放这里**，不允许挂到 Demo 服务主路由（有测试盯着） |
 | `extra_mounts` | 额外静态目录（相对 Demo 目录），URL = `/demos/<id>/<path>`；`create=True` 时启动时 mkdir |
 
-**`GET /api/demos/<id>/defaults`** 由 Gallery 自动提供：先放通用运行时字段
-（`model_identity`、`checkpoint_profile_id`、`default_quick_setting`、`tts_pad_protocol`、
-non-spoken 调度与 budget、`unit_sec` 等，均来自部署环境变量），再用 `defaults()` 的返回值**覆盖合并**。
-Demo 不用自己拼这些通用字段。
+**`GET /api/demos/<id>/defaults`** 由 Gallery 自动提供：先放 Demo 侧通用字段
+（`api_endpoints` 可选的 API 端点、`default_api_endpoint`、`default_quick_setting`，来自 Demo 服务的环境变量，
+见 `demo_gallery/runtime.py`），再用 `defaults()` 的返回值**覆盖合并**。
 
-**一个 Demo import 失败不会拖垮 Gateway**：只记 `[gallery] demo xxx 导入失败，已跳过` 的日志，其余照常。
-所以新 Demo 没出现在索引页时，**先看 Gateway 日志**。
+**模型信息不在 defaults 里。** 用的是哪个 checkpoint、预算、调度方式、tts_pad 口径都是 API 端点上部署的
+模型的事实：shell 在会话前查 `<端点>/v1/info` 展示，会话建立后以 `session.created.model` 为准；
+Demo 不发送也不覆盖它们，所以 **preset 只描述 system segments 与 TTS prompt 音频**。
+
+**音频用 Demo 服务所在机器上的绝对路径描述**（`{source:"path", file_path}`）。建会话前 shell 经
+`GET /api/demos/_audio?path=` 让 Demo 服务读成 base64 WAV 再上传（API 不收路径）；只能读
+`DEMO_AUDIO_ROOTS` 白名单目录里的 16 kHz 单声道 WAV，未配置白名单时一律拒绝。
+
+**一个 Demo import 失败不会拖垮 Demo 服务**：只记 `[gallery] demo xxx 导入失败，已跳过` 的日志，其余照常。
+所以新 Demo 没出现在索引页时，**先看 Demo 服务日志**。
 
 运维开关（逗号分隔）：`GALLERY_DEMOS=board,rejection`（白名单）、`GALLERY_DEMOS_DISABLED=xxx`（黑名单）。
 

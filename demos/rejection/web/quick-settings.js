@@ -22,12 +22,6 @@ export const REJECTION_EN_SYSTEM_TEXT = "You are Mini, a voice assistant develop
 export const REJECTION_ZH_REF_AUDIO_PATH = "/user/sunweiyue/dataset/o5_sdk_training_data/rejection/agent_duplex_rejection_0929_min2k_max8k_zh/media/system_reference/ref_minicpm_signature_fix.wav";
 export const REJECTION_EN_REF_AUDIO_PATH = "/user/sunweiyue/dataset/o5_sdk_training_data/rejection/agent_duplex_rejection_0929_min1k_max8k_en/media/system_reference/F409.wav";
 
-const REJECTION_RUNTIME = Object.freeze({
-  nonSpokenScheduling: 'quality',
-  nonSpokenBudgetWhileListening: 45,
-  nonSpokenBudgetWhileSpeaking: 25,
-});
-
 export const REJECTION_PRESET_OPTIONS = [
   { id: QUICK_SETTING_REJECTION_ZH, label: '拒识 · 中文（F224）' },
   { id: QUICK_SETTING_REJECTION_EN, label: 'Rejection · English (F409)' },
@@ -50,6 +44,5 @@ function preset(prefixText, audioPath, text) {
       { kind: 'text', text },
     ],
     ttsPromptAudioPath: audioPath,
-    runtime: { ...REJECTION_RUNTIME },
   };
 }
