@@ -60,6 +60,8 @@ def _plain_duplex_system_prompt(prefix):
 class MiniCPMO(BaseMiniCPMO):
     """Demo runtime facade over external HF model primitives."""
 
+    _tts_sampling_params_type = TTSSamplingParams
+
     def __init__(self, config):
         super().__init__(config)
         self._current_mode: Optional[ProcessorMode] = None

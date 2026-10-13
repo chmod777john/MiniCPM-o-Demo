@@ -396,12 +396,13 @@ class ChatView(MiniCPMOProcessorMixin):
             
             # 构建 TTS 采样参数
             if tts_config.sampling:
-                modeling_root = self._model.__class__.__module__.split(
-                    ".modeling_",
-                    maxsplit=1,
-                )[0]
-                model_utils = importlib.import_module(f"{modeling_root}.utils")
-                ModelTTSSamplingParams = model_utils.TTSSamplingParams
+                ModelTTSSamplingParams = getattr(self._model, "_tts_sampling_params_type", None)
+                if ModelTTSSamplingParams is None:
+                    modeling_root = self._model.__class__.__module__.split(
+                        ".modeling_", maxsplit=1,
+                    )[0]
+                    model_utils = importlib.import_module(f"{modeling_root}.utils")
+                    ModelTTSSamplingParams = model_utils.TTSSamplingParams
                 tts_sampling_params = ModelTTSSamplingParams(
                     top_p=tts_config.sampling.top_p,
                     min_p=tts_config.sampling.min_p,
