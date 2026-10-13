@@ -1,0 +1,198 @@
+{
+  "url": "ws://10.156.16.190:18129/v1/realtime?mode=video",
+  "expected_units": 4,
+  "sent_units": 4,
+  "units_with_output": 4,
+  "errors": [],
+  "input_cadence_s": 1,
+  "input_span_s": 4,
+  "actual_send_span_s": 3.002217447385192,
+  "client_first_output_ms": {
+    "count": 4,
+    "min": 332.48243294656277,
+    "p50": 340.3866649605334,
+    "p95": 385.35439199768007,
+    "p99": 391.37827972881496,
+    "max": 392.8842516615987
+  },
+  "client_send_lag_ms": {
+    "count": 4,
+    "min": 0.07760897278785706,
+    "p50": 1.134765800088644,
+    "p95": 2.1657213568687435,
+    "p99": 2.2691893577575684,
+    "max": 2.2950563579797745
+  },
+  "server_metric_fields_observed": [
+    "backend",
+    "cost_llm_ms",
+    "generate_ms",
+    "kv_cache_length",
+    "n_tokens",
+    "n_tts_tokens",
+    "prefill_ms",
+    "wall_clock_ms"
+  ],
+  "server_metric_stats": {
+    "backend": null,
+    "cost_llm_ms": {
+      "count": 4,
+      "min": 47.93071746826172,
+      "p50": 48.430562019348145,
+      "p95": 50.20209550857544,
+      "p99": 50.388662815093994,
+      "max": 50.43530464172363
+    },
+    "generate_ms": {
+      "count": 4,
+      "min": 47.960519790649414,
+      "p50": 48.467278480529785,
+      "p95": 50.23094415664673,
+      "p99": 50.41522264480591,
+      "max": 50.4612922668457
+    },
+    "kv_cache_length": {
+      "count": 4,
+      "min": 263.0,
+      "p50": 389.0,
+      "p95": 502.4,
+      "p99": 512.48,
+      "max": 515.0
+    },
+    "n_tokens": {
+      "count": 4,
+      "min": 0.0,
+      "p50": 0.0,
+      "p95": 0.0,
+      "p99": 0.0,
+      "max": 0.0
+    },
+    "n_tts_tokens": {
+      "count": 4,
+      "min": 0.0,
+      "p50": 0.0,
+      "p95": 0.0,
+      "p99": 0.0,
+      "max": 0.0
+    },
+    "prefill_ms": {
+      "count": 4,
+      "min": 264.3,
+      "p50": 269.0,
+      "p95": 302.865,
+      "p99": 307.053,
+      "max": 308.1
+    },
+    "wall_clock_ms": {
+      "count": 4,
+      "min": 312.8,
+      "p50": 318.75,
+      "p95": 352.21500000000003,
+      "p99": 356.523,
+      "max": 357.6
+    }
+  },
+  "units": [
+    {
+      "input_id": "unit_0000",
+      "due_s": 6235814.736591172,
+      "send_start_s": 6235814.736668781,
+      "send_end_s": 6235814.740792409,
+      "outstanding_without_first_output": 1,
+      "first_output_s": 6235815.129553033,
+      "last_output_s": 6235815.129553033,
+      "kinds": [
+        "listen"
+      ],
+      "metrics": {
+        "backend": "pytorch",
+        "kv_cache_length": 263,
+        "generate_ms": 48.92563819885254,
+        "cost_llm_ms": 48.880577087402344,
+        "n_tokens": 0,
+        "n_tts_tokens": 0,
+        "prefill_ms": 308.1,
+        "wall_clock_ms": 357.6
+      },
+      "send_lag_ms": 0.07760897278785706,
+      "first_output_latency_ms": 392.8842516615987,
+      "last_observed_output_latency_ms": 392.8842516615987
+    },
+    {
+      "input_id": "unit_0001",
+      "due_s": 6235815.736591172,
+      "send_start_s": 6235815.737427881,
+      "send_end_s": 6235815.743166264,
+      "outstanding_without_first_output": 1,
+      "first_output_s": 6235816.080113068,
+      "last_output_s": 6235816.080113068,
+      "kinds": [
+        "listen"
+      ],
+      "metrics": {
+        "backend": "pytorch",
+        "kv_cache_length": 347,
+        "generate_ms": 47.960519790649414,
+        "cost_llm_ms": 47.93071746826172,
+        "n_tokens": 0,
+        "n_tts_tokens": 0,
+        "prefill_ms": 273.2,
+        "wall_clock_ms": 321.7
+      },
+      "send_lag_ms": 0.8367085829377174,
+      "first_output_latency_ms": 342.6851872354746,
+      "last_observed_output_latency_ms": 342.6851872354746
+    },
+    {
+      "input_id": "unit_0002",
+      "due_s": 6235816.736591172,
+      "send_start_s": 6235816.738023995,
+      "send_end_s": 6235816.743480414,
+      "outstanding_without_first_output": 1,
+      "first_output_s": 6235817.070506428,
+      "last_output_s": 6235817.070506428,
+      "kinds": [
+        "listen"
+      ],
+      "metrics": {
+        "backend": "pytorch",
+        "kv_cache_length": 431,
+        "generate_ms": 48.00891876220703,
+        "cost_llm_ms": 47.980546951293945,
+        "n_tokens": 0,
+        "n_tts_tokens": 0,
+        "prefill_ms": 264.3,
+        "wall_clock_ms": 312.8
+      },
+      "send_lag_ms": 1.4328230172395706,
+      "first_output_latency_ms": 332.48243294656277,
+      "last_observed_output_latency_ms": 332.48243294656277
+    },
+    {
+      "input_id": "unit_0003",
+      "due_s": 6235817.736591172,
+      "send_start_s": 6235817.738886229,
+      "send_end_s": 6235817.746033646,
+      "outstanding_without_first_output": 1,
+      "first_output_s": 6235818.076974371,
+      "last_output_s": 6235818.076974371,
+      "kinds": [
+        "listen"
+      ],
+      "metrics": {
+        "backend": "pytorch",
+        "kv_cache_length": 515,
+        "generate_ms": 50.4612922668457,
+        "cost_llm_ms": 50.43530464172363,
+        "n_tokens": 0,
+        "n_tts_tokens": 0,
+        "prefill_ms": 264.8,
+        "wall_clock_ms": 315.8
+      },
+      "send_lag_ms": 2.2950563579797745,
+      "first_output_latency_ms": 338.0881426855922,
+      "last_observed_output_latency_ms": 338.0881426855922
+    }
+  ],
+  "completion_scope": "Ordinary API has no per-unit complete event. First output is observed response; last output is last observed event, not finalize completion. Server metrics are separate from client latency, and are not claimed to be GPU-only inference."
+}
