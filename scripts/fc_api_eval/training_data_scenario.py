@@ -45,7 +45,7 @@ from .models import (
 )
 
 
-REQUIRED_SDK_VERSION = "0.0.5"
+REQUIRED_SDK_VERSION = "0.0.6"
 
 
 def build_training_data_scenario(
