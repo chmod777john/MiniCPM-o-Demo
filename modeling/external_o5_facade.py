@@ -284,10 +284,12 @@ class MiniCPMO(BaseMiniCPMO):
         })
         if window.basic_window_low_tokens > window.basic_window_high_tokens:
             raise ValueError("basic window requires low <= high")
-        # The external HF generator has no length_penalty argument. Do not silently
-        # pretend a non-default request changes inference.
-        if validated.length_penalty != DuplexConfig.model_fields["length_penalty"].default:
-            raise ValueError("External HF ordinary generator does not support length_penalty")
+        # Retained pages always send length_penalty (their defaults differ). HF's
+        # ordinary generator has no such argument; preserve its native policy and
+        # explicitly report the legacy control as inactive instead of blocking pages.
+        if "length_penalty" in options:
+            logger.warning("External HF ordinary generation has no length_penalty; "
+                           "retained page value %s is inactive", validated.length_penalty)
         self._ordinary_session_options = options
         self.duplex.decoder.set_window_config(window)
         self.duplex.decoder.set_window_enabled(window.sliding_window_mode != "off")

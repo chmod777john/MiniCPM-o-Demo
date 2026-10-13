@@ -10,8 +10,9 @@ text_sink, text_sliding_window, verify_mode, ls_decision_mode, speak_threshold,
 ls_strict_unit, ls_log_prob and tts_repetition_penalty. Existing DuplexConfig
 sampling/max speak/force listen/TTS options are also applied. Unknown keys
 are rejected rather than silently dropped. External HF does not implement
-length_penalty; non-default requests fail clearly (the retained View always
-passes its default 1.1, which does not change canonical generation).
+length_penalty; retained pages send different defaults (1.0/1.05/1.1). This
+legacy control is accepted with an explicit server warning and is inactive.
+The facade preserves native HF generation rather than inventing a penalty.
 
 Session prepare reinitializes config even when omitted; window defaults are
 restored and LS overrides applied after HF prepare resets its policy. Binary

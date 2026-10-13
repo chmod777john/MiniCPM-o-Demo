@@ -75,8 +75,11 @@ assert f.duplex.decoder._window_config.sliding_window_mode == 'off'
 assert not f.duplex.decoder.enabled and f.duplex.ls_decision_config.mode == 'legacy'
 assert result['max_new_speak_tokens_per_chunk'] == 20 and 'speak_threshold' not in result
 for bad in ({'sliding_window_mode':'typo'}, {'speak_threshold':2}, {'basic_window_high_tokens':1},
-            {'length_penalty':2}, {'unknown':True}, {'sample_rate':24000}):
+            {'unknown':True}, {'sample_rate':24000}):
     try: f.configure_duplex_session(bad)
     except ValueError: pass
     else: raise AssertionError(bad)
+for legacy_default in (1.0, 1.05, 1.1):
+    f.configure_duplex_session({'length_penalty': legacy_default})
+    assert 'length_penalty' not in f.duplex_generate()
 print(json.dumps({'pass':True, 'scope':'CPU facade contract: config, LS post-prepare, generation kwargs, per-session reset, invalid options; not GPU inference'}))
