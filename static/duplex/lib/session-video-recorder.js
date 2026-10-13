@@ -22,6 +22,9 @@
 
 import { resampleAudio } from './duplex-utils.js';
 
+const SUBTITLE_WINDOW_UNITS = 5;
+const SUBTITLE_MIN_WINDOW_MS = 200;
+
 export class SessionVideoRecorder {
     /**
      * @param {HTMLVideoElement} videoEl - The video element to capture
@@ -48,6 +51,11 @@ export class SessionVideoRecorder {
         this._subtitleEnabled = false;
         /** @type {Array<{text: string, active: boolean}>} */
         this._subtitleMessages = [];
+        /** @type {Array<{text: string, active: boolean}>} */
+        this._subtitlePending = [];
+        this._subtitleCurrent = null;
+        this._subtitleWindowStartedAt = 0;
+        this._subtitleWindowTimer = null;
         this._subtitleHeight = 25;          // % of canvas height from bottom
         this._subtitleOpacityBottom = 0.9;
         this._subtitleOpacityTop = 0.15;
@@ -81,6 +89,13 @@ export class SessionVideoRecorder {
 
         this._subtitleEnabled = subtitle;
         this._subtitleMessages = [];
+        this._subtitlePending = [];
+        this._subtitleCurrent = null;
+        this._subtitleWindowStartedAt = 0;
+        if (this._subtitleWindowTimer) {
+            clearTimeout(this._subtitleWindowTimer);
+            this._subtitleWindowTimer = null;
+        }
         this._subtitleHeight = subtitleHeight;
         this._subtitleOpacityBottom = subtitleOpacityBottom;
         this._subtitleOpacityTop = subtitleOpacityTop;
@@ -221,29 +236,78 @@ export class SessionVideoRecorder {
      */
     setSubtitleText(text) {
         if (!this._subtitleEnabled) return;
-        const msgs = this._subtitleMessages;
-        const last = msgs.length > 0 ? msgs[msgs.length - 1] : null;
-        if (last && last.active) {
-            last.text = text;
+        if (this._subtitleCurrent && this._subtitleCurrent.active) {
+            this._subtitleCurrent.text = text;
+            return;
+        }
+
+        const unit = { text, active: true };
+        this._subtitleCurrent = unit;
+        if (this._subtitleMessages.length < SUBTITLE_WINDOW_UNITS) {
+            this._subtitleMessages.push(unit);
+            if (!this._subtitleWindowStartedAt) {
+                this._subtitleWindowStartedAt = performance.now();
+            }
+            return;
+        }
+
+        // Keep bursty output ordered instead of clearing before Canvas has
+        // had a chance to render the current window.
+        this._subtitlePending.push(unit);
+        this._scheduleSubtitleWindowAdvance();
+    }
+
+    /**
+     * Add one protocol text delta as one recording-only subtitle unit.
+     * The page UI intentionally keeps using the cumulative turn text.
+     */
+    addSubtitleUnit(text) {
+        if (!this._subtitleEnabled || !text) return;
+        if (this._subtitleCurrent) {
+            this._subtitleCurrent.active = false;
+            this._subtitleCurrent = null;
+        }
+
+        const unit = { text, active: false };
+        if (this._subtitleMessages.length < SUBTITLE_WINDOW_UNITS) {
+            this._subtitleMessages.push(unit);
+            if (!this._subtitleWindowStartedAt) {
+                this._subtitleWindowStartedAt = performance.now();
+            }
         } else {
-            msgs.push({ text, active: true });
-            // Trim old messages to prevent unbounded growth (visual limit is height %)
-            while (msgs.length > 20) msgs.shift();
+            this._subtitlePending.push(unit);
+            this._scheduleSubtitleWindowAdvance();
         }
     }
 
     /**
-     * Finalize current subtitle turn — text stays visible and gradually fades
-     * as new messages push it upward (like fullscreen chat overlay).
+     * Finalize the current subtitle unit. New units are queued once the
+     * recording window already contains five units.
      * Call from session.onSpeakEnd.
      */
     finalizeSubtitle() {
         if (!this._subtitleEnabled) return;
-        const msgs = this._subtitleMessages;
-        const last = msgs.length > 0 ? msgs[msgs.length - 1] : null;
-        if (last && last.active) {
-            last.active = false;
+        if (this._subtitleCurrent) {
+            this._subtitleCurrent.active = false;
+            this._subtitleCurrent = null;
         }
+    }
+
+    /** Advance to the next five-unit window without dropping bursty units. */
+    _scheduleSubtitleWindowAdvance() {
+        if (!this._subtitleEnabled || this._subtitlePending.length === 0
+            || this._subtitleWindowTimer) return;
+
+        const elapsed = performance.now() - this._subtitleWindowStartedAt;
+        const delay = Math.max(0, SUBTITLE_MIN_WINDOW_MS - elapsed);
+        this._subtitleWindowTimer = setTimeout(() => {
+            this._subtitleWindowTimer = null;
+            if (!this._subtitleEnabled || this._subtitlePending.length === 0) return;
+
+            this._subtitleMessages = this._subtitlePending.splice(0, SUBTITLE_WINDOW_UNITS);
+            this._subtitleWindowStartedAt = performance.now();
+            this._scheduleSubtitleWindowAdvance();
+        }, delay);
     }
 
     /**
@@ -297,6 +361,10 @@ export class SessionVideoRecorder {
         if (this._canvasComposite) {
             cancelAnimationFrame(this._canvasComposite.animFrame);
             this._canvasComposite = null;
+        }
+        if (this._subtitleWindowTimer) {
+            clearTimeout(this._subtitleWindowTimer);
+            this._subtitleWindowTimer = null;
         }
 
         return new Promise((resolve) => {

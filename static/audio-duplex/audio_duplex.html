@@ -4,9 +4,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>o5-no-fc Audio Duplex</title>
-    <link rel="stylesheet" href="/static/duplex/duplex-shared.css">
-    <link rel="stylesheet" href="/static/audio-duplex/audio-duplex.css">
-    <script src="/static/shared/i18n.js"></script>
+    <link rel="stylesheet" href="/static/duplex/duplex-shared.css?v=ordinary-v4-20261013">
+    <link rel="stylesheet" href="/static/audio-duplex/audio-duplex.css?v=ordinary-v4-20261013">
+    <script src="/static/shared/i18n.js?v=duplex-kv256k-20261010"></script>
 </head>
 <body>
 
@@ -116,13 +116,54 @@
                 </div>
                 <div class="cg-row inline" data-tip="Max KV cache size, limits conversation context length">
                     <span class="cg-label" style="flex:none;">MaxKV</span>
-                    <input type="number" class="cg-input-sm" id="maxKvTokens" value="8192" min="512" max="32768" step="512">
+                    <input type="number" class="cg-input-sm" id="maxKvTokens" value="262144" min="512" max="262144" step="512">
                     <span style="font-size:10px;color:#888;">tok</span>
                 </div>
-                <div class="cg-row inline" data-tip="Controls AI response length, >1 = longer responses">
-                    <span class="cg-label" style="flex:none;">Length Penalty</span>
-                    <input type="number" class="cg-input-sm" id="duplexLengthPenalty" value="1.05" min="0.1" max="5.0" step="0.05">
-                    <span style="font-size:10px;color:#888;">&gt;1 = longer</span>
+                <div class="cg-row" data-tip="Choose the sliding-window policy for this session. The service-level LLM cache size is unchanged.">
+                    <span class="cg-label" id="slidingWindowModeLabel">Sliding Window</span>
+                    <div class="sw-mode-options" role="radiogroup" aria-labelledby="slidingWindowModeLabel">
+                        <label class="sw-mode-option"><input type="radio" name="slidingWindowMode" value="off"><span id="slidingWindowOffLabel">Off</span></label>
+                        <label class="sw-mode-option"><input type="radio" name="slidingWindowMode" value="basic" checked><span id="slidingWindowBasicLabel">Basic</span></label>
+                        <label class="sw-mode-option"><input type="radio" name="slidingWindowMode" value="kv_surgery"><span id="slidingWindowKvLabel">KV surgery</span></label>
+                    </div>
+                </div>
+                <div class="sw-settings" id="basicSlidingSettings" hidden>
+                    <div class="cg-row inline" data-tip="Basic mode starts pruning above the high watermark and stops at the low watermark.">
+                        <span class="cg-label" id="basicHighLabel" style="flex:none;">Start pruning above</span>
+                        <input type="number" class="cg-input-sm" id="basicWindowHighTokens" value="8000" min="1" max="262144" step="256">
+                        <span style="font-size:10px;color:#888;">tok</span>
+                    </div>
+                    <div class="cg-row inline" data-tip="Basic mode removes old units until the cache is at or below this value.">
+                        <span class="cg-label" id="basicLowLabel" style="flex:none;">Retain down to</span>
+                        <input type="number" class="cg-input-sm" id="basicWindowLowTokens" value="6000" min="1" max="262144" step="256">
+                        <span style="font-size:10px;color:#888;">tok</span>
+                    </div>
+                </div>
+                <div class="sw-settings" id="kvSurgerySettings" hidden>
+                    <div class="cg-row inline" data-tip="KV surgery starts pruning after this many completed units.">
+                        <span class="cg-label" id="kvUnitsLabel" style="flex:none;">Keep units</span>
+                        <input type="number" class="cg-input-sm" id="contextMaxUnits" value="250" min="1" max="320" step="1">
+                        <span style="font-size:10px;color:#888;">units</span>
+                    </div>
+                    <div class="cg-row inline" data-tip="Keep this many prefix text tokens in the previous block.">
+                        <span class="cg-label" id="textSinkLabel" style="flex:none;">Text sink</span>
+                        <input type="number" class="cg-input-sm" id="textSink" value="512" min="0" max="32768" step="1">
+                        <span style="font-size:10px;color:#888;">tok</span>
+                    </div>
+                    <div class="cg-row inline" data-tip="Keep this many recent text tokens in the previous block.">
+                        <span class="cg-label" id="textWindowLabel" style="flex:none;">Recent text</span>
+                        <input type="number" class="cg-input-sm" id="textSlidingWindow" value="10240" min="1" max="32768" step="1">
+                        <span style="font-size:10px;color:#888;">tok</span>
+                    </div>
+                </div>
+                <div class="cg-row inline" data-tip="Start speaking when the model's speak probability reaches this threshold">
+                    <span class="cg-label" style="flex:none;">Listen/Speak Decision</span>
+                    <input type="checkbox" id="listenSpeakDecisionEnabled" checked>
+                </div>
+                <div class="cg-row inline" data-tip="Start speaking when the model's speak probability reaches this threshold">
+                    <span class="cg-label" style="flex:none;">Speak Threshold</span>
+                    <input type="number" class="cg-input-sm" id="speakThreshold" value="0.3" min="0.01" max="0.99" step="0.01">
+                    <span style="font-size:10px;color:#888;">0–1</span>
                 </div>
                 <div class="cg-row inline" data-tip="Enable text-to-speech audio response for the session">
                     <span class="cg-label" style="flex:none;">TTS Response</span>
@@ -221,7 +262,7 @@
 <script src="/static/shared/preset-selector.js"></script>
 <script src="/static/shared/save-share.js"></script>
 <script src="/static/shared/client-identity.js"></script>
-<script type="module" src="/static/audio-duplex/audio-duplex-app.js"></script>
+<script type="module" src="/static/audio-duplex/audio-duplex-app.js?v=ordinary-v4-20261013"></script>
 <script type="module">
 import { initNav } from '/static/shared/app-nav.js';
 import { t } from '/static/shared/i18n-module.js';
@@ -282,10 +323,19 @@ _rt('duplexTtsRefMode', 'extract', t.sameAsLLM);
 _rt('duplexTtsRefMode', 'independent', t.independent);
 
 _i18n('#btnMixerToggle', t.mixer);
+_i18n('#slidingWindowModeLabel', t.slidingWindow);
+_i18n('#slidingWindowOffLabel', t.slidingOff);
+_i18n('#slidingWindowBasicLabel', t.slidingBasic);
+_i18n('#slidingWindowKvLabel', t.slidingKv);
+_i18n('#basicHighLabel', t.basicHigh);
+_i18n('#basicLowLabel', t.basicLow);
+_i18n('#kvUnitsLabel', t.keepUnits);
+_i18n('#textSinkLabel', t.textSink);
+_i18n('#textWindowLabel', t.recentText);
 
 document.querySelectorAll('.cg-label').forEach(el => {
     const m = {
-        'Delay': t.delay, 'MaxKV': t.maxKV, 'Length Penalty': t.lengthPenalty,
+        'Delay': t.delay, 'MaxKV': t.maxKV, 'Listen/Speak Decision': t.listenSpeakDecision, 'Speak Threshold': t.speakThreshold,
         'Mic': t.mic, 'Speaker': t.speaker,
         'LLM Ref Audio (system prompt)': t.llmRefAudio,
         'TTS Ref Audio (voice cloning)': t.ttsRefAudio,

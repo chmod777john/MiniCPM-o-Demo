@@ -1,7 +1,7 @@
 /**
  * lib/realtime-session.js — OpenAI Realtime-style session manager
  *
- * Realtime session client that speaks the API V2 protocol:
+ * Realtime session client using the retained gateway protocol:
  *   session.init / input.append / response.output.delta(kind=...)
  *
  * Keeps the established callback interface so UI code remains thin.
@@ -17,6 +17,7 @@ export class RealtimeSession {
             getPlaybackDelayMs: config.getPlaybackDelayMs || (() => 200),
             getStopOnSlidingWindow: config.getStopOnSlidingWindow || (() => false),
             outputSampleRate: config.outputSampleRate || 24000,
+            enableReconnect: !!config.enableReconnect,
             getWsUrl: config.getWsUrl || (() => {
                 const proto = location.protocol === 'https:' ? 'wss' : 'ws';
                 const url = `${proto}://${location.host}/v1/realtime`;
@@ -38,6 +39,11 @@ export class RealtimeSession {
         this.currentSpeakText = '';
         this._speakHandle = null;
         this._started = false;
+        this._reconnecting = false;
+        this._reconnectToken = null;
+        this._reconnectTimeoutMs = 0;
+        this._reconnectTimer = null;
+        this._initTimer = null;
 
         this._sessionStartTime = 0;
         this._lastListenTime = 0;
@@ -49,6 +55,9 @@ export class RealtimeSession {
         this._resultCount = 0;
         this._lastDriftMs = null;
         this._lastKvCacheLength = 0;
+        this._windowEventCount = 0;
+        this._nextInputSeq = 0;
+        this._postFinalizeMetrics = false;
         this._lastFrameMetrics = {};
 
         // Protocol event log for the data flow panel
@@ -76,6 +85,7 @@ export class RealtimeSession {
     onQueueDone() {}
     onSpeakStart(text) { return null; }
     onSpeakUpdate(handle, text) {}
+    onSpeakDelta(text) {}
     onSpeakEnd() {}
     onListenResult(result) {}
     onExtraResult(result, recvTime) {}
@@ -110,7 +120,10 @@ export class RealtimeSession {
         this.recordingSessionId = '';
         this.onMetrics({ type: 'state', sessionState: 'Connecting...' });
 
-        const wsUrl = this.config.getWsUrl();
+        const wsUrl = new URL(this.config.getWsUrl(), location.href);
+        if (this.config.enableReconnect) wsUrl.searchParams.set('ordinary_reconnect', '1');
+        this._reconnectToken = null;
+        this._reconnectTimeoutMs = 0;
 
         try {
             await new Promise((resolve, reject) => {
@@ -127,10 +140,12 @@ export class RealtimeSession {
                 let queueDone = false;
                 let initSent = false;
                 this._queueReject = reject;
+                this.ws.onclose = () => reject(new Error('WebSocket closed before session creation'));
 
                 const sendSessionInit = () => {
-                    if (initSent) return;
+                    if (initSent || !this.ws || this.ws.readyState !== WebSocket.OPEN) return;
                     initSent = true;
+                    clearTimeout(this._initTimer);
 
                     const sessionInit = {
                         type: 'session.init',
@@ -194,6 +209,12 @@ export class RealtimeSession {
                     } else if (msg.type === 'session.created') {
                         this._queueReject = null;
                         this.sessionId = msg.session_id || '';
+                        this._reconnectToken = msg.reconnect_token || null;
+                        this._reconnectTimeoutMs = (msg.reconnect_timeout_s || 0) * 1000;
+                        this._postFinalizeMetrics = !!msg.session_config?.unit_finalized_metrics;
+                        if (msg.session_config) {
+                            this._logProtoEvent('server', 'session.config', 'Effective session options', msg.session_config);
+                        }
                         this.recordingSessionId = this.sessionId;
                         this._logProtoEvent('server', 'session.created',
                             `session_id=${this.sessionId}`, msg);
@@ -201,6 +222,9 @@ export class RealtimeSession {
                         this.onMetrics({ type: 'state', sessionId: this.sessionId });
                         this.onSystemLog(`Session created: ${this.sessionId} (${msg.prompt_length || '?'} tokens)`);
                         resolve();
+                    } else if (msg.type === 'session.closed') {
+                        this._queueReject = null;
+                        reject(new Error(`Session closed before ready: ${msg.reason || 'unknown'}`));
                     } else if (msg.type === 'error') {
                         this._queueReject = null;
                         this._logProtoEvent('server', 'error',
@@ -210,7 +234,7 @@ export class RealtimeSession {
                     }
                 };
 
-                setTimeout(() => {
+                this._initTimer = setTimeout(() => {
                     if (!queueDone) sendSessionInit();
                 }, 100);
             });
@@ -222,12 +246,20 @@ export class RealtimeSession {
             this._started = true;
             this.onRunningChange(true);
             this.ws.onmessage = (e) => this._handleMessage(JSON.parse(e.data));
-            this.ws.onclose = () => {
-                this.onSystemLog('Session ended');
-                this.cleanup();
-            };
+            const startedSocket = this.ws;
+            this.ws.onclose = () => this._reconnect(startedSocket);
         } catch (err) {
-            if (this.ws) { try { this.ws.close(); } catch (_) {} this.ws = null; }
+            clearTimeout(this._initTimer);
+            if (this.ws) {
+                try {
+                    if (this.ws.readyState === WebSocket.OPEN) {
+                        this.ws.send(JSON.stringify({type: 'session.close', reason: 'startup_failed'}));
+                    }
+                    this.ws.onclose = null;
+                    this.ws.close();
+                } catch (_) {}
+                this.ws = null;
+            }
             this._started = false;
             throw err;
         }
@@ -239,13 +271,14 @@ export class RealtimeSession {
      * and translates to the new { type: 'input.append', input: { audio, ... } }
      */
     sendChunk(msg) {
-        if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+        if (this._reconnecting || !this.ws || this.ws.readyState !== WebSocket.OPEN) return;
         if (this.paused) return;
 
         const newMsg = {
             type: 'input.append',
             input: {
                 audio: msg.audio_base64,
+                input_id: `input_${++this._nextInputSeq}`,
             },
         };
 
@@ -270,7 +303,7 @@ export class RealtimeSession {
     }
 
     toggleForceListen() {
-        if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+        if (this._reconnecting || !this.ws || this.ws.readyState !== WebSocket.OPEN) return;
         this.forceListenActive = !this.forceListenActive;
         this.onForceListenChange(this.forceListenActive);
         if (this.forceListenActive) {
@@ -284,7 +317,7 @@ export class RealtimeSession {
     }
 
     pauseToggle() {
-        if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+        if (this._reconnecting || !this.ws || this.ws.readyState !== WebSocket.OPEN) return;
         if (this.pauseState === 'active') {
             this.paused = true;
             this.pauseState = 'paused';
@@ -317,6 +350,12 @@ export class RealtimeSession {
     }
 
     cleanup() {
+        clearTimeout(this._initTimer);
+        this._initTimer = null;
+        clearTimeout(this._reconnectTimer);
+        this._reconnectTimer = null;
+        this._reconnecting = false;
+        this._reconnectToken = null;
         this.onCleanup();
         this.audioPlayer.stop();
         if (this.ws) {
@@ -336,6 +375,48 @@ export class RealtimeSession {
 
     // ==== Internal ====
 
+    _reconnect(socket, deadline = performance.now() + this._reconnectTimeoutMs) {
+        if (this.ws !== socket) return;
+        socket.onopen = socket.onclose = socket.onerror = socket.onmessage = null;
+        clearTimeout(this._reconnectTimer);
+        if (!this._started || !this._reconnectToken || performance.now() >= deadline) {
+            this.onSystemLog('Connection ended; the session could not be restored.');
+            this.cleanup();
+            this.onMetrics({type: 'state', connectionState: 'failed'});
+            return;
+        }
+        this._reconnecting = true;
+        this.onMetrics({type: 'state', connectionState: 'reconnecting'});
+        this._reconnectTimer = setTimeout(() => {
+            if (this.ws !== socket || !this._started) return;
+            const url = new URL(socket.url);
+            url.searchParams.set('reconnect_token', this._reconnectToken);
+            const next = new WebSocket(url.href);
+            this.ws = next;
+            const retry = () => {
+                if (this.ws !== next) return;
+                next.onopen = next.onclose = next.onerror = next.onmessage = null;
+                next.close();
+                this._reconnect(next, deadline);
+            };
+            this._reconnectTimer = setTimeout(retry, Math.max(1, Math.min(5000, deadline - performance.now())));
+            next.onclose = retry;
+            next.onerror = () => {};
+            next.onmessage = ({data}) => {
+                const msg = JSON.parse(data);
+                if (msg.type === 'session.transport_resumed') {
+                    clearTimeout(this._reconnectTimer);
+                    this._reconnecting = false;
+                    next.onclose = () => this._reconnect(next);
+                    next.onmessage = ({data: raw}) => this._handleMessage(JSON.parse(raw));
+                    this.onSystemLog('Connection restored; continuing the same session.');
+                    this.onMetrics({type: 'state', connectionState: 'connected',
+                                    sessionState: this.paused ? 'Paused' : 'Active'});
+                }
+            };
+        }, 500);
+    }
+
     _reset() {
         this._sessionStartTime = performance.now();
         this._lastListenTime = 0;
@@ -347,6 +428,9 @@ export class RealtimeSession {
         this._resultCount = 0;
         this._lastDriftMs = null;
         this._lastKvCacheLength = 0;
+        this._windowEventCount = 0;
+        this._nextInputSeq = 0;
+        this._postFinalizeMetrics = false;
         this._lastFrameMetrics = {};
         this.chunksSent = 0;
         this.currentSpeakText = '';
@@ -364,7 +448,7 @@ export class RealtimeSession {
         switch (type) {
             case 'response.metrics':
                 this._logProtoEvent('server', 'response.metrics',
-                    `kv=${msg.kv_cache_length}`, msg);
+                    `kv=${msg.kv_cache_length} finalized=${!!msg.unit_finalized}`, msg);
                 this._handleMetrics(msg);
                 break;
 
@@ -495,7 +579,7 @@ export class RealtimeSession {
             kv_cache_length: this._lastFrameMetrics.kv_cache_length,
         };
 
-        this._checkKvCache(result);
+        if (!this._postFinalizeMetrics) this._checkKvCache(result);
         this._emitMetrics(result, recvTime);
 
         if (this._speakHandle) {
@@ -534,10 +618,11 @@ export class RealtimeSession {
             kv_cache_length: this._lastFrameMetrics.kv_cache_length,
         };
 
-        this._checkKvCache(result);
+        if (!this._postFinalizeMetrics) this._checkKvCache(result);
         this._emitMetrics(result, recvTime);
 
         if (result.text) {
+            this.onSpeakDelta(result.text);
             this.currentSpeakText += result.text;
             if (!this._speakHandle) {
                 this._speakHandle = this.onSpeakStart(this.currentSpeakText);
@@ -582,16 +667,31 @@ export class RealtimeSession {
                 chunksSent: this.chunksSent,
                 visionSlices: metrics.vision_slices,
                 visionTokens: metrics.vision_tokens,
+                effectiveMaxSliceNums: metrics.effective_max_slice_nums,
+                speakProbability: metrics.p_speak,
+                lsDecision: metrics.ls_decision,
             });
             if (!result.is_listen && this._lastTTFS) this._lastTTFS = 0;
         });
     }
 
     _handleMetrics(metrics) {
-        this._lastFrameMetrics = metrics || {};
+        this._lastFrameMetrics = {...this._lastFrameMetrics, ...(metrics || {})};
+        for (const event of metrics.window_events || []) {
+            if (!Number.isFinite(event.count) || event.count <= this._windowEventCount) continue;
+            this._windowEventCount = event.count;
+            this.onMetrics({type: 'window', windowEventCount: event.count,
+                windowEvent: {...event, inputId: metrics.input_id}});
+            this.onSystemLog(`✂ Window #${event.count} [${metrics.input_id}]: KV ${event.before} → ${event.after} (${event.duration_ms} ms)`);
+            if (this.config.getStopOnSlidingWindow()) setTimeout(() => this.stop(), 0);
+        }
         const maxKv = this.config.getMaxKvTokens();
         const kvCacheLength = this._lastFrameMetrics.kv_cache_length;
-        this._checkKvCache({ kv_cache_length: kvCacheLength });
+        // Basic window trimming happens in finalize; evaluate the page limit
+        // after that step so a pending crop is not mistaken for overflow.
+        if (metrics.unit_finalized || !this._postFinalizeMetrics) {
+            this._checkKvCache({ kv_cache_length: kvCacheLength });
+        }
         this.onMetrics({
             type: 'result',
             latencyMs: this._lastFrameMetrics.wall_clock_ms || this._lastFrameMetrics.generate_ms,
@@ -602,6 +702,9 @@ export class RealtimeSession {
             chunksSent: this.chunksSent,
             visionSlices: this._lastFrameMetrics.vision_slices,
             visionTokens: this._lastFrameMetrics.vision_tokens,
+            effectiveMaxSliceNums: this._lastFrameMetrics.effective_max_slice_nums,
+            speakProbability: this._lastFrameMetrics.p_speak,
+            lsDecision: this._lastFrameMetrics.ls_decision,
         });
     }
 
@@ -612,13 +715,6 @@ export class RealtimeSession {
             if (curKv >= maxKv) {
                 this.onSystemLog(`⚠ KV cache (${curKv.toLocaleString()}) reached limit. Auto-stopping.`);
                 setTimeout(() => this.stop(), 0);
-            } else if (this._lastKvCacheLength > 0 && curKv < this._lastKvCacheLength) {
-                const prev = this._lastKvCacheLength;
-                this.onSystemLog(`✂ KV pruned: ${prev.toLocaleString()} → ${curKv.toLocaleString()}`);
-                if (this.config.getStopOnSlidingWindow()) {
-                    this.onSystemLog('⚠ Stop-on-sliding-window. Auto-stopping.');
-                    setTimeout(() => this.stop(), 0);
-                }
             }
             this._lastKvCacheLength = curKv;
         }

@@ -4,10 +4,12 @@ import io
 import logging
 import os
 import tempfile
+import time
 import types
 from copy import deepcopy
 from dataclasses import fields, replace
 from enum import Enum
+from functools import wraps
 from typing import Any, Dict, List, Optional
 import numpy as np
 import soundfile as sf
@@ -270,6 +272,52 @@ class MiniCPMO(BaseMiniCPMO):
         answer = result[0] if isinstance(result, tuple) else result
         return answer, generated_waveform
 
+    def _observe_ordinary_windows(self):
+        """Observe the installed HF/accel methods without changing their work."""
+        decoder = self.duplex.decoder
+        for name in ("enforce_window", "enforce_window_with_context", "enforce_window_with_kv_surgery"):
+            native = getattr(decoder, name, None)
+            if native is None or getattr(native, "_demo_window_observer", False):
+                continue
+
+            def observe(method):
+                @wraps(method)
+                def call(*args, **kwargs):
+                    depth = getattr(self, "_ordinary_window_depth", 0)
+                    self._ordinary_window_depth = depth + 1
+                    before = decoder.get_cache_length()
+                    count_before = decoder._sliding_event_count
+                    started = time.perf_counter()
+                    try:
+                        result = method(*args, **kwargs)
+                        if depth == 0 and decoder._sliding_event_count > count_before:
+                            self._ordinary_window_events.append({
+                                "count": decoder._sliding_event_count,
+                                "before": before,
+                                "after": decoder.get_cache_length(),
+                                "mode": decoder._window_config.sliding_window_mode,
+                                "duration_ms": round((time.perf_counter() - started) * 1000, 3),
+                            })
+                        return result
+                    finally:
+                        self._ordinary_window_depth = depth
+                call._demo_window_observer = True
+                return call
+
+            setattr(decoder, name, observe(native))
+
+    def ordinary_session_config(self):
+        return dict(getattr(self, "_ordinary_effective_config", {}))
+
+    def ordinary_unit_metrics(self):
+        events = list(getattr(self, "_ordinary_window_events", []))
+        self._ordinary_window_events = []
+        return {
+            "kv_cache_length": self.duplex.decoder.get_cache_length(),
+            "window_event_count": self.duplex.decoder._sliding_event_count,
+            "window_events": events,
+        }
+
     def configure_duplex_session(self, config):
         """Validate and install external HF options before the retained View prepares."""
         from core.schemas.external_o5_duplex import ExternalO5DuplexConfig
@@ -286,13 +334,16 @@ class MiniCPMO(BaseMiniCPMO):
         })
         if window.basic_window_low_tokens > window.basic_window_high_tokens:
             raise ValueError("basic window requires low <= high")
-        # Retained pages always send length_penalty (their defaults differ). HF's
-        # ordinary generator has no such argument; preserve its native policy and
-        # explicitly report the legacy control as inactive instead of blocking pages.
+        # Older API clients may still send length_penalty. HF ordinary generation
+        # has no such argument; report it as inactive. Current pages omit it.
         if "length_penalty" in options:
             logger.warning("External HF ordinary generation has no length_penalty; "
                            "retained page value %s is inactive", validated.length_penalty)
         self._ordinary_session_options = options
+        self._ordinary_window_events = []
+        self._ordinary_window_depth = 0
+        self._ordinary_next_slices = 1
+        self._observe_ordinary_windows()
         self.duplex.decoder.set_window_config(window)
         self.duplex.decoder.set_window_enabled(window.sliding_window_mode != "off")
         for name, value in validated.model_dump(include=set(DuplexConfig.model_fields)).items():
@@ -303,8 +354,17 @@ class MiniCPMO(BaseMiniCPMO):
                 setattr(self.duplex, name, value)
         self.duplex.tts_repetition_penalty = options.get(
             "tts_repetition_penalty", self._ordinary_tts_repetition_default)
+        # Current HF generate_chunk rebuilds its sampling processors using the
+        # repetition_penalty argument on each call; no separate cache patch is needed.
         self.duplex.CHUNK_MS = self.CHUNK_MS = validated.chunk_ms
         self.duplex.SAMPLE_RATE = self.SAMPLE_RATE = validated.sample_rate
+        self._ordinary_effective_config = validated.model_dump(exclude={"length_penalty"})
+        self._ordinary_effective_config.update({field.name: getattr(window, field.name)
+                                              for field in fields(window)})
+        self._ordinary_effective_config["tts_repetition_penalty"] = self.duplex.tts_repetition_penalty
+        self._ordinary_effective_config["unit_finalized_metrics"] = True
+        self._ordinary_effective_config["inactive_options"] = (
+            ["length_penalty"] if "length_penalty" in options else [])
 
     def duplex_prepare(
         self,
@@ -335,6 +395,14 @@ class MiniCPMO(BaseMiniCPMO):
         if changes.get("mode") == "binary":
             changes["fix_enabled"] = True
         self.duplex.set_ls_decision_config(replace(policy, **changes))
+        self._ordinary_next_slices = 1
+        self._ordinary_window_events = []
+        self._ordinary_effective_config.update({
+            "ls_decision_mode": self.duplex.ls_decision_config.mode,
+            "speak_threshold": self.duplex.ls_decision_config.speak_threshold,
+            "ls_strict_unit": self.duplex.ls_decision_config.strict_unit,
+            "ls_log_prob": self.duplex.ls_decision_config.log_prob,
+        })
         logger.info("External HF ordinary session: window=%s ls=%s max_speak=%s",
                     self.duplex.decoder._window_config, self.duplex.ls_decision_config,
                     self.duplex.max_new_speak_tokens_per_chunk)
@@ -345,18 +413,28 @@ class MiniCPMO(BaseMiniCPMO):
         audio_waveform: Optional[np.ndarray] = None,
         frame_list: Optional[List] = None,
         text_list: Optional[List] = None,
-        max_slice_nums: int = 1,
+        max_slice_nums: Optional[int] = None,
         batch_vision_feed: bool = False,
     ):
         if self.duplex is None:
             raise RuntimeError("Duplex is not initialized; call init_unified() first")
-        return self.duplex.streaming_prefill(
+        options = getattr(self, "_ordinary_session_options", {})
+        if options.get("strategy_hd", False):
+            effective_slices = self._ordinary_next_slices
+        else:
+            effective_slices = max_slice_nums if max_slice_nums is not None else options.get("max_slice_nums", 1)
+        if not 1 <= effective_slices <= 9:
+            raise ValueError("max_slice_nums must be in [1, 9]")
+        result = self.duplex.streaming_prefill(
             audio_waveform=audio_waveform,
             frame_list=frame_list,
             text_list=text_list,
-            max_slice_nums=max_slice_nums,
+            max_slice_nums=effective_slices,
             batch_vision_feed=batch_vision_feed,
         )
+        if isinstance(result, dict):
+            result["effective_max_slice_nums"] = effective_slices
+        return result
 
     def duplex_generate(
         self,
@@ -393,7 +471,13 @@ class MiniCPMO(BaseMiniCPMO):
         if force_listen_override:
             self.duplex.force_listen_count = self.duplex._streaming_generate_count + 1
         try:
-            return self.duplex.streaming_generate(**values)
+            result = self.duplex.streaming_generate(**values)
+            self._ordinary_next_slices = (
+                options.get("strategy_hd_max_slice_nums", 4)
+                if options.get("strategy_hd", False) and not result.get("is_listen", True)
+                else 1
+            )
+            return result
         finally:
             self.duplex.force_listen_count = old_force
 

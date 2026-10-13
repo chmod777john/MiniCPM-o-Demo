@@ -484,6 +484,9 @@ class DuplexGenerateResult(BaseModel):
         description="当前时间索引（chunk 数）"
     )
     
+    p_speak: Optional[float] = Field(None, description="P(speak | listen, speak)")
+    ls_decision: Optional[str] = Field(None, description="Canonical listen/speak decision")
+
     # 性能指标
     cost_llm_ms: Optional[float] = Field(
         None, 

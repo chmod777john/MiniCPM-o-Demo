@@ -678,7 +678,6 @@ async def _api_worker_passthrough_ws(
         client_reader.cancel()
         return
 
-    await gateway_send({"type": "session.queue_done", "worker_id": worker.worker_id})
     task_start = datetime.now()
     session_closed = asyncio.Event()
     live = LiveSession(worker_id=worker.worker_id, ticket_id=ticket.ticket_id, endpoint=endpoint_name)
@@ -686,6 +685,9 @@ async def _api_worker_passthrough_ws(
     recorder_worker = {"host": worker.host, "port": worker.port, "gpu_id": getattr(worker, "gpu_id", None)}
 
     try:
+        # Include the handoff notification in the worker-release scope: an
+        # ordinary client can leave while its connection is being assigned.
+        await gateway_send({"type": "session.queue_done", "worker_id": worker.worker_id})
 
         def ensure_recorder(session_id: Optional[str]) -> None:
             nonlocal recorder
@@ -833,6 +835,18 @@ async def get_frontend_defaults():
     """
     from config import get_config
     defaults = get_config().frontend_defaults()
+    mode = os.environ.get("O5_FRONTEND_SLIDING_WINDOW_MODE", "basic")
+    if mode not in {"off", "basic", "kv_surgery"}:
+        raise ValueError("Invalid O5_FRONTEND_SLIDING_WINDOW_MODE")
+    defaults.update(sliding_window_mode=mode, max_kv_tokens=262144)
+    for field, env in (("basic_window_high_tokens", "O5_BASIC_WINDOW_HIGH_TOKENS"),
+                       ("basic_window_low_tokens", "O5_BASIC_WINDOW_LOW_TOKENS")):
+        if os.environ.get(env):
+            defaults[field] = int(os.environ[env])
+    allowed = os.environ.get("O5_FRONTEND_SLIDING_WINDOW_MODES")
+    if allowed:
+        defaults["sliding_window_modes"] = [value.strip() for value in allowed.split(",")]
+
     server_lang = GATEWAY_CONFIG.get("default_lang")
     if server_lang:
         defaults["default_lang"] = server_lang
@@ -1665,16 +1679,33 @@ async def _realtime_entry(
         await ws.close(code=1008, reason=f"Unsupported realtime mode: {mode}")
         return
 
-    # Temporary o5 demo allowance: video duplex can lag behind real time while
-    # inference is still being optimized. Keep the API session watchdog, but
-    # make the total session duration 4x the original limits to avoid ending
-    # otherwise healthy long-running manual tests.
-    max_duration_s: Optional[float] = 1200 if mode == "video" else 2400
-    # 离线评测按 Unit 锁步驱动，墙钟时长与对话时长无关；副本池部署用 0 关闭该看门狗。
+    # The ordinary desktop pages opt in to long conversations; preserve other
+    # API clients' existing watchdog policy unless explicitly overridden.
+    max_duration_s: Optional[float] = (
+        None if ws.query_params.get("ordinary_reconnect") == "1"
+        else (1200 if mode == "video" else 2400)
+    )
     override = os.environ.get("FC_API_SESSION_MAX_DURATION_S")
     if override is not None:
         max_duration_s = float(override) or None
     request_type = "omni_duplex" if mode == "video" else "audio_duplex"
+
+    if ws.query_params.get("ordinary_reconnect") == "1":
+        from gateway_modules.ordinary_reconnect import serve
+        async def run_retained(retained):
+            await _api_worker_passthrough_ws(
+                retained,
+                request_type=request_type,
+                worker_status=GatewayWorkerStatus.DUPLEX_ACTIVE,
+                worker_path="/v1/worker/duplex",
+                source_channel="realtime_api",
+                source_mode=mode,
+                max_duration_s=max_duration_s,
+                pool=pool,
+                endpoint_name=endpoint_name,
+            )
+        await serve(ws, identity=(endpoint_name, mode), run=run_retained)
+        return
 
     await _api_worker_passthrough_ws(
         ws,

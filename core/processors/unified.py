@@ -967,7 +967,7 @@ class DuplexView:
         audio_waveform: Optional[np.ndarray] = None,
         audio_path: Optional[str] = None,
         frame_list: Optional[List[np.ndarray]] = None,
-        max_slice_nums: int = 1,
+        max_slice_nums: Optional[int] = None,
     ) -> dict:
         """预填充用户音频
         
@@ -985,10 +985,13 @@ class DuplexView:
         if audio_path and audio_waveform is None:
             audio_waveform, _ = librosa.load(audio_path, sr=16000, mono=True)
         
+        # Omit an unset slice limit so the external facade can apply its session
+        # policy and existing in-tree models keep their native default of one.
+        slice_options = {} if max_slice_nums is None else {"max_slice_nums": max_slice_nums}
         result = self._model.duplex_prefill(
             audio_waveform=audio_waveform,
             frame_list=frame_list,
-            max_slice_nums=max_slice_nums,
+            **slice_options,
         )
         
         return result
@@ -1041,6 +1044,8 @@ class DuplexView:
             cost_all_ms=result.get("cost_all", 0) * 1000 if result.get("cost_all") else None,
             n_tokens=result.get("n_tokens"),
             n_tts_tokens=result.get("n_tts_tokens"),
+            p_speak=result.get("p_speak"),
+            ls_decision=result.get("ls_decision"),
         )
     
     def finalize(self) -> None:

@@ -298,6 +298,8 @@ body {
     cursor: default;
 }
 .status-grid .status-value { font-weight: 500; color: #2d2d2d; font-size: 12px; }
+.status-grid .status-row-window { flex-wrap: wrap; gap: 3px 8px; }
+.status-grid .status-row-window .status-value { overflow-wrap: anywhere; text-align: right; max-width: 100%; }
 .status-grid .status-value.listening { color: #1a7f37; }
 .status-grid .status-value.speaking { color: #d4a574; }
 

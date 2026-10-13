@@ -61,12 +61,40 @@ HF 在请求需要 slot/FC 时核对已训练 embedding/lm_head 行数。
 
 ## 会话和验证
 
-- 普通双工保留 `mode=video` 入口；FC 用 API v4 `mode=audio`，音频路径按 v4 转成 base64 WAV。
+- 普通视频用 `mode=video`、普通音频用 `mode=audio`；FC 用 API v4 `mode=audio`，音频路径按 v4 转成 base64 WAV。
 - 同一服务可以顺序运行普通和 FC session，不由启动选项二选一。
-- 普通滑窗、LS、max speak 选项见 `ORDINARY_OPTIONS.md`；旧 length_penalty 控件在
-  外部普通 HF 路径无效，会日志提示。未知字段不再静默丢弃。
+- 普通滑窗、LS、HD、max speak 等选项见 `ORDINARY_OPTIONS.md`。当前普通页面已移除
+  Length Penalty / Draft 无效控件；旧 API 客户端传 length_penalty 会警告并回传 inactive。
+  未知字段不再静默丢弃。
 - `docs/external-hf/evidence/` 分开记录普通、FC、tool result、模式复位实测。
 - native 对 accel 精度比较必须使用同一 attention 后端策略；在本环境测试显式关闭
   cuDNN SDPA，与 accel 内部已有策略一致。合并 prefill 是已记录的 BF16 数值不同路径，
   不能将 ordered feed 对拍结论当作 merge-unit 逐位一致。
 - 本轮代表性短上下文验收不能替代 64K/128K 全性能矩阵，也不是完整评测质量分数。
+
+## 普通音视频双工页面（2026-10-13 迁移）
+
+- `/omni`：普通音视频双工，摄像头/麦克风或本地视频。
+- `/audio_duplex`：普通音频双工，麦克风或本地音频。
+- 新版 Gallery / demos 仍使用本分支原有实现，本次未引入旧 FC demo 应用。
+- 页面部署需关闭 `GATEWAY_API_ONLY`（unset 或设为 0），且 app registry 对应页面 enabled。
+  API-only 部署按原规则不提供这两个页面。
+
+两页默认 Basic（8000 / 6000），MaxKV 自动停止阈值默认和上限均为 256K。
+MaxKV 与滑窗水位是独立选项。可在 gateway 的环境中设置：
+
+```bash
+export O5_FRONTEND_SLIDING_WINDOW_MODE=basic
+export O5_BASIC_WINDOW_HIGH_TOKENS=131072
+export O5_BASIC_WINDOW_LOW_TOKENS=98304
+# 可选：限定普通页面可选的模式，默认模式应包含在内
+export O5_FRONTEND_SLIDING_WINDOW_MODES=off,basic,kv_surgery
+```
+
+这只是页面启动默认值，后端由每次 session.init 的 config 配置，不改变 HF 源码。
+普通页面的长会话不再应用 gateway 默认 20/40 分钟上限；仍可通过
+`FC_API_SESSION_MAX_DURATION_S` 显式配置时长。断线恢复限同一 gateway 进程，
+30 秒/16 MiB，细节和边界见 ORDINARY_OPTIONS.md。
+
+**本节新增页面/API/恢复功能尚未做运行验收或部署。** 前文参考 job 1210050 是此次
+页面迁移之前的三物料验收，不代表新增功能已验证。

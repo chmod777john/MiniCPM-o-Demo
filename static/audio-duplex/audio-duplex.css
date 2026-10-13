@@ -300,6 +300,37 @@ body {
     }
 }
 
+.sw-mode-options {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+.sw-mode-option {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 7px;
+    border: 1px solid #e5e5e0;
+    border-radius: 6px;
+    color: #555;
+    font-size: 11px;
+    cursor: pointer;
+}
+.sw-mode-option:has(input:checked) {
+    border-color: #777;
+    background: #f1f1ec;
+    color: #222;
+}
+.sw-mode-option input { margin: 0; }
+.sw-settings {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding-left: 8px;
+    border-left: 2px solid #e5e5e0;
+}
+.sw-settings[hidden] { display: none; }
+
 /* ========== Mobile responsive ========== */
 @media (max-width: 768px) {
     .col-left .row-top,

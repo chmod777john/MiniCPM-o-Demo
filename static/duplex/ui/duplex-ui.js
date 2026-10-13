@@ -29,6 +29,19 @@ export class MetricsPanel {
             case 'audio': this._updateAudioMetrics(data); break;
             case 'result': this._updateResultMetrics(data); break;
             case 'state': this._updateState(data); break;
+            case 'window': this._updateWindow(data); break;
+        }
+    }
+
+    _updateWindow(data) {
+        const count = this._el('windowCountDisplay');
+        if (count) count.textContent = data.windowEventCount.toLocaleString();
+        const latest = this._el('windowLatestDisplay');
+        if (latest) {
+            const event = data.windowEvent;
+            latest.textContent = event
+                ? `${event.before.toLocaleString()} \u2192 ${event.after.toLocaleString()}` : '\u2014';
+            latest.title = event ? `${event.mode}; input ${event.inputId}; ${event.duration_ms} ms host wall time` : '';
         }
     }
 
@@ -126,6 +139,25 @@ export class MetricsPanel {
             }
         }
 
+        if (data.speakProbability !== undefined && data.speakProbability !== null) {
+            const el = this._el('speakProbabilityDisplay');
+            if (el) {
+                const decision = data.lsDecision || '';
+                const isSpeak = decision.includes('speak');
+                el.textContent = `${(data.speakProbability * 100).toFixed(1)}%`;
+                el.title = decision || 'P(speak | listen, speak)';
+                el.style.color = isSpeak ? '#4ecdc4' : '#ffd93d';
+            }
+        }
+
+        if (data.effectiveMaxSliceNums !== undefined && data.visionSlices === undefined) {
+            const el = this._el('visionDisplay');
+            if (el) {
+                el.textContent = `slice limit ${data.effectiveMaxSliceNums}`;
+                el.title = 'Slice setting passed to the HF image processor for this unit';
+            }
+        }
+
         // Model state
         if (data.modelState) {
             const el = this._el('modelState');
@@ -147,11 +179,36 @@ export class MetricsPanel {
     _updateState(data) {
         if (data.sessionId !== undefined) {
             const el = this._el('sessionIdDisplay');
-            if (el) el.textContent = data.sessionId ? data.sessionId.slice(0, 12) : '\u2014';
+            if (el) {
+                const sessionId = data.sessionId || '';
+                el.textContent = sessionId || '\u2014';
+                el.title = sessionId;
+            }
         }
         if (data.sessionState) {
             const el = this._el('sessionState');
             if (el) el.textContent = data.sessionState;
+        }
+        if (['reconnecting', 'connected', 'failed'].includes(data.connectionState)) {
+            const lang = globalThis.window?.I18n?.getLang?.() || document.documentElement.lang;
+            const zh = lang.startsWith('zh');
+            const reconnecting = data.connectionState === 'reconnecting';
+            const failed = data.connectionState === 'failed';
+            const label = failed ? (zh ? '重连失败' : 'Reconnect failed')
+                : reconnecting ? (zh ? '正在重连' : 'Reconnecting...')
+                : (zh ? '已连接' : 'Connected');
+            const state = this._el('sessionState');
+            if (state) state.textContent = data.sessionState === 'Paused' ? `${label} / ${data.sessionState}` : label;
+            // The status panel can be hidden, so also update the visible media badge.
+            const lamp = this._el('statusLamp');
+            if (lamp) {
+                lamp.classList.remove('live', 'preparing', 'stopped');
+                lamp.classList.add('visible', failed ? 'stopped' : reconnecting || data.sessionState === 'Paused' ? 'preparing' : 'live');
+                lamp.dataset.connectionState = data.connectionState;
+                lamp.setAttribute('role', 'status');
+                const text = lamp.querySelector('.label');
+                if (text) text.textContent = label;
+            }
         }
         if (data.modelState !== undefined) {
             this._updateResultMetrics({ modelState: data.modelState });
@@ -169,13 +226,17 @@ export class MetricsPanel {
             shiftDisplay: '\u2014',
             driftDisplay: '\u2014',
             kvCacheDisplay: '\u2014',
+            windowCountDisplay: '0',
+            windowLatestDisplay: '\u2014',
             visionDisplay: '\u2014',
+            speakProbabilityDisplay: '\u2014',
         };
         for (const [id, text] of Object.entries(defaults)) {
             const el = this._el(id);
             if (el) {
                 el.textContent = text;
                 el.style.color = '';
+                el.title = '';
             }
         }
     }
@@ -186,7 +247,7 @@ export class MetricsPanel {
 // ============================================================================
 
 /**
- * Returns the inner HTML for the status panel with 11 metric rows.
+ * Returns the inner HTML for the shared status panel.
  * @returns {string}
  */
 export function getStatusPanelHTML() {
@@ -197,7 +258,10 @@ export function getStatusPanelHTML() {
             <div class="status-row" data-tip="Model state: Listening / Speaking"><span>Model</span><span class="status-value" id="modelState">\u2014</span></div>
             <div class="status-row" data-tip="Total audio chunks received from server"><span>Chunks</span><span class="status-value" id="chunkCount">0</span></div>
             <div class="status-row" data-tip="KV cache total tokens used"><span>KV</span><span class="status-value" id="kvCacheDisplay">\u2014</span></div>
+            <div class="status-row"><span>Windows</span><span class="status-value" id="windowCountDisplay">0</span></div>
+            <div class="status-row status-row-window"><span>Last window</span><span class="status-value" id="windowLatestDisplay">\u2014</span></div>
             <div class="status-row" data-tip="Vision quality: slices × 64 tokens per frame"><span>Vision</span><span class="status-value" id="visionDisplay">\u2014</span></div>
+            <div class="status-row" data-tip="Latest unit probability P(speak | listen, speak); hover for the decision"><span>P(speak)</span><span class="status-value" id="speakProbabilityDisplay">\u2014</span></div>
             <div class="status-divider"></div>
             <div class="status-row" data-tip="Model inference time per chunk (avg)"><span>Infer</span><span class="status-value" id="latencyDisplay">\u2014</span></div>
             <div class="status-row" data-tip="Time To First Speak: delay from last LISTEN to first SPEAK"><span>TTFS</span><span class="status-value" id="ttfsDisplay">\u2014</span></div>
@@ -312,6 +376,15 @@ export function setDuplexButtonStates(running) {
     if (stop) { stop.disabled = !running; stop.textContent = 'Stop'; stop.classList.remove('cancel'); }
     if (fl) fl.disabled = !running;
     if (pause) pause.disabled = !running;
+    setListenSpeakConfigDisabled(running);
+}
+
+/** Listen/speak policy is selected at session.init and is immutable in-session. */
+export function setListenSpeakConfigDisabled(disabled) {
+    for (const id of ['listenSpeakDecisionEnabled', 'speakThreshold']) {
+        const el = document.getElementById(id);
+        if (el) el.disabled = disabled;
+    }
 }
 
 /**
@@ -416,6 +489,7 @@ export async function loadFrontendDefaults() {
             const el = document.getElementById('playbackDelay');
             if (el) el.value = defaults.playback_delay_ms;
         }
+        return defaults;
     } catch (e) {
         console.warn('[frontend_defaults] fetch failed, using HTML defaults:', e.message);
     }

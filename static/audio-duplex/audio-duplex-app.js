@@ -6,9 +6,9 @@
  */
 
 // Layer 0: Pure logic
-import { AudioDeviceSelector } from '../lib/audio-device-selector.js';
+import { AudioDeviceSelector } from '../lib/audio-device-selector.js?v=ordinary-v4-20261013';
 import { resampleAudio, arrayBufferToBase64, escapeHtml } from '../duplex/lib/duplex-utils.js';
-import { RealtimeSession } from '../duplex/lib/realtime-session.js';
+import { RealtimeSession } from '../duplex/lib/realtime-session.js?v=ordinary-v4-20261013';
 import { SessionRecorder } from '../duplex/lib/session-recorder.js';
 import { measureLUFS } from '../duplex/lib/lufs.js';
 import { MixerController } from '../duplex/lib/mixer-controller.js';
@@ -27,7 +27,7 @@ import {
     initDataTipTooltips,
     SettingsPersistence,
     getMixerPanelHTML,
-} from '../duplex/ui/duplex-ui.js';
+} from '../duplex/ui/duplex-ui.js?v=ordinary-v4-20261013';
 import { startDingDongLoop, playAlarmBell, playSessionChime } from '../duplex/lib/queue-chimes.js';
 import { createTtsRefController } from '../duplex/ui/tts-ref-controller.js';
 import { initRefAudio } from '../duplex/ui/ref-audio-init.js';
@@ -38,7 +38,6 @@ import { initRefAudio } from '../duplex/ui/ref-audio-init.js';
 const SAMPLE_RATE_IN = 16000;
 const SAMPLE_RATE_OUT = 24000;
 const CHUNK_MS = 1000;
-const FILE_MAX_DURATION = 300; // 5 minutes
 
 let currentMode = 'live';
 let session = null;
@@ -110,8 +109,14 @@ const settingsPersistence = new SettingsPersistence('audio_duplex_settings', [
     { id: 'padAfterSec', type: 'number' },
     // Session
     { id: 'playbackDelay', type: 'number' },
-    { id: 'maxKvTokens', type: 'number' },
-    { id: 'duplexLengthPenalty', type: 'number' },
+    // MaxKV and window mode start from current page/service defaults on reload.
+    { id: 'basicWindowHighTokens', type: 'number' },
+    { id: 'basicWindowLowTokens', type: 'number' },
+    { id: 'contextMaxUnits', type: 'number' },
+    { id: 'textSink', type: 'number' },
+    { id: 'textSlidingWindow', type: 'number' },
+    { id: 'listenSpeakDecisionEnabled', type: 'checkbox' },
+    { id: 'speakThreshold', type: 'number' },
     // System prompt
     { id: 'systemPrompt', type: 'textarea' },
     // TTS ref mode
@@ -126,9 +131,54 @@ const settingsPersistence = new SettingsPersistence('audio_duplex_settings', [
     { id: 'mxMonitor', type: 'range' },
 ]);
 
-// Priority: HTML defaults → server defaults → localStorage → preset (highest)
-loadFrontendDefaults().then(() => {
+function syncSlidingWindowSettings() {
+    const mode = document.querySelector('input[name="slidingWindowMode"]:checked')?.value || 'basic';
+    const basic = document.getElementById('basicSlidingSettings');
+    const kv = document.getElementById('kvSurgerySettings');
+    if (basic) basic.hidden = mode !== 'basic';
+    if (kv) kv.hidden = mode !== 'kv_surgery';
+}
+
+document.querySelectorAll('input[name="slidingWindowMode"]').forEach((radio) => {
+    radio.addEventListener('change', syncSlidingWindowSettings);
+});
+syncSlidingWindowSettings();
+
+// Do not let browser-restored form state retain the old 64k/surgery defaults.
+const maxKvInput = document.getElementById('maxKvTokens');
+if (maxKvInput) {
+    maxKvInput.setAttribute('autocomplete', 'off');
+    maxKvInput.value = maxKvInput.defaultValue;
+    maxKvInput.addEventListener('change', function () {
+        if (parseInt(this.value, 10) > 262144) this.value = 262144;
+    });
+}
+document.querySelectorAll('input[name="slidingWindowMode"]').forEach((radio) => {
+    radio.setAttribute('autocomplete', 'off');
+    radio.checked = radio.defaultChecked;
+});
+syncSlidingWindowSettings();
+
+// Session policy follows the same service defaults as the video page.
+const frontendDefaultsReady = loadFrontendDefaults().then((defaults) => {
     settingsPersistence.restore();
+    if (defaults?.sliding_window_mode) {
+        document.querySelectorAll('input[name="slidingWindowMode"]').forEach((radio) => {
+            radio.checked = radio.value === defaults.sliding_window_mode;
+            if (defaults.sliding_window_modes) {
+                radio.disabled = !defaults.sliding_window_modes.includes(radio.value);
+                radio.closest('label').hidden = radio.disabled;
+            }
+        });
+        for (const [field, id] of [
+            ['basic_window_high_tokens', 'basicWindowHighTokens'],
+            ['basic_window_low_tokens', 'basicWindowLowTokens'],
+        ]) {
+            const input = document.getElementById(id);
+            if (input && defaults[field] != null) input.value = defaults[field];
+        }
+    }
+    syncSlidingWindowSettings();
     _duplexPreset.init();
 });
 window._settingsPersistence = settingsPersistence;
@@ -351,16 +401,13 @@ class FileAudioProvider {
         addSystemLog('Processing audio file...');
 
         // 1. Get duration
-        const rawDuration = await this._getAudioDuration();
-        const cappedDuration = Math.min(rawDuration, FILE_MAX_DURATION);
-        this._mainChunks = Math.floor(cappedDuration);
+        const duration = await this._getAudioDuration();
+        if (!Number.isFinite(duration)) throw new Error('Invalid audio duration');
+        this._mainChunks = Math.floor(duration);
         if (this._mainChunks === 0) throw new Error('Audio too short');
-        if (rawDuration > FILE_MAX_DURATION) {
-            addSystemLog(`Audio truncated: ${rawDuration.toFixed(1)}s → ${cappedDuration}s`);
-        }
 
         // 2. Decode file audio and normalize
-        await this._decodeFileAudio(cappedDuration);
+        await this._decodeFileAudio(duration);
 
         // 3. Setup mic (mixed mode)
         if (this._audioMode === 'mixed') {
@@ -600,12 +647,12 @@ class FileAudioProvider {
 
     // ==================== Audio processing helpers ====================
 
-    async _decodeFileAudio(cappedDuration) {
+    async _decodeFileAudio(duration) {
         try {
             const arrayBuffer = await this._file.arrayBuffer();
             const audioCtx = new AudioContext();
             const audioBuf = await audioCtx.decodeAudioData(arrayBuffer.slice(0));
-            const targetSamples = Math.ceil(cappedDuration * SAMPLE_RATE_IN);
+            const targetSamples = Math.ceil(duration * SAMPLE_RATE_IN);
             const offCtx = new OfflineAudioContext(1, targetSamples, SAMPLE_RATE_IN);
             const src = offCtx.createBufferSource();
             src.buffer = audioBuf;
@@ -771,11 +818,7 @@ function onFileSelected(input) {
         const url = URL.createObjectURL(selectedFile);
         audio.src = url;
         audio.onloadedmetadata = () => {
-            const dur = audio.duration;
-            const label = dur > FILE_MAX_DURATION
-                ? `${dur.toFixed(1)}s (will truncate to ${FILE_MAX_DURATION}s)`
-                : `${dur.toFixed(1)}s`;
-            document.getElementById('fileDuration').textContent = label;
+            document.getElementById('fileDuration').textContent = `${audio.duration.toFixed(1)}s`;
             URL.revokeObjectURL(url);
         };
         audio.onerror = () => { URL.revokeObjectURL(url); };
@@ -794,8 +837,7 @@ async function measureFileLUFS(file) {
         const arrayBuffer = await file.arrayBuffer();
         const tmpCtx = new AudioContext();
         const decoded = await tmpCtx.decodeAudioData(arrayBuffer.slice(0));
-        const cappedDuration = Math.min(decoded.duration, FILE_MAX_DURATION);
-        const targetFrames = Math.ceil(cappedDuration * SAMPLE_RATE_IN);
+        const targetFrames = Math.ceil(decoded.duration * SAMPLE_RATE_IN);
         const offCtx = new OfflineAudioContext(1, targetFrames, SAMPLE_RATE_IN);
         const src = offCtx.createBufferSource();
         src.buffer = decoded;
@@ -822,7 +864,29 @@ async function measureFileLUFS(file) {
 // Session Control
 // ============================================================================
 async function startSession() {
+    await frontendDefaultsReady;
     if (session) return;
+
+    const slidingWindowMode = document.querySelector('input[name="slidingWindowMode"]:checked')?.value || 'basic';
+    const readInt = (id, fallback) => {
+        const input = document.getElementById(id);
+        const value = parseInt(input?.value, 10);
+        if (Number.isFinite(value)) return value;
+        const defaultValue = parseInt(input?.defaultValue, 10);
+        return Number.isFinite(defaultValue) ? defaultValue : fallback;
+    };
+    const slidingConfig = {
+        sliding_window_mode: slidingWindowMode,
+        basic_window_high_tokens: readInt('basicWindowHighTokens', 8000),
+        basic_window_low_tokens: readInt('basicWindowLowTokens', 6000),
+        context_max_units: readInt('contextMaxUnits', 250),
+        text_sink: readInt('textSink', 512),
+        text_sliding_window: readInt('textSlidingWindow', 10240),
+    };
+    if (slidingWindowMode === 'basic' && slidingConfig.basic_window_high_tokens <= slidingConfig.basic_window_low_tokens) {
+        addSystemLog('Basic sliding window requires the start threshold to be greater than the retain threshold.');
+        return;
+    }
 
     if (currentMode === 'file') {
         if (!selectedFile) { alert('Please select an audio file first.'); return; }
@@ -836,9 +900,10 @@ async function startSession() {
     }
 
     session = new RealtimeSession('adx', {
-        getMaxKvTokens: () => parseInt(document.getElementById('maxKvTokens').value, 10) || 8192,
+        getMaxKvTokens: () => parseInt(document.getElementById('maxKvTokens').value, 10) || 262144,
         getPlaybackDelayMs: () => parseInt(document.getElementById('playbackDelay').value, 10) || 200,
         outputSampleRate: SAMPLE_RATE_OUT,
+        enableReconnect: true,
         getWsUrl: () => {
             const proto = location.protocol === 'https:' ? 'wss' : 'ws';
             const url = `${proto}://${location.host}/v1/realtime?mode=audio`;
@@ -966,7 +1031,14 @@ async function startSession() {
 
     // Build prepare payload
     const preparePayload = {
-        config: { length_penalty: parseFloat(document.getElementById('duplexLengthPenalty').value) || 1.05 },
+        config: {
+            ...slidingConfig,
+            ls_decision_mode: document.getElementById('listenSpeakDecisionEnabled').checked ? 'binary' : 'legacy',
+            speak_threshold: (() => {
+                const value = parseFloat(document.getElementById('speakThreshold').value);
+                return Number.isFinite(value) ? Math.max(0.01, Math.min(0.99, value)) : 0.3;
+            })(),
+        },
         use_tts: document.getElementById('ttsEnabled').checked,
     };
     const refBase64 = refAudio.getBase64();

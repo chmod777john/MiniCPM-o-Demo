@@ -365,7 +365,7 @@ class PyTorchBackend:
         self,
         audio_waveform: Optional[np.ndarray] = None,
         frame_list: Optional[list] = None,
-        max_slice_nums: int = 1,
+        max_slice_nums: Optional[int] = None,
     ) -> Dict[str, Any]:
         duplex_view = self.processor.set_duplex_mode()
         return duplex_view.prefill(
@@ -394,6 +394,14 @@ class PyTorchBackend:
         gc.collect()
         torch.cuda.empty_cache()
         logger.info(f"[GPU {self.gpu_id}] Duplex cleanup done, GPU memory released")
+
+    def ordinary_session_config(self) -> Dict[str, Any]:
+        read = getattr(self.processor.model, "ordinary_session_config", None)
+        return read() if read is not None else {}
+
+    def ordinary_unit_metrics(self) -> Dict[str, Any]:
+        read = getattr(self.processor.model, "ordinary_unit_metrics", None)
+        return read() if read is not None else {}
 
     # ========== FC Duplex ==========
 

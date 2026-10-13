@@ -180,6 +180,8 @@ def _result_metrics(result: Any, base: Optional[Dict[str, Any]] = None) -> Dict[
         ("cost_token2wav_ms", "cost_token2wav_ms"),
         ("n_tokens", "n_tokens"),
         ("n_tts_tokens", "n_tts_tokens"),
+        ("p_speak", "p_speak"),
+        ("ls_decision", "ls_decision"),
     ):
         value = getattr(result, attr, None)
         if value is not None:
@@ -286,7 +288,7 @@ class BackendProtocolSession:
             session_config=(
                 self._fc_runtime.session_config
                 if self._fc_runtime is not None
-                else None
+                else getattr(self, "_ordinary_config", None)
             ),
             metrics=self._safe_metrics(),
         )
@@ -403,6 +405,9 @@ class BackendProtocolSession:
             return
 
         config = _first_dict(params.get("config"), params.get("duplex"))
+        config = dict(config)
+        if params.get("max_slice_nums") is not None:
+            config["max_slice_nums"] = params["max_slice_nums"]
         if "use_tts" in params:
             config = dict(config)
             config["generate_audio"] = bool(params.get("use_tts"))
@@ -435,6 +440,8 @@ class BackendProtocolSession:
                 length_penalty=float(config.get("length_penalty", 1.1) if config else 1.1),
                 sampling=config or None,
             )
+            read_config = getattr(self.backend, "ordinary_session_config", None)
+            self._ordinary_config = read_config() if read_config is not None else config
         finally:
             refs.cleanup()
 
@@ -593,7 +600,10 @@ class BackendProtocolSession:
             decoded_frames = decode_frame_base64_list(_extract_frame_base64_list(payload))
             hints = _first_dict(payload.get("hints"))
             force_listen = bool(_coalesce(payload.get("force_listen"), hints.get("force_listen"), default=False))
-            max_slice_nums = int(_coalesce(payload.get("max_slice_nums"), hints.get("max_slice_nums"), default=1))
+            raw_slices = _coalesce(payload.get("max_slice_nums"), hints.get("max_slice_nums"))
+            max_slice_nums = int(raw_slices) if raw_slices is not None else None
+            if max_slice_nums is not None and not 1 <= max_slice_nums <= 9:
+                raise ValueError("max_slice_nums must be in [1, 9]")
 
             t0 = time.perf_counter()
 
@@ -614,6 +624,8 @@ class BackendProtocolSession:
             metrics["prefill_ms"] = round(prefill_ms, 1)
             metrics["wall_clock_ms"] = round(wall_clock_ms, 1)
             if isinstance(prefill_result, dict):
+                if "effective_max_slice_nums" in prefill_result:
+                    metrics["effective_max_slice_nums"] = prefill_result["effective_max_slice_nums"]
                 n_vision_images = prefill_result.get("n_vision_images")
                 if n_vision_images is not None:
                     metrics["vision_slices"] = n_vision_images
@@ -628,7 +640,7 @@ class BackendProtocolSession:
                     metrics=metrics,
                 )
                 self._active_response_id = None
-                self._schedule_finalize()
+                self._schedule_finalize(input_id=input_id)
                 return
 
             if self._active_response_id is None:
@@ -662,7 +674,7 @@ class BackendProtocolSession:
                 )
                 self._active_response_id = None
 
-            self._schedule_finalize()
+            self._schedule_finalize(input_id=input_id)
 
     def _safe_metrics(self) -> Dict[str, Any]:
         try:
@@ -678,7 +690,7 @@ class BackendProtocolSession:
             self._finalize_task.result()
             self._finalize_task = None
 
-    def _schedule_finalize(self) -> None:
+    def _schedule_finalize(self, *, input_id: Optional[str] = None) -> None:
         if self._finalize_task is not None and not self._finalize_task.done():
             raise RuntimeError("duplex finalize already in flight")
 
@@ -686,7 +698,15 @@ class BackendProtocolSession:
 
         async def _run() -> None:
             try:
-                await asyncio.to_thread(self.backend.duplex_finalize)
+                finalize_start = time.perf_counter()
+                def finish():
+                    self.backend.duplex_finalize()
+                    read = getattr(self.backend, "ordinary_unit_metrics", None)
+                    return read() if read is not None else {}
+                metrics = await asyncio.to_thread(finish)
+                metrics["finalize_ms"] = round((time.perf_counter() - finalize_start) * 1000, 3)
+                await self.send("response.metrics", session_id=self.session_id,
+                                input_id=input_id, unit_finalized=True, **metrics)
             finally:
                 self._finalize_done.set()
 

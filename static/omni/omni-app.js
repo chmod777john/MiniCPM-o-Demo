@@ -6,11 +6,11 @@
  */
 
 // Layer 0: Pure logic
-import { AudioDeviceSelector } from '../lib/audio-device-selector.js';
+import { AudioDeviceSelector } from '../lib/audio-device-selector.js?v=ordinary-v4-20261013';
 import { resampleAudio as downsample, arrayBufferToBase64, escapeHtml } from '../duplex/lib/duplex-utils.js';
-import { RealtimeSession } from '../duplex/lib/realtime-session.js';
-import { SessionVideoRecorder } from '../duplex/lib/session-video-recorder.js';
-import { RecordingSettings } from '../duplex/lib/recording-settings.js';
+import { RealtimeSession } from '../duplex/lib/realtime-session.js?v=ordinary-v4-20261013';
+import { SessionVideoRecorder } from '../duplex/lib/session-video-recorder.js?v=ordinary-v4-20261013';
+import { RecordingSettings } from '../duplex/lib/recording-settings.js?v=ordinary-v4-20261013';
 import { measureLUFS } from '../duplex/lib/lufs.js';
 import { MixerController } from '../duplex/lib/mixer-controller.js';
 
@@ -23,9 +23,8 @@ import {
     setQueueButtonStates,
     wireDuplexControls,
     initDataTipTooltips,
-    SettingsPersistence,
     getMixerPanelHTML,
-} from '../duplex/ui/duplex-ui.js';
+} from '../duplex/ui/duplex-ui.js?v=ordinary-v4-20261013';
 import { startDingDongLoop, playAlarmBell, playSessionChime } from '../duplex/lib/queue-chimes.js';
 import { createTtsRefController } from '../duplex/ui/tts-ref-controller.js';
 import { initRefAudio } from '../duplex/ui/ref-audio-init.js';
@@ -136,7 +135,7 @@ function _omniStopWaveform() {
 }
 
 // ============================================================================
-// Init: Status panel + health check + defaults + settings persistence
+// Init: Status panel + health check + page-local settings
 // ============================================================================
 document.getElementById('panelStatus').innerHTML =
     `<details class="config-group"><summary>Metrics</summary><div class="cg-body">${getStatusPanelHTML()}</div></details>`;
@@ -144,49 +143,58 @@ document.getElementById('mixerPanel').innerHTML = getMixerPanelHTML();
 initHealthCheck('serviceStatus');
 initDataTipTooltips();
 
-const settingsPersistence = new SettingsPersistence('omni_settings', [
-    // Mode selector
-    { type: 'mode', selector: '.mode-btn' },
-    // File options
-    { type: 'radio', name: 'fileAudioMode' },
-    { id: 'filePlaybackVol', type: 'range' },
-    { id: 'frameOffset', type: 'range' },
-    { id: 'padBeforeSec', type: 'number' },
-    { id: 'padAfterSec', type: 'number' },
-    // Session
-    { id: 'playbackDelay', type: 'number' },
-    { id: 'maxKvTokens', type: 'number' },
-    { id: 'omniLengthPenalty', type: 'number' },
-    { id: 'visionHD', type: 'checkbox' },
-    // Fullscreen subtitle
-    { id: 'fsSubHeight', type: 'number' },
-    { id: 'fsAlphaBottom', type: 'number' },
-    { id: 'fsAlphaTop', type: 'number' },
-    // System prompt
-    { id: 'systemPrompt', type: 'textarea' },
-    // TTS ref mode
-    { type: 'radio', name: 'omniTtsRefMode' },
-    // Recording
-    { id: 'recCheckbox', type: 'checkbox' },
-    // Mixer
-    { id: 'mxFileTarget', type: 'number' },
-    { id: 'mxFileTrim', type: 'range' },
-    { id: 'mxMicTarget', type: 'number' },
-    { id: 'mxMicTrim', type: 'range' },
-    { id: 'mxMonitor', type: 'range' },
-]);
+// Browsers can restore form values independently of localStorage on reload.
+document.querySelectorAll('input, select, textarea').forEach((el) => {
+    el.setAttribute('autocomplete', 'off');
+    if (el.tagName === 'SELECT') {
+        const selected = Array.from(el.options).findIndex(option => option.defaultSelected);
+        el.selectedIndex = selected < 0 ? 0 : selected;
+    } else if (el.type === 'checkbox' || el.type === 'radio') {
+        el.checked = el.defaultChecked;
+    } else {
+        el.value = el.type === 'file' ? '' : el.defaultValue;
+    }
+});
 
-// Priority: HTML defaults → server defaults → localStorage → preset (highest)
-loadFrontendDefaults().then(() => {
-    settingsPersistence.restore();
+function syncSlidingWindowSettings() {
+    const mode = document.querySelector('input[name="slidingWindowMode"]:checked')?.value || 'basic';
+    const basic = document.getElementById('basicSlidingSettings');
+    const kv = document.getElementById('kvSurgerySettings');
+    if (basic) basic.hidden = mode !== 'basic';
+    if (kv) kv.hidden = mode !== 'kv_surgery';
+}
+
+document.querySelectorAll('input[name="slidingWindowMode"]').forEach((radio) => {
+    radio.addEventListener('change', syncSlidingWindowSettings);
+});
+syncSlidingWindowSettings();
+
+// Page-local settings: reload always starts from current HTML/server defaults.
+const frontendDefaultsReady = loadFrontendDefaults().then((defaults) => {
+    if (defaults?.sliding_window_mode) {
+        document.querySelectorAll('input[name="slidingWindowMode"]').forEach((radio) => {
+            radio.checked = radio.value === defaults.sliding_window_mode;
+            if (defaults.sliding_window_modes) {
+                radio.disabled = !defaults.sliding_window_modes.includes(radio.value);
+                radio.closest('label').hidden = radio.disabled;
+            }
+        });
+        for (const [field, id] of [
+            ['basic_window_high_tokens', 'basicWindowHighTokens'],
+            ['basic_window_low_tokens', 'basicWindowLowTokens'],
+        ]) {
+            const input = document.getElementById(id);
+            if (input && defaults[field] != null) input.value = defaults[field];
+        }
+        syncSlidingWindowSettings();
+    }
     _omniPreset.init();
 });
-window._settingsPersistence = settingsPersistence;
 const omniDeviceSelector = new AudioDeviceSelector({
     micSelectEl: document.getElementById('omniMicDevice'),
     speakerSelectEl: document.getElementById('omniSpeakerDevice'),
     refreshBtnEl: document.getElementById('omniBtnRefreshDevices'),
-    storagePrefix: 'omni',
+    storagePrefix: null,
     onSpeakerChange: () => {
         if (session && session.audioPlayer && session.audioPlayer._ctx) {
             omniDeviceSelector.applySinkId(session.audioPlayer._ctx);
@@ -197,10 +205,7 @@ omniDeviceSelector.init();
 
 document.getElementById('btnResetSettings')?.addEventListener('click', () => {
     if (confirm('Reset all settings to defaults?')) {
-        if (recordingSettings) recordingSettings.clearStorage();
-        localStorage.removeItem('omni_preset');
-        omniDeviceSelector.clearSaved();
-        settingsPersistence.clear();
+        location.reload();
     }
 });
 
@@ -223,13 +228,12 @@ const _omniPreset = new PresetSelector({
     onSelect: (preset, { audioLoaded } = {}) => {
         if (preset && preset.system_prompt) {
             document.getElementById('systemPrompt').value = preset.system_prompt;
-            settingsPersistence.save();
         }
         if (audioLoaded && preset && preset.ref_audio && preset.ref_audio.data) {
             refAudio.setAudio(preset.ref_audio.data, preset.ref_audio.name, preset.ref_audio.duration);
         }
     },
-    storageKey: 'omni_preset',
+    storageKey: null,
 });
 
 // ============================================================================
@@ -440,9 +444,6 @@ class LiveMediaProvider extends MediaProvider {
     getVideoElement() { return this._videoEl; }
 }
 
-const FILE_MAX_DURATION = 10 * 60; // 10 minutes
-const FILE_MAX_DURATION_LABEL = '10min';
-
 class FileMediaProvider extends MediaProvider {
     /**
      * @param {File} file
@@ -499,14 +500,11 @@ class FileMediaProvider extends MediaProvider {
     async start() {
         addSystemEntry('Processing video file...');
 
-        // 1. Get duration, cap at FILE_MAX_DURATION
-        const rawDuration = await this._getVideoDuration();
-        const cappedDuration = Math.min(rawDuration, FILE_MAX_DURATION);
-        this._mainChunks = Math.floor(cappedDuration);
+        // 1. Get duration
+        const duration = await this._getVideoDuration();
+        if (!Number.isFinite(duration)) throw new Error('Invalid video duration');
+        this._mainChunks = Math.floor(duration);
         if (this._mainChunks === 0) throw new Error('Video too short');
-        if (rawDuration > FILE_MAX_DURATION) {
-            addSystemEntry(`Video truncated: ${rawDuration.toFixed(1)}s → ${FILE_MAX_DURATION_LABEL}`);
-        }
 
         // 2. Pre-extract frames (with offset k)
         this._frames = await this._extractFrames(this._mainChunks, this._frameOffset);
@@ -515,7 +513,7 @@ class FileMediaProvider extends MediaProvider {
 
         // 3. Decode video audio (modes: video, mixed)
         if (this._audioMode === 'video' || this._audioMode === 'mixed') {
-            await this._decodeVideoAudio(cappedDuration);
+            await this._decodeVideoAudio(duration);
         }
 
         // 4. Setup mic but don't connect yet (modes: mic, mixed)
@@ -782,12 +780,12 @@ class FileMediaProvider extends MediaProvider {
 
     // ==================== Audio processing helpers ====================
 
-    async _decodeVideoAudio(cappedDuration) {
+    async _decodeVideoAudio(duration) {
         try {
             const arrayBuffer = await this._file.arrayBuffer();
             const audioCtx = new AudioContext();
             const audioBuf = await audioCtx.decodeAudioData(arrayBuffer.slice(0));
-            const targetSamples = Math.ceil(cappedDuration * SAMPLE_RATE_IN);
+            const targetSamples = Math.ceil(duration * SAMPLE_RATE_IN);
             const offCtx = new OfflineAudioContext(1, targetSamples, SAMPLE_RATE_IN);
             const src = offCtx.createBufferSource();
             src.buffer = audioBuf;
@@ -1075,6 +1073,8 @@ function setButtonStates(running) {
     document.getElementById('fsBtnForceListen').disabled = !running;
     document.getElementById('btnHD').disabled = !running;
     document.getElementById('fsBtnHD').disabled = !running;
+    setListenSpeakConfigDisabled(running);
+    setHDConfigDisabled(running);
     if (!running) {
         start.textContent = 'Start';
         start.classList.remove('live');
@@ -1092,6 +1092,14 @@ function setButtonStates(running) {
         document.getElementById('fsBtnPause').disabled = false;
     }
     syncFullscreenButtons(running);
+    updateHDModeControls();
+}
+
+function setListenSpeakConfigDisabled(disabled) {
+    for (const id of ['listenSpeakDecisionEnabled', 'speakThreshold']) {
+        const el = document.getElementById(id);
+        if (el) el.disabled = disabled;
+    }
 }
 
 function setPauseBtnState(state) {
@@ -1114,34 +1122,117 @@ function setForceListenBtnState(active) {
 }
 
 // ============================================================================
-// HD Vision Toggle
+// HD Vision mode
 // ============================================================================
-let _hdToggleActive = false;
+let _hdSessionMode = null;
+let _hdRuntimeEnabled = false;
 
-function toggleHD() {
-    _hdToggleActive = !_hdToggleActive;
-    setHDBtnState(_hdToggleActive);
+const HD_DEFAULT_FIXED_SLICES = 2;
+const HD_DEFAULT_STRATEGY_SLICES = 4;
+const HD_MAX_SLICES = 9;
+
+function normalizeHDMode(mode) {
+    return mode === 'fixed' || mode === 'strategy' ? mode : 'off';
+}
+
+function getConfiguredHDMode() {
+    return normalizeHDMode(document.getElementById('visionHDMode')?.value);
+}
+
+function getSliceSetting(id, fallback) {
+    const el = document.getElementById(id);
+    const value = Number.parseInt(el?.value, 10);
+    const slices = Number.isFinite(value) ? Math.max(1, Math.min(HD_MAX_SLICES, value)) : fallback;
+    if (el && String(slices) !== el.value) el.value = String(slices);
+    return slices;
+}
+
+function getFixedSliceNums() {
+    return getSliceSetting('visionFixedSliceNums', HD_DEFAULT_FIXED_SLICES);
+}
+
+function getStrategySliceNums() {
+    return getSliceSetting('visionStrategySliceNums', HD_DEFAULT_STRATEGY_SLICES);
+}
+
+function getActiveHDMode() {
+    if (_hdSessionMode !== null) {
+        if (!_hdRuntimeEnabled) return 'off';
+        return _hdSessionMode;
+    }
+    return getConfiguredHDMode();
+}
+
+function updateHDModeControls() {
+    const mode = getActiveHDMode();
+    const configuredMode = getConfiguredHDMode();
+    const fixedOptions = document.getElementById('visionFixedOptions');
+    const strategyOptions = document.getElementById('visionStrategyOptions');
+    if (fixedOptions) fixedOptions.style.display = configuredMode === 'fixed' ? 'flex' : 'none';
+    if (strategyOptions) strategyOptions.style.display = configuredMode === 'strategy' ? 'flex' : 'none';
+
+    const hint = document.getElementById('visionHint');
+    if (hint) {
+        if (mode === 'strategy') hint.textContent = `${getStrategySliceNums()} slices after SPEAK`;
+        else if (mode === 'fixed') hint.textContent = `${getFixedSliceNums()} slices / unit`;
+        else hint.textContent = '64 tok';
+    }
+
+    const btn = document.getElementById('btnHD');
+    const fsBtn = document.getElementById('fsBtnHD');
+    const active = mode !== 'off';
+    btn.classList.toggle('force-listen-active', active);
+    fsBtn.classList.toggle('force-listen-active', active);
+    const label = mode === 'strategy' ? 'Strategy HD' : mode === 'fixed' ? 'Fixed HD' : 'HD';
+    btn.textContent = label;
+    fsBtn.textContent = label;
+    const strategyLocked = _hdSessionMode === 'strategy' && !!session;
+    if (strategyLocked) {
+        btn.disabled = true;
+        fsBtn.disabled = true;
+    }
+    btn.title = strategyLocked
+        ? 'Strategy HD is fixed for this session; configure it before starting.'
+        : 'Toggle the selected vision mode for this session';
+    fsBtn.title = btn.title;
 }
 
 function setHDBtnState(active) {
-    _hdToggleActive = active;
-    const btn = document.getElementById('btnHD');
-    const fsBtn = document.getElementById('fsBtnHD');
-    btn.classList.toggle('force-listen-active', active);
-    fsBtn.classList.toggle('force-listen-active', active);
-    const cb = document.getElementById('visionHD');
-    if (cb) cb.checked = active;
-    const hint = document.getElementById('visionHint');
-    if (hint) hint.textContent = active ? '192 tok' : '64 tok';
+    // Strategy-HD is selected at session.init and cannot be changed mid-session.
+    if (_hdSessionMode === 'strategy' && session) {
+        _hdRuntimeEnabled = true;
+    } else {
+        _hdRuntimeEnabled = !!active;
+    }
+    updateHDModeControls();
+}
+
+function toggleHD() {
+    if (_hdSessionMode === 'strategy' && session) return;
+    setHDBtnState(getActiveHDMode() === 'off');
 }
 
 function getEffectiveMaxSliceNums() {
-    return _hdToggleActive ? 2 : 1;
+    const mode = getActiveHDMode();
+    if (mode === 'strategy') return null;
+    if (mode === 'fixed') return getFixedSliceNums();
+    return 1;
 }
 
-document.getElementById('visionHD')?.addEventListener('change', function () {
-    setHDBtnState(this.checked);
+document.getElementById('visionHDMode')?.addEventListener('change', function () {
+    if (_hdSessionMode !== null) return;
+    updateHDModeControls();
 });
+document.getElementById('visionFixedSliceNums')?.addEventListener('change', updateHDModeControls);
+document.getElementById('visionStrategySliceNums')?.addEventListener('change', updateHDModeControls);
+updateHDModeControls();
+
+function setHDConfigDisabled(disabled) {
+    for (const id of ['visionHDMode', 'visionFixedSliceNums', 'visionStrategySliceNums']) {
+        const el = document.getElementById(id);
+        if (el) el.disabled = disabled;
+    }
+}
 
 // ============================================================================
 // Video / Camera / Fullscreen / Subtitle
@@ -1235,7 +1326,7 @@ function syncFullscreenButtons(running) {
     document.getElementById('fsBtnStart').disabled = running;
     document.getElementById('fsBtnStop').disabled = !running;
     document.getElementById('fsBtnForceListen').disabled = !running;
-    document.getElementById('fsBtnHD').disabled = !running;
+    document.getElementById('fsBtnHD').disabled = !running || (_hdSessionMode === 'strategy' && !!session);
 }
 
 function syncFullscreenQueueButtons(phase) {
@@ -1363,11 +1454,7 @@ function onFileSelected(input) {
         const url = URL.createObjectURL(selectedFile);
         video.src = url;
         video.onloadedmetadata = () => {
-            const dur = video.duration;
-            const label = dur > FILE_MAX_DURATION
-                ? `${dur.toFixed(1)}s (will truncate to ${FILE_MAX_DURATION_LABEL})`
-                : `${dur.toFixed(1)}s`;
-            document.getElementById('fileDuration').textContent = label;
+            document.getElementById('fileDuration').textContent = `${video.duration.toFixed(1)}s`;
             URL.revokeObjectURL(url);
         };
         video.onerror = () => { URL.revokeObjectURL(url); };
@@ -1386,8 +1473,7 @@ async function measureFileLUFS(file) {
         const arrayBuffer = await file.arrayBuffer();
         const tmpCtx = new AudioContext();
         const decoded = await tmpCtx.decodeAudioData(arrayBuffer.slice(0));
-        const cappedDuration = Math.min(decoded.duration, FILE_MAX_DURATION);
-        const targetFrames = Math.ceil(cappedDuration * SAMPLE_RATE_IN);
+        const targetFrames = Math.ceil(decoded.duration * SAMPLE_RATE_IN);
         const offCtx = new OfflineAudioContext(1, targetFrames, SAMPLE_RATE_IN);
         const src = offCtx.createBufferSource();
         src.buffer = decoded;
@@ -1415,8 +1501,30 @@ async function measureFileLUFS(file) {
 // Session Control
 // ============================================================================
 async function startSession() {
+    await frontendDefaultsReady;
     if (session) return;
     if (currentMode === 'file' && !selectedFile) { alert('Please select a video file first.'); return; }
+
+    const slidingWindowMode = document.querySelector('input[name="slidingWindowMode"]:checked')?.value || 'basic';
+    const readInt = (id, fallback) => {
+        const input = document.getElementById(id);
+        const value = parseInt(input?.value, 10);
+        if (Number.isFinite(value)) return value;
+        const defaultValue = parseInt(input?.defaultValue, 10);
+        return Number.isFinite(defaultValue) ? defaultValue : fallback;
+    };
+    const slidingConfig = {
+        sliding_window_mode: slidingWindowMode,
+        basic_window_high_tokens: readInt('basicWindowHighTokens', 8000),
+        basic_window_low_tokens: readInt('basicWindowLowTokens', 6000),
+        context_max_units: readInt('contextMaxUnits', 250),
+        text_sink: readInt('textSink', 512),
+        text_sliding_window: readInt('textSlidingWindow', 10240),
+    };
+    if (slidingWindowMode === 'basic' && slidingConfig.basic_window_high_tokens <= slidingConfig.basic_window_low_tokens) {
+        addSystemEntry('Basic sliding window requires the start threshold to be greater than the retain threshold.');
+        return;
+    }
 
     clearConversation();
     metricsPanel.update({ type: 'state', sessionState: 'Starting...' });
@@ -1456,9 +1564,10 @@ async function startSession() {
 
     // Create RealtimeSession + wire hooks
     session = new RealtimeSession('omni', {
-        getMaxKvTokens: () => parseInt(document.getElementById('maxKvTokens').value, 10) || 32768,
+        getMaxKvTokens: () => parseInt(document.getElementById('maxKvTokens').value, 10) || 262144,
         getPlaybackDelayMs: () => parseInt(document.getElementById('playbackDelay').value, 10) || 200,
         outputSampleRate: SAMPLE_RATE_OUT,
+        enableReconnect: true,
         getWsUrl: () => {
             const proto = location.protocol === 'https:' ? 'wss' : 'ws';
             const url = `${proto}://${location.host}/v1/realtime?mode=video`;
@@ -1469,13 +1578,14 @@ async function startSession() {
     session.onSystemLog = addSystemEntry;
     session.onSpeakStart = (text) => {
         const handle = addSpeakEntry(text);
-        if (sessionRecorder) sessionRecorder.setSubtitleText(text);
         return handle;
     };
     session.onSpeakUpdate = (el, text) => {
         el.textContent = text;
         updateFsSpeakText(text);
-        if (sessionRecorder) sessionRecorder.setSubtitleText(text);
+    };
+    session.onSpeakDelta = (text) => {
+        if (sessionRecorder) sessionRecorder.addSubtitleUnit(text);
     };
     session.onSpeakEnd = () => {
         finishFsSpeak();
@@ -1544,6 +1654,9 @@ async function startSession() {
         if (media) { media.stop(); media = null; }
         mixerCtrl?.stopMixerMeters();
         session = null;
+        _hdSessionMode = null;
+        _hdRuntimeEnabled = false;
+        updateHDModeControls();
         // Restart standalone mixer mic if mixer is still open
         const mixerPanel = document.getElementById('mixerPanel');
         if (mixerPanel && mixerPanel.style.display === 'block') {
@@ -1594,12 +1707,31 @@ async function startSession() {
         }, 0);
     };
 
+    // Freeze the selected HD mode for the session. Strategy-HD is configured
+    // at session.init; fixed HD can still be toggled by the runtime HD button.
+    const configuredHDMode = getConfiguredHDMode();
+    _hdSessionMode = configuredHDMode === 'strategy' ? 'strategy' : 'fixed';
+    _hdRuntimeEnabled = configuredHDMode !== 'off';
+    const strategySliceNums = getStrategySliceNums();
+
     // Build prepare payload
     const preparePayload = {
-        config: { length_penalty: parseFloat(document.getElementById('omniLengthPenalty').value) || 1.0 },
+        config: {
+            ...slidingConfig,
+            ls_decision_mode: document.getElementById('listenSpeakDecisionEnabled').checked ? 'binary' : 'legacy',
+            speak_threshold: (() => {
+                const value = parseFloat(document.getElementById('speakThreshold').value);
+                return Number.isFinite(value) ? Math.max(0.01, Math.min(0.99, value)) : 0.3;
+            })(),
+            strategy_hd: configuredHDMode === 'strategy',
+            strategy_hd_max_slice_nums: strategySliceNums,
+        },
         max_slice_nums: getEffectiveMaxSliceNums(),
         use_tts: document.getElementById('ttsEnabled').checked,
     };
+    if (configuredHDMode !== 'strategy') {
+        preparePayload.max_slice_nums = configuredHDMode === 'fixed' ? getFixedSliceNums() : 1;
+    }
     const refBase64 = refAudio.getBase64();
     if (refBase64) preparePayload.ref_audio_base64 = refBase64;
     const ttsRef = omniTtsRef.getBase64();
@@ -1621,7 +1753,9 @@ async function startSession() {
                     const msg = { type: 'audio_chunk', audio_base64: arrayBufferToBase64(chunk.audio.buffer) };
                     if (chunk.frameBase64) msg.frame_base64_list = [chunk.frameBase64];
                     const effectiveSlice = getEffectiveMaxSliceNums();
-                    if (effectiveSlice > 1) msg.max_slice_nums = effectiveSlice;
+                    // Strategy-HD deliberately omits the per-chunk override so
+                    // the backend can apply its SPEAK -> next-unit state.
+                    if (effectiveSlice !== null) msg.max_slice_nums = effectiveSlice;
                     session.sendChunk(msg);
                     updateTimeBadge(session.chunksSent);
                     // Fallback path: no-op when direct audio mode is active in recorder
@@ -1666,6 +1800,8 @@ async function startSession() {
         if (session) { try { session.cleanup(); } catch (_) {} }
         session = null;
         media = null;
+        _hdSessionMode = null;
+        _hdRuntimeEnabled = false;
         setButtonStates(false);
         metricsPanel.update({ type: 'state', sessionState: isCancelled ? 'Cancelled' : 'Error' });
         setStatusLamp(isCancelled ? 'stopped' : 'hidden');
@@ -1739,30 +1875,7 @@ document.getElementById('filePlaybackVol').addEventListener('input', function() 
     }
 });
 
-// Length Penalty preset buttons + active highlight sync
-function syncLpPresetHighlight() {
-    const val = parseFloat(document.getElementById('omniLengthPenalty')?.value);
-    document.querySelectorAll('.lp-preset-btn').forEach(btn => {
-        btn.classList.toggle('active', parseFloat(btn.dataset.lp) === val);
-    });
-}
-
-document.querySelectorAll('.lp-preset-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-        const val = parseFloat(btn.dataset.lp);
-        const input = document.getElementById('omniLengthPenalty');
-        if (input && !isNaN(val)) {
-            input.value = val;
-            input.dispatchEvent(new Event('change', { bubbles: true }));
-        }
-        syncLpPresetHighlight();
-    });
-});
-
-document.getElementById('omniLengthPenalty')?.addEventListener('input', syncLpPresetHighlight);
-document.getElementById('omniLengthPenalty')?.addEventListener('change', syncLpPresetHighlight);
-
-const MAX_KV_TOKENS_LIMIT = 32768;
+const MAX_KV_TOKENS_LIMIT = 262144;
 
 // MaxKV client-side stop threshold cap
 document.getElementById('maxKvTokens')?.addEventListener('change', function () {
@@ -1804,7 +1917,7 @@ mixerCtrl = new MixerController({
     onInit: () => {
         const recSettingsBtn = document.getElementById('btnRecSettings');
         if (recSettingsBtn) {
-            recordingSettings = new RecordingSettings(recSettingsBtn);
+            recordingSettings = new RecordingSettings(recSettingsBtn, null);
         }
     },
 });

@@ -35,7 +35,7 @@ const DEFAULT_QUALITY = 2_000_000;
 export class RecordingSettings {
     /**
      * @param {HTMLElement} triggerBtn - 齿轮按钮，点击 toggle 面板
-     * @param {string} [storageKey='omni_rec_settings'] - localStorage key
+     * @param {string|null} [storageKey='omni_rec_settings'] - null disables persistence
      */
     constructor(triggerBtn, storageKey = 'omni_rec_settings') {
         this._triggerBtn = triggerBtn;
@@ -95,6 +95,7 @@ export class RecordingSettings {
 
     /** 保存当前设置到 localStorage */
     _saveToStorage() {
+        if (!this._storageKey) return;
         try {
             localStorage.setItem(this._storageKey, JSON.stringify({
                 mime: this._selectedMime,
@@ -109,6 +110,7 @@ export class RecordingSettings {
 
     /** 从 localStorage 恢复设置（在 _buildPanel 之前调用） */
     _restoreFromStorage() {
+        if (!this._storageKey) return;
         try {
             const raw = localStorage.getItem(this._storageKey);
             if (!raw) return;
@@ -125,6 +127,7 @@ export class RecordingSettings {
 
     /** 清除 localStorage 中的录制设置 */
     clearStorage() {
+        if (!this._storageKey) return;
         try { localStorage.removeItem(this._storageKey); } catch (_) {}
     }
 

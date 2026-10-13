@@ -29,7 +29,7 @@ export class AudioDeviceSelector {
      * @param {HTMLSelectElement} opts.micSelectEl
      * @param {HTMLSelectElement} opts.speakerSelectEl
      * @param {HTMLButtonElement} [opts.refreshBtnEl]
-     * @param {string} opts.storagePrefix - localStorage key prefix
+     * @param {string|null} opts.storagePrefix - localStorage key prefix; null disables persistence
      * @param {function} [opts.onMicChange]    - callback(deviceId)
      * @param {function} [opts.onSpeakerChange] - callback(deviceId)
      */
@@ -41,15 +41,15 @@ export class AudioDeviceSelector {
         this._onMicChange = onMicChange || null;
         this._onSpeakerChange = onSpeakerChange || null;
 
-        this._micKey = `${storagePrefix}_mic`;
-        this._spkKey = `${storagePrefix}_speaker`;
+        this._micKey = storagePrefix == null ? null : `${storagePrefix}_mic`;
+        this._spkKey = storagePrefix == null ? null : `${storagePrefix}_speaker`;
 
         this._micEl.addEventListener('change', () => {
-            localStorage.setItem(this._micKey, this._micEl.value);
+            if (this._micKey) localStorage.setItem(this._micKey, this._micEl.value);
             if (this._onMicChange) this._onMicChange(this._micEl.value);
         });
         this._spkEl.addEventListener('change', () => {
-            localStorage.setItem(this._spkKey, this._spkEl.value);
+            if (this._spkKey) localStorage.setItem(this._spkKey, this._spkEl.value);
             if (this._onSpeakerChange) this._onSpeakerChange(this._spkEl.value);
         });
         if (this._refreshBtn) {
@@ -73,8 +73,8 @@ export class AudioDeviceSelector {
         const mics = devices.filter(d => d.kind === 'audioinput');
         const speakers = devices.filter(d => d.kind === 'audiooutput');
 
-        const savedMic = localStorage.getItem(this._micKey);
-        const savedSpk = localStorage.getItem(this._spkKey);
+        const savedMic = this._micKey ? localStorage.getItem(this._micKey) : this._micEl.value;
+        const savedSpk = this._spkKey ? localStorage.getItem(this._spkKey) : this._spkEl.value;
 
         this._micEl.innerHTML = '';
         mics.forEach((d, i) => {
@@ -125,7 +125,7 @@ export class AudioDeviceSelector {
     }
 
     clearSaved() {
-        localStorage.removeItem(this._micKey);
-        localStorage.removeItem(this._spkKey);
+        if (this._micKey) localStorage.removeItem(this._micKey);
+        if (this._spkKey) localStorage.removeItem(this._spkKey);
     }
 }

@@ -4,9 +4,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>o5-no-fc Omni Demo</title>
-    <link rel="stylesheet" href="/static/duplex/duplex-shared.css">
-    <link rel="stylesheet" href="/static/omni/omni.css">
-    <script src="/static/shared/i18n.js"></script>
+    <link rel="stylesheet" href="/static/duplex/duplex-shared.css?v=ordinary-v4-20261013">
+    <link rel="stylesheet" href="/static/omni/omni.css?v=ordinary-v4-20261013">
+    <script src="/static/shared/i18n.js?v=duplex-kv256k-20261010"></script>
 </head>
 <body>
 
@@ -20,7 +20,7 @@
         </div>
     </div>
     <div class="header-right">
-        <button class="header-reset-btn" id="btnResetSettings" data-tip="Clear all saved settings and restore defaults">Reset Settings</button>
+        <button class="header-reset-btn" id="btnResetSettings" data-tip="Restore default settings">Reset Settings</button>
         <span class="status-badge" id="serviceStatus">Connecting...</span>
     </div>
 </div>
@@ -166,37 +166,28 @@
     <!-- Other Config -->
     <div class="panel-config">
         <details class="config-group" open>
-            <summary>Response Length Controls</summary>
-            <div class="cg-body">
-                <div class="cg-row" data-tip="Controls AI response length, >1 = longer responses">
-                    <div class="cg-row inline">
-                        <span class="cg-label" style="flex:none;">Length Penalty</span>
-                        <input type="number" class="cg-input-sm" id="omniLengthPenalty" value="1.1" min="0.1" max="5.0" step="0.05">
-                    </div>
-                    <div class="lp-presets" style="display:flex;flex-direction:column;gap:4px;">
-                        <div style="display:flex;align-items:center;gap:6px;">
-                            <button type="button" class="lp-preset-btn" data-lp="1.2" title="Verbose — encourages longer, detailed responses">Verbose</button>
-                            <span style="font-size:10px;color:#999;">Longer, detailed replies</span>
-                        </div>
-                        <div style="display:flex;align-items:center;gap:6px;">
-                            <button type="button" class="lp-preset-btn active" data-lp="1.1" title="Balanced — moderate response length">Balanced</button>
-                            <span style="font-size:10px;color:#999;">Moderate length</span>
-                        </div>
-                        <div style="display:flex;align-items:center;gap:6px;">
-                            <button type="button" class="lp-preset-btn" data-lp="1.05" title="Concise & Precise — shorter, focused replies">Concise</button>
-                            <span style="font-size:10px;color:#999;">Short, focused answers</span>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </details>
-        <details class="config-group" open>
             <summary>Vision Settings</summary>
             <div class="cg-body">
-                <div class="cg-row inline" data-tip="High-Definition vision: 1 source + 2 slices = 192 tok/frame, better for text/details, +100ms latency">
-                    <span class="cg-label" style="flex:none;">High-Definition Vision</span>
-                    <input type="checkbox" id="visionHD">
-                    <span style="font-size:10px;color:#888;" id="visionHint">64 tok</span>
+                <div class="cg-row" data-tip="Vision quality controls. Off uses one source image; Fixed HD uses the selected slice count on every unit; Strategy HD applies its slice count to the unit after SPEAK and uses standard quality after LISTEN.">
+                    <div class="cg-row inline omni-hd-mode-row">
+                        <span class="cg-label" style="flex:none;">High-Definition Vision</span>
+                        <select class="cg-select omni-hd-mode-select" id="visionHDMode" data-tip="Off: standard quality. Fixed HD: every unit uses the fixed slice count. Strategy HD: only the unit after SPEAK uses the strategy slice count.">
+                            <option value="off">Off</option>
+                            <option value="fixed" selected>Fixed HD</option>
+                            <option value="strategy">Strategy HD</option>
+                        </select>
+                        <span style="font-size:10px;color:#888;" id="visionHint">64 tok</span>
+                    </div>
+                    <div class="cg-row inline omni-hd-suboption" id="visionFixedOptions" style="display:none;" data-tip="Fixed HD applies this number of image slices to every video unit.">
+                        <span class="cg-label" style="flex:none;">Fixed slices</span>
+                        <input type="number" class="cg-input-sm" id="visionFixedSliceNums" value="2" min="1" max="9" step="1">
+                        <span style="font-size:10px;color:#888;">per unit</span>
+                    </div>
+                    <div class="cg-row inline omni-hd-suboption" id="visionStrategyOptions" style="display:none;" data-tip="Strategy HD applies this number of image slices to the unit immediately after a SPEAK unit; LISTEN units use standard quality.">
+                        <span class="cg-label" style="flex:none;">SPEAK follow-up slices</span>
+                        <input type="number" class="cg-input-sm" id="visionStrategySliceNums" value="4" min="1" max="9" step="1">
+                        <span style="font-size:10px;color:#888;">per unit</span>
+                    </div>
                 </div>
                 <div class="cg-row inline" data-tip="Enable text-to-speech audio response for the session">
                     <span class="cg-label" style="flex:none;">TTS Response</span>
@@ -214,9 +205,55 @@
                 </div>
                 <div class="cg-row inline" data-tip="Client KV cache stop threshold">
                     <span class="cg-label" style="flex:none;">MaxKV</span>
-                    <input type="number" class="cg-input-sm" id="maxKvTokens" value="32768" min="512" max="32768" step="512">
+                    <input type="number" class="cg-input-sm" id="maxKvTokens" value="262144" min="512" max="262144" step="512">
                     <span style="font-size:10px;color:#888;">tok</span>
-                    <span style="font-size:9px;color:#b08050;">≤ 32768</span>
+                    <span style="font-size:9px;color:#b08050;">≤ 262144</span>
+                </div>
+                <div class="cg-row" data-tip="Choose the sliding-window policy for this session. The service-level LLM cache size is unchanged.">
+                    <span class="cg-label" id="slidingWindowModeLabel">Sliding Window</span>
+                    <div class="sw-mode-options" role="radiogroup" aria-labelledby="slidingWindowModeLabel">
+                        <label class="sw-mode-option"><input type="radio" name="slidingWindowMode" value="off"><span id="slidingWindowOffLabel">Off</span></label>
+                        <label class="sw-mode-option"><input type="radio" name="slidingWindowMode" value="basic" checked><span id="slidingWindowBasicLabel">Basic</span></label>
+                        <label class="sw-mode-option"><input type="radio" name="slidingWindowMode" value="kv_surgery"><span id="slidingWindowKvLabel">KV surgery</span></label>
+                    </div>
+                </div>
+                <div class="sw-settings" id="basicSlidingSettings" hidden>
+                    <div class="cg-row inline" data-tip="Basic mode starts pruning above the high watermark and stops at the low watermark.">
+                        <span class="cg-label" id="basicHighLabel" style="flex:none;">Start pruning above</span>
+                        <input type="number" class="cg-input-sm" id="basicWindowHighTokens" value="8000" min="1" max="262144" step="256">
+                        <span style="font-size:10px;color:#888;">tok</span>
+                    </div>
+                    <div class="cg-row inline" data-tip="Basic mode removes old units until the cache is at or below this value.">
+                        <span class="cg-label" id="basicLowLabel" style="flex:none;">Retain down to</span>
+                        <input type="number" class="cg-input-sm" id="basicWindowLowTokens" value="6000" min="1" max="262144" step="256">
+                        <span style="font-size:10px;color:#888;">tok</span>
+                    </div>
+                </div>
+                <div class="sw-settings" id="kvSurgerySettings" hidden>
+                    <div class="cg-row inline" data-tip="KV surgery starts pruning after this many completed units.">
+                        <span class="cg-label" id="kvUnitsLabel" style="flex:none;">Keep units</span>
+                        <input type="number" class="cg-input-sm" id="contextMaxUnits" value="250" min="1" max="320" step="1">
+                        <span style="font-size:10px;color:#888;">units</span>
+                    </div>
+                    <div class="cg-row inline" data-tip="Keep this many prefix text tokens in the previous block.">
+                        <span class="cg-label" id="textSinkLabel" style="flex:none;">Text sink</span>
+                        <input type="number" class="cg-input-sm" id="textSink" value="512" min="0" max="32768" step="1">
+                        <span style="font-size:10px;color:#888;">tok</span>
+                    </div>
+                    <div class="cg-row inline" data-tip="Keep this many recent text tokens in the previous block.">
+                        <span class="cg-label" id="textWindowLabel" style="flex:none;">Recent text</span>
+                        <input type="number" class="cg-input-sm" id="textSlidingWindow" value="10240" min="1" max="32768" step="1">
+                        <span style="font-size:10px;color:#888;">tok</span>
+                    </div>
+                </div>
+                <div class="cg-row inline" data-tip="Start speaking when the model's speak probability reaches this threshold">
+                    <span class="cg-label" style="flex:none;">Listen/Speak Decision</span>
+                    <input type="checkbox" id="listenSpeakDecisionEnabled" checked>
+                </div>
+                <div class="cg-row inline" data-tip="Start speaking when the model's speak probability reaches this threshold">
+                    <span class="cg-label" style="flex:none;">Speak Threshold</span>
+                    <input type="number" class="cg-input-sm" id="speakThreshold" value="0.3" min="0.01" max="0.99" step="0.01">
+                    <span style="font-size:10px;color:#888;">0–1</span>
                 </div>
             </div>
         </details>
@@ -333,7 +370,7 @@
 <script src="/static/shared/preset-selector.js"></script>
 <script src="/static/shared/save-share.js"></script>
 <script src="/static/shared/client-identity.js"></script>
-<script type="module" src="/static/omni/omni-app.js"></script>
+<script type="module" src="/static/omni/omni-app.js?v=ordinary-v4-20261013"></script>
 <script type="module">
 import { initNav } from '/static/shared/app-nav.js';
 import { t } from '/static/shared/i18n-module.js';
@@ -412,11 +449,19 @@ _rt('omniTtsRefMode', 'extract', t.sameAsLLM);
 _rt('omniTtsRefMode', 'independent', t.independent);
 
 _i18n('#btnMixerToggle', t.mixer);
+_i18n('#slidingWindowModeLabel', t.slidingWindow);
+_i18n('#slidingWindowOffLabel', t.slidingOff);
+_i18n('#slidingWindowBasicLabel', t.slidingBasic);
+_i18n('#slidingWindowKvLabel', t.slidingKv);
+_i18n('#basicHighLabel', t.basicHigh);
+_i18n('#basicLowLabel', t.basicLow);
+_i18n('#kvUnitsLabel', t.keepUnits);
+_i18n('#textSinkLabel', t.textSink);
+_i18n('#textWindowLabel', t.recentText);
 
 document.querySelectorAll('.cg-label').forEach(el => {
     const m = {
-        'Length Penalty': t.lengthPenalty, 'High-Definition Vision': t.hdVision,
-        'Delay': t.delay, 'MaxKV': t.maxKV,
+        'Delay': t.delay, 'MaxKV': t.maxKV, 'Listen/Speak Decision': t.listenSpeakDecision, 'Speak Threshold': t.speakThreshold,
         'Mic': t.mic, 'Speaker': t.speaker,
         'Height': t.height, 'Opacity %': t.opacityPercent,
         'LLM Ref Audio (system prompt)': t.llmRefAudio,
@@ -425,18 +470,33 @@ document.querySelectorAll('.cg-label').forEach(el => {
     if (m[el.textContent.trim()]) el.textContent = m[el.textContent.trim()];
 });
 
-document.querySelectorAll('.lp-preset-btn').forEach(btn => {
-    const lp = btn.dataset.lp, hint = btn.nextElementSibling;
-    if (lp === '1.2') { btn.textContent = t.verbose; if (hint) hint.textContent = t.verboseHint; }
-    else if (lp === '1.1') { btn.textContent = t.balanced; if (hint) hint.textContent = t.balancedHint; }
-    else if (lp === '1.05') { btn.textContent = t.concise; if (hint) hint.textContent = t.conciseHint; }
+const hdModeLabels = {
+    mode: t.hdMode, off: t.hdOff, fixed: t.hdFixed, strategy: t.hdStrategy,
+    fixedSlices: t.hdFixedSlices, strategySlices: t.hdStrategySlices, perUnit: t.hdPerUnit,
+};
+const hdModeLabel = document.querySelector('.omni-hd-mode-row .cg-label');
+if (hdModeLabel && hdModeLabels.mode) hdModeLabel.textContent = hdModeLabels.mode;
+const hdModeSelect = document.getElementById('visionHDMode');
+if (hdModeSelect) {
+    for (const [value, label] of [['off', hdModeLabels.off], ['fixed', hdModeLabels.fixed], ['strategy', hdModeLabels.strategy]]) {
+        const option = hdModeSelect.querySelector(`option[value="${value}"]`);
+        if (option && label) option.textContent = label;
+    }
+}
+const fixedSlicesLabel = document.querySelector('#visionFixedOptions .cg-label');
+const strategySlicesLabel = document.querySelector('#visionStrategyOptions .cg-label');
+if (fixedSlicesLabel && hdModeLabels.fixedSlices) fixedSlicesLabel.textContent = hdModeLabels.fixedSlices;
+if (strategySlicesLabel && hdModeLabels.strategySlices) strategySlicesLabel.textContent = hdModeLabels.strategySlices;
+document.querySelectorAll('.omni-hd-suboption > span:last-child').forEach(el => {
+    if (hdModeLabels.perUnit) el.textContent = hdModeLabels.perUnit;
 });
 
 const _sib = (id, txt) => { const s = document.getElementById(id)?.nextElementSibling; if (s) s.textContent = txt; };
 _sib('playbackDelay', t.ms);
 _sib('maxKvTokens', t.tok);
-const _tokN = document.getElementById('maxKvTokens')?.nextElementSibling;
-if (_tokN?.nextElementSibling) _tokN.nextElementSibling.textContent = t.maxKVHint;
+const _maxKvInput = document.getElementById('maxKvTokens');
+const _tokN = _maxKvInput?.nextElementSibling;
+if (_tokN?.nextElementSibling) _tokN.nextElementSibling.textContent = `≤ ${_maxKvInput.max}`;
 _sib('fsSubHeight', t.percentFromBottom);
 
 const _sp = document.getElementById('systemPrompt');

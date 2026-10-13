@@ -111,6 +111,13 @@ const zh = {
   // vision
   visionSettings: '视觉设置',
   hdVision: '高清视觉',
+  hdMode: '高清模式',
+  hdOff: '关闭',
+  hdFixed: '固定高清',
+  hdStrategy: '策略高清',
+  hdFixedSlices: '固定切片数',
+  hdStrategySlices: 'SPEAK 后续切片数',
+  hdPerUnit: '每 unit',
 
   // other settings
   otherSettings: '其他设置',
@@ -118,7 +125,18 @@ const zh = {
   ms: 'ms',
   maxKV: '最大 KV',
   tok: 'tok',
-  maxKVHint: '≤ 32768',
+  maxKVHint: '≤ 262144',
+  slidingWindow: '滑动窗口策略',
+  slidingOff: '关闭',
+  slidingBasic: 'Basic 滑窗',
+  slidingKv: 'KV surgery 滑窗',
+  basicHigh: '开始裁剪阈值',
+  basicLow: '裁剪后保留',
+  keepUnits: '保留 unit 数',
+  textSink: '前缀文字',
+  recentText: '最近文字',
+  listenSpeakDecision: 'Listen/Speak 决策',
+  speakThreshold: '说话阈值',
 
   // audio devices
   audioDevices: '音频设备',
@@ -312,6 +330,13 @@ const en = {
   // vision
   visionSettings: 'Vision Settings',
   hdVision: 'High-Definition Vision',
+  hdMode: 'HD Mode',
+  hdOff: 'Off',
+  hdFixed: 'Fixed HD',
+  hdStrategy: 'Strategy HD',
+  hdFixedSlices: 'Fixed slices',
+  hdStrategySlices: 'SPEAK follow-up slices',
+  hdPerUnit: 'per unit',
 
   // other settings
   otherSettings: 'Other Settings',
@@ -319,7 +344,18 @@ const en = {
   ms: 'ms',
   maxKV: 'MaxKV',
   tok: 'tok',
-  maxKVHint: '≤ 32768',
+  maxKVHint: '≤ 262144',
+  slidingWindow: 'Sliding Window',
+  slidingOff: 'Off',
+  slidingBasic: 'Basic',
+  slidingKv: 'KV surgery',
+  basicHigh: 'Start pruning above',
+  basicLow: 'Retain down to',
+  keepUnits: 'Keep units',
+  textSink: 'Text sink',
+  recentText: 'Recent text',
+  listenSpeakDecision: 'Listen/Speak Decision',
+  speakThreshold: 'Speak Threshold',
 
   // audio devices
   audioDevices: 'Audio Devices',

@@ -11,8 +11,8 @@ class ExternalO5DuplexConfig(DuplexConfig):
     decode_mode: Literal["greedy", "sampling"] = "sampling"
     sample_rate: Literal[16000] = 16000
     sliding_window_mode: Literal["off", "basic", "context", "kv_surgery"] = "off"
-    basic_window_high_tokens: int = Field(8000, gt=0)
-    basic_window_low_tokens: int = Field(6000, gt=0)
+    basic_window_high_tokens: int = Field(8000, gt=0, le=262144)
+    basic_window_low_tokens: int = Field(6000, gt=0, le=262144)
     context_previous_max_tokens: int = Field(500, ge=0)
     context_max_units: int = Field(24, gt=0)
     text_sink: int = Field(512, ge=0)
@@ -23,3 +23,7 @@ class ExternalO5DuplexConfig(DuplexConfig):
     ls_strict_unit: bool = False
     ls_log_prob: bool = False
     tts_repetition_penalty: float = Field(1.05, ge=1)
+
+    max_slice_nums: int = Field(1, ge=1, le=9)
+    strategy_hd: bool = False
+    strategy_hd_max_slice_nums: int = Field(4, ge=1, le=9)

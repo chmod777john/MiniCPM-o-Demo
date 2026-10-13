@@ -87,6 +87,8 @@ API acceptance must also use the public evaluation entry.
 
 See `docs/external-hf/DEPLOYMENT.md` for concrete three-material paths, environment,
 reference jobs and validation boundaries. `DEMO_EXTERNAL_ACCEPTANCE.md` records
-CPU delivery and subsequent root GPU/API follow-up. Ordinary session options and
-the inactive retained length_penalty control are documented in
-`docs/external-hf/ORDINARY_OPTIONS.md`.
+CPU delivery and subsequent root GPU/API follow-up. Ordinary session options,
+page entries and legacy inactive length_penalty API handling are documented in
+`docs/external-hf/ORDINARY_OPTIONS.md`. The later ordinary page migration is
+recorded separately in `docs/external-hf/ORDINARY_DUPLEX_MIGRATION_20261013.md`;
+that migration has not yet had browser/API/GPU runtime acceptance.

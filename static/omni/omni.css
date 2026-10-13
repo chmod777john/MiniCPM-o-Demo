@@ -41,6 +41,16 @@
     flex: 1;
 }
 
+/* HD mode controls stay compact in the narrow settings panel. */
+.omni-hd-mode-row { flex-wrap: wrap; }
+.omni-hd-mode-select {
+    width: auto !important;
+    min-width: 108px;
+    flex: 0 0 auto;
+}
+.omni-hd-suboption { padding-left: 4px; }
+.omni-hd-suboption .cg-label { min-width: 122px; }
+
 /* ========== Video Container ========== */
 .video-container {
     width: 100%;
@@ -394,36 +404,6 @@ body.video-fullscreen .fullscreen-controls { display: flex; }
     min-width: 28px;
 }
 
-/* ========== Length Penalty Presets ========== */
-.lp-presets {
-    display: flex;
-    gap: 6px;
-}
-.lp-preset-btn {
-    font-size: 11px;
-    font-family: inherit;
-    font-weight: 500;
-    padding: 3px 12px;
-    border: 1px solid #ddd;
-    border-radius: 14px;
-    background: #fafaf7;
-    color: #999;
-    cursor: pointer;
-    transition: all 0.15s ease;
-    line-height: 1.4;
-    white-space: nowrap;
-}
-.lp-preset-btn:hover {
-    background: #f0ede8;
-    color: #555;
-    border-color: #ccc;
-}
-.lp-preset-btn.active {
-    background: #2d2d2d;
-    color: #fff;
-    border-color: #2d2d2d;
-}
-
 /* ========== Mic Waveform Bar ========== */
 .omni-waveform-bar {
     flex: none;
@@ -510,7 +490,83 @@ body {
 }
 
 /* ========== Fullscreen Mobile Responsive ========== */
+.sw-mode-options {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+.sw-mode-option {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 7px;
+    border: 1px solid #e5e5e0;
+    border-radius: 6px;
+    color: #555;
+    font-size: 11px;
+    cursor: pointer;
+}
+.sw-mode-option:has(input:checked) {
+    border-color: #777;
+    background: #f1f1ec;
+    color: #222;
+}
+.sw-mode-option input { margin: 0; }
+.sw-settings {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding-left: 8px;
+    border-left: 2px solid #e5e5e0;
+}
+.sw-settings[hidden] { display: none; }
+
 @media (max-width: 768px) {
+    /* Let the document, rather than an indefinite flex/grid track, own the
+       vertical overflow on phones. Without these overrides the lower
+       settings row can be laid out outside the scrollable area. */
+    html {
+        overflow-x: hidden;
+        overflow-y: auto;
+    }
+    body {
+        display: block;
+        height: auto !important;
+        min-height: 100vh;
+        overflow-x: hidden;
+        overflow-y: auto !important;
+    }
+    .main {
+        grid-template-columns: 1fr;
+        grid-template-rows: auto auto auto;
+        min-height: 0;
+    }
+    .col-left, .col-right {
+        min-height: auto;
+        overflow: visible;
+    }
+    .col-left .row-top,
+    .col-left .row-bottom {
+        flex: none;
+        min-height: auto;
+    }
+    .col-left .row-top .panel-media,
+    .col-left .row-top .panel-mode,
+    .col-left .row-bottom .panel-config,
+    .col-left .row-bottom .panel-status {
+        flex: none;
+    }
+    .col-left .row-top .panel-media {
+        height: 180px;
+    }
+    .panel-config,
+    .panel-status {
+        min-height: auto;
+    }
+    .panel-config {
+        overflow: visible;
+    }
+
     /* Smaller bottom bar on mobile */
     body.video-fullscreen .panel-media {
         bottom: 48px;
