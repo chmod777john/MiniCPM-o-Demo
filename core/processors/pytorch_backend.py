@@ -332,10 +332,17 @@ class PyTorchBackend:
         return response.text, waveform
 
     def set_duplex_config(self, config: Optional[Dict[str, Any]]) -> None:
-        if self.processor is None or not config:
+        if self.processor is None:
+            return
+        configure = getattr(self.processor.model, "configure_duplex_session", None)
+        if not config and configure is None:
             return
         duplex_view = self.processor.set_duplex_mode()
-        duplex_view.config = DuplexConfig(**config)
+        config = config or {}
+        parsed = DuplexConfig(**config)
+        if configure is not None:
+            configure(config)
+        duplex_view.config = parsed
 
     def duplex_prepare(
         self,

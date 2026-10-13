@@ -5,6 +5,8 @@ import logging
 import os
 import tempfile
 import types
+from copy import deepcopy
+from dataclasses import fields, replace
 from enum import Enum
 from typing import Any, Dict, List, Optional
 import numpy as np
@@ -266,6 +268,40 @@ class MiniCPMO(BaseMiniCPMO):
         answer = result[0] if isinstance(result, tuple) else result
         return answer, generated_waveform
 
+    def configure_duplex_session(self, config):
+        """Validate and install external HF options before the retained View prepares."""
+        from core.schemas.external_o5_duplex import ExternalO5DuplexConfig
+        from core.schemas.duplex import DuplexConfig
+        validated = ExternalO5DuplexConfig(**config)
+        options = validated.model_dump(exclude_unset=True)
+        window_class = canonical_module("utils").DuplexWindowConfig
+        window_fields = {field.name for field in fields(window_class)}
+        if not hasattr(self, "_ordinary_window_default"):
+            self._ordinary_window_default = deepcopy(self.duplex.decoder._window_config)
+            self._ordinary_tts_repetition_default = self.duplex.tts_repetition_penalty
+        window = replace(self._ordinary_window_default, **{
+            name: value for name, value in options.items() if name in window_fields
+        })
+        if window.basic_window_low_tokens > window.basic_window_high_tokens:
+            raise ValueError("basic window requires low <= high")
+        # The external HF generator has no length_penalty argument. Do not silently
+        # pretend a non-default request changes inference.
+        if validated.length_penalty != DuplexConfig.model_fields["length_penalty"].default:
+            raise ValueError("External HF ordinary generator does not support length_penalty")
+        self._ordinary_session_options = options
+        self.duplex.decoder.set_window_config(window)
+        self.duplex.decoder.set_window_enabled(window.sliding_window_mode != "off")
+        for name, value in validated.model_dump(include=set(DuplexConfig.model_fields)).items():
+            if hasattr(self.duplex, name):
+                previous = getattr(self.duplex, name)
+                if torch.is_tensor(previous):
+                    value = torch.as_tensor(value, dtype=previous.dtype, device=previous.device).reshape(previous.shape)
+                setattr(self.duplex, name, value)
+        self.duplex.tts_repetition_penalty = options.get(
+            "tts_repetition_penalty", self._ordinary_tts_repetition_default)
+        self.duplex.CHUNK_MS = self.CHUNK_MS = validated.chunk_ms
+        self.duplex.SAMPLE_RATE = self.SAMPLE_RATE = validated.sample_rate
+
     def duplex_prepare(
         self,
         prefix_system_prompt: Optional[str] = None,
@@ -277,13 +313,28 @@ class MiniCPMO(BaseMiniCPMO):
     ):
         if self.duplex is None:
             raise RuntimeError("Duplex is not initialized; call init_unified() first")
-        return self.duplex.prepare(
+        result = self.duplex.prepare(
             prefix_system_prompt=_plain_duplex_system_prompt(prefix_system_prompt),
             ref_audio=ref_audio,
             prompt_wav_path=prompt_wav_path,
             context_previous_marker=context_previous_marker,
             llm_seed=llm_seed,
         )
+        # HF prepare resets the LS policy from the environment. Apply session overrides
+        # afterwards, including the decoder token-ID switch required by binary mode.
+        options = getattr(self, "_ordinary_session_options", {})
+        policy = self.duplex.ls_decision_config
+        changes = {target: options[source] for source, target in (
+            ("ls_decision_mode", "mode"), ("speak_threshold", "speak_threshold"),
+            ("ls_strict_unit", "strict_unit"), ("ls_log_prob", "log_prob"),
+        ) if source in options}
+        if changes.get("mode") == "binary":
+            changes["fix_enabled"] = True
+        self.duplex.set_ls_decision_config(replace(policy, **changes))
+        logger.info("External HF ordinary session: window=%s ls=%s max_speak=%s",
+                    self.duplex.decoder._window_config, self.duplex.ls_decision_config,
+                    self.duplex.max_new_speak_tokens_per_chunk)
+        return result
 
     def duplex_prefill(
         self,
@@ -318,49 +369,29 @@ class MiniCPMO(BaseMiniCPMO):
     ):
         if self.duplex is None:
             raise RuntimeError("Duplex is not initialized; call init_unified() first")
+        options = getattr(self, "_ordinary_session_options", {})
+        values = {
+            "decode_mode": decode_mode,
+            "max_new_speak_tokens_per_chunk": self.duplex.max_new_speak_tokens_per_chunk,
+            "listen_top_k": listen_top_k,
+        }
+        for name, value in (
+            ("temperature", temperature), ("top_k", top_k), ("top_p", top_p),
+            ("listen_prob_scale", listen_prob_scale),
+            ("text_repetition_penalty", text_repetition_penalty),
+            ("text_repetition_window_size", text_repetition_window_size),
+        ):
+            values[name] = value if value is not None else getattr(self.duplex, name)
+        for name in ("ls_decision_mode", "speak_threshold", "ls_strict_unit", "ls_log_prob"):
+            if name in options:
+                values[name] = options[name]
+        old_force = self.duplex.force_listen_count
         if force_listen_override:
-            old_force = self.duplex.force_listen_count
-            old_count = getattr(self.duplex, "_streaming_generate_count", 0)
-            self.duplex.force_listen_count = old_count + 1
-            try:
-                return self.duplex.streaming_generate(
-                    decode_mode=decode_mode,
-                    temperature=temperature if temperature is not None else self.duplex.temperature,
-                    top_k=top_k if top_k is not None else self.duplex.top_k,
-                    top_p=top_p if top_p is not None else self.duplex.top_p,
-                    listen_prob_scale=listen_prob_scale if listen_prob_scale is not None else self.duplex.listen_prob_scale,
-                    listen_top_k=listen_top_k,
-                    text_repetition_penalty=(
-                        text_repetition_penalty
-                        if text_repetition_penalty is not None
-                        else self.duplex.text_repetition_penalty
-                    ),
-                    text_repetition_window_size=(
-                        text_repetition_window_size
-                        if text_repetition_window_size is not None
-                        else self.duplex.text_repetition_window_size
-                    ),
-                )
-            finally:
-                self.duplex.force_listen_count = old_force
-        return self.duplex.streaming_generate(
-            decode_mode=decode_mode,
-            temperature=temperature if temperature is not None else self.duplex.temperature,
-            top_k=top_k if top_k is not None else self.duplex.top_k,
-            top_p=top_p if top_p is not None else self.duplex.top_p,
-            listen_prob_scale=listen_prob_scale if listen_prob_scale is not None else self.duplex.listen_prob_scale,
-            listen_top_k=listen_top_k,
-            text_repetition_penalty=(
-                text_repetition_penalty
-                if text_repetition_penalty is not None
-                else self.duplex.text_repetition_penalty
-            ),
-            text_repetition_window_size=(
-                text_repetition_window_size
-                if text_repetition_window_size is not None
-                else self.duplex.text_repetition_window_size
-            ),
-        )
+            self.duplex.force_listen_count = self.duplex._streaming_generate_count + 1
+        try:
+            return self.duplex.streaming_generate(**values)
+        finally:
+            self.duplex.force_listen_count = old_force
 
     def duplex_finalize(self):
         finalize = getattr(self.duplex, "finalize_unit", None) if self.duplex is not None else None
@@ -386,7 +417,6 @@ class MiniCPMO(BaseMiniCPMO):
         return bool(self.duplex and self.duplex.is_session_stop_set())
 
     # ==================== FC Duplex 透传方法 ====================
-
 
     def _fc_call(self, method, *args, **kwargs):
         if self.fc_duplex is None:

@@ -406,8 +406,7 @@ class BackendProtocolSession:
         if "use_tts" in params:
             config = dict(config)
             config["generate_audio"] = bool(params.get("use_tts"))
-        if config:
-            await asyncio.to_thread(self.backend.set_duplex_config, config)
+        await asyncio.to_thread(self.backend.set_duplex_config, config)
 
         voice = _first_dict(params.get("voice"), params.get("defaults"))
         refs = resolve_duplex_voice_refs(
