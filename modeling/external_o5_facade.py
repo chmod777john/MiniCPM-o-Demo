@@ -4,6 +4,7 @@ import io
 import logging
 import os
 import tempfile
+import types
 from enum import Enum
 from typing import Any, Dict, List, Optional
 import numpy as np
