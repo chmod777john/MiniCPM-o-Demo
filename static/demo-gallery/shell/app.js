@@ -545,12 +545,22 @@ function setupApiEndpoints(defaults) {
     )).join('');
   }
   const saved = globalThis.localStorage?.getItem(API_ENDPOINT_KEY);
-  const initial = saved || defaults.default_api_endpoint || options[0]?.url || '';
+  const fallback = defaults.default_api_endpoint || options[0]?.url || '';
+  const initial = saved || fallback;
   if (el.apiEndpoint) el.apiEndpoint.value = initial;
-  if (initial) selectApiEndpoint(initial);
-  else renderEndpoint('请填写 API 端点地址（https://<host>:<port>/e/<端点名>）');
+  if (!initial) {
+    renderEndpoint('请填写 API 端点地址（https://<host>:<port>/e/<端点名>）');
+    return;
+  }
+  selectApiEndpoint(initial).then((status) => {
+    // 浏览器记住的端点已被删除（404）：回到 Demo 服务配置的默认端点，免得一直连一个不存在的地址。
+    if (status === 404 && saved && fallback && normalizeEndpoint(fallback).base !== normalizeEndpoint(saved).base) {
+      selectApiEndpoint(fallback);
+    }
+  });
 }
 
+/** 选中一个端点并查询 /v1/info；返回 HTTP 状态码（地址不合法或网络失败为 0）。 */
 async function selectApiEndpoint(raw) {
   try {
     apiEndpoint = normalizeEndpoint(raw);
@@ -558,7 +568,7 @@ async function selectApiEndpoint(raw) {
     apiEndpoint = null;
     endpointInfo = null;
     renderEndpoint(err.message);
-    return;
+    return 0;
   }
   globalThis.localStorage?.setItem(API_ENDPOINT_KEY, apiEndpoint.base);
   if (el.apiEndpoint) el.apiEndpoint.value = apiEndpoint.base;
@@ -566,12 +576,19 @@ async function selectApiEndpoint(raw) {
   renderEndpoint('查询端点信息…');
   try {
     const response = await fetch(apiEndpoint.info, { cache: 'no-store' });
+    if (response.status === 404) {
+      endpointInfo = null;
+      renderEndpoint('这个端点不存在（可能已被删除），请换一个端点。');
+      return 404;
+    }
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     endpointInfo = await response.json();
     renderEndpoint();
+    return response.status;
   } catch (err) {
     endpointInfo = null;
     renderEndpoint(`查不到端点信息（${err.message}）。若是自签证书，先在新标签页打开 ${apiEndpoint.info} 并选择继续访问。`);
+    return 0;
   }
 }
 

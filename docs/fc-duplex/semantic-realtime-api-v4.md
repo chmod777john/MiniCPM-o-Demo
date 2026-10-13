@@ -18,9 +18,9 @@ GET <端点>/v1/info
 
 ```json
 {
-  "endpoint": "f9t4",
+  "endpoint": "mergeall",
   "protocol_version": "4",
-  "realtime_path": "/e/f9t4/v1/realtime?mode=audio",
+  "realtime_path": "/e/mergeall/v1/realtime?mode=audio",
   "available_workers": 1,
   "queue_length": 0,
   "workers": [
