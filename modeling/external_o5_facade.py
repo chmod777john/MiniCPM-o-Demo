@@ -147,9 +147,7 @@ class MiniCPMO(BaseMiniCPMO):
             **self._duplex_config,
         )
         self.fc_duplex = canonical_module("fc").attach(
-            self,
-            device=device,
-            **self._fc_duplex_config,
+            self, device=device, **self._fc_duplex_config,
         )
         self._unified_initialized = True
         self.set_mode(ProcessorMode.STREAMING)
@@ -170,17 +168,7 @@ class MiniCPMO(BaseMiniCPMO):
         dynamic: bool = True,
         skip_modules: Optional[List[str]] = None,
     ) -> "MiniCPMO":
-        skip = set(skip_modules or [])
-        compile_kwargs = dict(mode=mode, dynamic=dynamic)
-
-        if hasattr(self, "llm") and "llm.model" not in skip:
-            self.llm.model = torch.compile(self.llm.model, **compile_kwargs)
-        if hasattr(self, "tts") and hasattr(self.tts, "model") and "tts.model" not in skip:
-            self.tts.model = torch.compile(self.tts.model, **compile_kwargs)
-
-        self._compiled = True
-        self._compile_active = True
-        return self
+        raise ValueError("External O5 acceleration is owned by O5_ACCELERATION_PATH; disable compile=True")
 
     def set_compile_enabled(self, enabled: bool) -> None:
         if not getattr(self, "_compiled", False):

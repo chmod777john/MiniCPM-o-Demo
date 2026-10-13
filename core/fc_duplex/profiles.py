@@ -165,7 +165,7 @@ class O5FcDeploymentProfile(_BaseFcDeploymentProfile):
         if self.deployment_mode == "tp2":
             if self.tp_size != 2:
                 raise ValueError("tp2 模式必须使用 tp_size=2")
-            if self.backbone_dir is None:
+            if self.backbone_dir is None and not os.environ.get("O5_CANONICAL_PATH"):
                 raise ValueError("tp2 模式必须提供 backbone_dir")
         elif self.tp_size != 1:
             raise ValueError("O5 单卡模式必须使用 tp_size=1")
@@ -335,6 +335,7 @@ def _validate_profile_paths(profile: FcDeploymentProfile) -> None:
     if (
         isinstance(profile, O5FcDeploymentProfile)
         and profile.deployment_mode == "tp2"
+        and not os.environ.get("O5_CANONICAL_PATH")
     ):
         if profile.backbone_dir is None:
             raise ValueError("tp2 Profile 缺少 backbone_dir")

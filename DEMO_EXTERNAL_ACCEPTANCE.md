@@ -45,3 +45,24 @@ comes from accel. Ordinary and FC continue to share the existing session runtime
 No GPU or service was started by this agent. Root owns checkpoint loading,
 ordinary/FC generation, API v4 audio, accelerator precision and TP/EP GPU checks.
 Vendored modeling stays available for deployments without O5_CANONICAL_PATH.
+
+## Follow-up startup audit
+
+- External compile=True now fails before loading; facade compile entry also
+  fails explicitly. All external acceleration belongs to accel.
+- Parent launcher exports PYTHON as the selected VENV_DIR/bin/python.
+- External FC profiles retain SDK 0.0.6 enforcement and allow tp2 without
+  backbone_dir; profile schema/path validation and start_fc_service agree.
+- CPU profile-without-backbone validation and installed SDK 0.0.6: PASS.
+- SDK registry required rows: 248168. HF ordinary modeling/utils contain no
+  spk_full or resize_token_embeddings call. FC prepare checks trained coverage;
+  HF attach startup check was removed by the HF owner, so both modes attach.
+- T2W facade reuses matching assets/float16/timestep signature. Ordinary duplex
+  construction calls init_tts with matching defaults (10 timesteps); if config
+  deliberately chooses another timestep, it selects a different initializer.
+  FC prepare builds session prompt caches; reset restores its cloned base,
+  and cleanup releases them. Ordinary reset_session clears ordinary prompt
+  cache on mode transitions, preserving the existing lifecycle.
+- Board default training case exists. Tauvoice default training case is absent
+  on this host. EXTERNAL_O5.md includes startup environment and probe entrypoints.
+- py_compile updated modules, bash -n launchers, git diff --check: PASS.

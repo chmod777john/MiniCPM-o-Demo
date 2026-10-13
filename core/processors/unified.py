@@ -3102,6 +3102,8 @@ class UnifiedProcessor(BaseProcessor):
         import os as _os
         _dep_mode = _os.environ.get("O5_DEPLOY_MODE", "single_eager")
         if _dep_mode != "single_eager" or _os.environ.get("O5_CANONICAL_PATH"):
+            if _os.environ.get("O5_CANONICAL_PATH") and self.compile:
+                raise ValueError("External O5 requires compile=False; use O5_ACCELERATION_PATH")
             import core.deploy as _deploy
             _cfg = {
                 "model_path": self.model_path, "pt_path": self.pt_path,
