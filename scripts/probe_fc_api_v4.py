@@ -75,6 +75,7 @@ async def run(args, scenario, trace):
                 if kind == "session.closed":
                     raise RuntimeError(str(event))
                 if kind == "response.tool_call.done":
+                    trace["model_tool_calls"].append(event)
                     call = event.get("tool_call") or event.get("call") or event
                     name = call.get("name") or (call.get("function") or {}).get("name")
                     candidates = [c for c in scenario.expected_tool_calls
@@ -134,7 +135,7 @@ def main():
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--out", type=Path, required=True)
     args = parser.parse_args()
-    trace = {"events": [], "committed_units": [], "autonomous_tool_calls": [],
+    trace = {"events": [], "committed_units": [], "autonomous_tool_calls": [], "model_tool_calls": [],
              "protocol_version": "4", "case": args.case, "sdk_version": version("minicpm-o5-sdk")}
     try:
         scenario = prepare(args)
