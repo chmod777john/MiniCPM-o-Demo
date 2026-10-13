@@ -227,7 +227,7 @@ function renderTemplates(state) {
 function render(state) {
   lastState = state;
   // 菜单展开 / 下拉选择进行中时不重画，免得操作被打断
-  if (document.querySelector('details.more[open]')) return;
+  if (pending || document.querySelector('details.more[open]')) return;
   if (document.activeElement?.tagName === 'SELECT' && document.activeElement.closest('#endpoints')) return;
   renderSummary(state);
   $('#endpoints').innerHTML = state.endpoints.length
@@ -263,8 +263,14 @@ function toast(text, isError = false) {
   toastTimer = setTimeout(() => { el.hidden = true; }, isError ? 6000 : 2500);
 }
 
-async function act(path, init, confirmText, doneText) {
+let pending = 0;                     // 进行中的操作数；> 0 时不重画，免得「处理中」按钮被刷回可点
+
+/** 发一个操作请求。button：触发它的按钮，请求返回前置灰并显示「处理中…」，防止重复点击。 */
+async function act(path, init, confirmText, doneText, button = null) {
   if (confirmText && !window.confirm(confirmText)) return false;
+  const label = button?.textContent;
+  if (button) { button.disabled = true; button.textContent = '处理中…'; }
+  pending += 1;
   try {
     await api(path, init);
     if (doneText) toast(doneText);
@@ -274,6 +280,10 @@ async function act(path, init, confirmText, doneText) {
   } catch (error) {
     toast(error.message, true);
     return false;
+  } finally {
+    pending -= 1;
+    if (button?.isConnected) { button.disabled = false; button.textContent = label; }
+    if (!pending && lastState) render(lastState);
   }
 }
 
@@ -316,17 +326,17 @@ document.addEventListener('toggle', (event) => {
 
 document.addEventListener('click', (event) => {
   const el = event.target.closest('button');
-  if (!el) return;
+  if (!el || el.disabled) return;
   const d = el.dataset;
   if (d.copy) { navigator.clipboard?.writeText(d.copy); toast('已复制'); }
-  if (d.scale) act(`workers/${d.scale}/scale`, { method: 'POST' }, null, '已提交：新 Worker 正在启动');
-  if (d.drain) act(`workers/${d.drain}/drain`, { method: 'POST' }, `驱逐 ${d.drain}？\n\n不再给它派新会话；手上的会话正常结束后自动停掉 job。`, '已开始驱逐');
-  if (d.force) act(`workers/${d.force}/force`, { method: 'POST' }, `强制关闭 ${d.force}？\n\n正在进行的会话会被立刻打断（客户端收到 worker_removed），然后停掉 job。`, '已强制关闭');
+  if (d.scale) act(`workers/${d.scale}/scale`, { method: 'POST' }, null, '已提交：新 Worker 正在启动', el);
+  if (d.drain) act(`workers/${d.drain}/drain`, { method: 'POST' }, `驱逐 ${d.drain}？\n\n不再给它派新会话；手上的会话正常结束后自动停掉 job。`, '已开始驱逐', el);
+  if (d.force) act(`workers/${d.force}/force`, { method: 'POST' }, `强制关闭 ${d.force}？\n\n正在进行的会话会被立刻打断（客户端收到 worker_removed），然后停掉 job。`, '已强制关闭', el);
   if (d.move) act(`workers/${d.move}/move`, { method: 'POST', body: JSON.stringify({ endpoint: d.to }) },
-    `把 ${d.move} 移到端点 ${d.to}？\n\n等它手上的会话结束后切换，job 不重启。`, '已安排移动');
-  if (d.forget) act(`workers/${d.forget}`, { method: 'DELETE' }, null, '已删除记录');
-  if (d.delEndpoint) act(`endpoints/${d.delEndpoint}`, { method: 'DELETE' }, `删除端点 ${d.delEndpoint}？接入地址会立即失效。`, '端点已删除');
-  if (d.delTemplate) act(`templates/${d.delTemplate}`, { method: 'DELETE' }, `删除模板 ${d.delTemplate}？\n\n已起的 Worker 不受影响。`, '模板已删除');
+    `把 ${d.move} 移到端点 ${d.to}？\n\n等它手上的会话结束后切换，job 不重启。`, '已安排移动', el);
+  if (d.forget) act(`workers/${d.forget}`, { method: 'DELETE' }, null, '已删除记录', el);
+  if (d.delEndpoint) act(`endpoints/${d.delEndpoint}`, { method: 'DELETE' }, `删除端点 ${d.delEndpoint}？接入地址会立即失效。`, '端点已删除', el);
+  if (d.delTemplate) act(`templates/${d.delTemplate}`, { method: 'DELETE' }, `删除模板 ${d.delTemplate}？\n\n已起的 Worker 不受影响。`, '模板已删除', el);
   if (d.editTemplate) fillTemplateForm(d.editTemplate);
 });
 
@@ -335,7 +345,7 @@ document.addEventListener('submit', (event) => {
   if (form.dataset.addWorker) {
     event.preventDefault();
     act('workers', { method: 'POST', body: JSON.stringify({ endpoint: form.dataset.addWorker, template: form.elements.template.value }) },
-      null, '已提交：新 Worker 正在启动（2～4 分钟）');
+      null, '已提交：新 Worker 正在启动（2～4 分钟）', event.submitter);
   }
 });
 
@@ -360,7 +370,7 @@ $('#new-endpoint').addEventListener('submit', async (event) => {
   event.preventDefault();
   const form = event.target;
   const ok = await act('endpoints', { method: 'POST', body: JSON.stringify({ name: form.elements.name.value.trim(), description: form.elements.description.value.trim() }) },
-    null, '端点已创建');
+    null, '端点已创建', event.submitter);
   if (ok) form.reset();
 });
 
@@ -369,7 +379,7 @@ $('#template-form').addEventListener('submit', async (event) => {
   const form = event.target;
   const data = Object.fromEntries(new FormData(form).entries());
   for (const key of ['non_spoken_budget_while_listening', 'non_spoken_budget_while_speaking']) data[key] = Number(data[key]);
-  const ok = await act(`templates/${encodeURIComponent(data.name)}`, { method: 'PUT', body: JSON.stringify(data) }, null, '模板已保存');
+  const ok = await act(`templates/${encodeURIComponent(data.name)}`, { method: 'PUT', body: JSON.stringify(data) }, null, '模板已保存', event.submitter);
   if (ok) form.reset();
 });
 

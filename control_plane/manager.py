@@ -30,6 +30,13 @@ from gateway_modules.worker_pool import WorkerPool
 
 logger = logging.getLogger("control_plane")
 
+# 哪些阶段要查 cctl 状态，以及间隔上限（0 = 用常规间隔 job_poll_s）
+_POLL_INTERVALS: Dict[WorkerPhase, float] = {
+    WorkerPhase.QUEUED: 0.0, WorkerPhase.LOADING: 0.0, WorkerPhase.READY: 0.0, WorkerPhase.STOPPING: 15.0,
+}
+# CctlRunner.status 的报错都以它开头；查询失败是瞬时问题，下次查通就清掉
+_POLL_ERROR_PREFIX = "cctl job get"
+
 
 class ControlPlaneError(ValueError):
     """可展示给面板用户的操作错误（参数不对、状态不允许）。"""
@@ -242,8 +249,22 @@ class ControlPlane:
     # ------------------------------------------------------------ 推进
 
     async def tick(self) -> None:
+        # cctl 查询在锁外并发做：Cybertron API 偶尔一次要 10 秒以上，若在锁内逐个查，
+        # 面板上的操作（移动 / 驱逐 / 扩容…）都要排在整轮查询后面，看起来像点了没反应。
+        statuses = await self._fetch_due_job_statuses(time.time())
         async with self._lock:
             now = time.time()
+            for worker_id, result in statuses.items():
+                record = self.state.workers.get(worker_id)
+                if record is None:
+                    continue
+                if isinstance(result, Exception):
+                    record.error = str(result)
+                    logger.warning("worker %s: %s", worker_id, result)
+                else:
+                    record.job_status = result
+                    if record.error and record.error.startswith(_POLL_ERROR_PREFIX):
+                        record.error = None          # 查询失败是瞬时的：下次查通就清掉
             for record in list(self.state.workers.values()):
                 try:
                     await self._advance(record, now)
@@ -251,6 +272,29 @@ class ControlPlane:
                     record.error = str(exc)
                     logger.warning("worker %s: %s", record.worker_id, exc)
             self.store.save()
+
+    async def _fetch_due_job_statuses(self, now: float) -> Dict[str, Any]:
+        """并发查询到期 Worker 的 job 状态；返回 worker_id → 状态字符串或 CctlError。"""
+
+        due: Dict[str, int] = {}
+        for record in list(self.state.workers.values()):
+            if record.phase not in _POLL_INTERVALS or record.job_id is None:
+                continue
+            interval = _POLL_INTERVALS[record.phase]
+            if now < self._next_job_poll.get(record.worker_id, 0.0):
+                continue
+            self._next_job_poll[record.worker_id] = now + min(interval or self.job_poll_s, self.job_poll_s)
+            due[record.worker_id] = record.job_id
+        if not due:
+            return {}
+        results = await asyncio.gather(*(self.jobs.status(job_id) for job_id in due.values()),
+                                       return_exceptions=True)
+        out: Dict[str, Any] = {}
+        for worker_id, result in zip(due, results):
+            if isinstance(result, BaseException) and not isinstance(result, CctlError):
+                result = CctlError(f"{_POLL_ERROR_PREFIX}{result}")
+            out[worker_id] = result
+        return out
 
     async def _advance(self, record: WorkerRecord, now: float) -> None:
         phase = record.phase
@@ -299,13 +343,9 @@ class ControlPlane:
                 record.set_phase(WorkerPhase.FAILED if failed else WorkerPhase.STOPPED, f"job {status}")
 
     async def _poll_job(self, record: WorkerRecord, now: float, interval: Optional[float] = None) -> Optional[str]:
-        if record.job_id is None:
-            return None
-        if now < self._next_job_poll.get(record.worker_id, 0.0):
-            return record.job_status
-        record.job_status = await self.jobs.status(record.job_id)
-        self._next_job_poll[record.worker_id] = now + min(interval or self.job_poll_s, self.job_poll_s)
-        return record.job_status
+        """最近一次查到的 job 状态（查询本身在 tick 开头、锁外并发完成）。"""
+
+        return record.job_status if record.job_id is not None else None
 
     # ------------------------------------------------------------ 内部
 

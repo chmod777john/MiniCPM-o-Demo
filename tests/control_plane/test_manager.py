@@ -32,6 +32,8 @@ class FakeJobs:
         self.stopped: List[int] = []
         self.fail_create: Optional[str] = None      # None / "lost" (报错但其实建出来了) / "error"
         self.create_gate: Optional[asyncio.Event] = None
+        self.status_gate: Optional[asyncio.Event] = None   # 模拟 Cybertron API 很慢
+        self.status_error: Optional[str] = None
 
     async def create(self, *, description: str, entry: str) -> int:
         if self.create_gate is not None:
@@ -46,6 +48,10 @@ class FakeJobs:
         return self.next_id
 
     async def status(self, job_id: int) -> str:
+        if self.status_gate is not None:
+            await self.status_gate.wait()
+        if self.status_error is not None:
+            raise CctlError(self.status_error)
         return self.statuses[job_id]
 
     async def stop(self, job_id: int) -> None:
@@ -266,6 +272,39 @@ async def test_move_idle_worker_switches_endpoint_without_restart(tmp_path: Path
     assert plane.registry.get("alpha").get_worker(wid) is None
     moved = plane.registry.get("beta").get_worker(wid)
     assert moved is not None and not moved.draining
+
+
+@pytest.mark.asyncio
+async def test_slow_cctl_poll_does_not_block_panel_actions(tmp_path: Path) -> None:
+    """后台查 cctl 很慢时，面板操作（这里是移动）不能排在整轮查询后面。"""
+
+    jobs = FakeJobs()
+    plane = await _plane(tmp_path, jobs)
+    wid = await _ready_worker(plane, jobs)
+    await plane.create_endpoint("beta")
+    jobs.status_gate = asyncio.Event()
+    tick = asyncio.create_task(plane.tick())
+    await _settle()
+    assert not tick.done()                                 # 卡在 cctl 查询上
+    record = await asyncio.wait_for(plane.move(wid, "beta"), timeout=1.0)
+    assert record.endpoint == "beta"
+    jobs.status_gate.set()
+    await tick
+    assert plane.state.workers[wid].endpoint == "beta"
+
+
+@pytest.mark.asyncio
+async def test_transient_cctl_poll_error_clears_on_next_success(tmp_path: Path) -> None:
+    jobs = FakeJobs()
+    plane = await _plane(tmp_path, jobs)
+    wid = await _ready_worker(plane, jobs)
+    jobs.status_error = "cctl job get 无 JSON 输出: TLS handshake timeout"
+    await plane.tick()
+    record = plane.state.workers[wid]
+    assert record.error and record.phase == WorkerPhase.READY
+    jobs.status_error = None
+    await plane.tick()
+    assert record.error is None and record.phase == WorkerPhase.READY
 
 
 @pytest.mark.asyncio
