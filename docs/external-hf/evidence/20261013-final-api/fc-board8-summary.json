@@ -1,0 +1,47 @@
+{
+  "committed_units": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7
+  ],
+  "autonomous_tool_calls": [],
+  "model_tool_calls": [],
+  "protocol_version": "4",
+  "case": "/user/weihongliang/o5_fc_assets/board_mvp_20260724/delivery_train_data/dob_midtrain_v1_20260628_animal_seed_ct01_and_04702.json",
+  "sdk_version": "0.0.6",
+  "available_units": 46,
+  "expected_tool_calls": [
+    {
+      "ordinal": 0,
+      "tool_call_id": "dob_midtrain_v1_20260628_animal_seed_ct01_and_04702_call_01",
+      "name": "display_object_on_board",
+      "arguments": {
+        "name": "红外感应相机"
+      },
+      "activation_unit_index": 39
+    }
+  ],
+  "gateway_url": "ws://10.156.16.6:18129/v1/realtime?mode=audio",
+  "tool_results_sent": 0,
+  "pending_tool_results": 0,
+  "downstream_event_counts": {
+    "session.queue_done": 1,
+    "session.created": 1,
+    "response.unit.started": 8,
+    "response.spoken.end": 8,
+    "response.non_spoken.end": 8,
+    "response.unit.committed": 8
+  },
+  "audio_return_bytes": 0,
+  "acceptance": {
+    "all_requested_units_committed": true,
+    "autonomous_fc_and_result_queue": false,
+    "audio_returned": false
+  },
+  "status": "completed"
+}
