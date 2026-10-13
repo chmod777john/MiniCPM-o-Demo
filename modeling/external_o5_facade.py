@@ -136,9 +136,11 @@ class MiniCPMO(BaseMiniCPMO):
             fc_keys = set(self._fc_duplex_config)
             self._fc_duplex_config.update({k: v for k, v in duplex_config.items() if k in fc_keys})
 
+        n_timesteps = getattr(self.config.tts_config, "s3_stream_n_timesteps", 10)
+        self._duplex_config["n_timesteps"] = n_timesteps
         self.init_token2wav(
             streaming=True,
-            n_timesteps=getattr(self.config.tts_config, "s3_stream_n_timesteps", 10),
+            n_timesteps=n_timesteps,
         )
 
         self.duplex = DuplexCapability.from_existing_model(

@@ -58,8 +58,8 @@ Vendored modeling stays available for deployments without O5_CANONICAL_PATH.
   spk_full or resize_token_embeddings call. FC prepare checks trained coverage;
   HF attach startup check was removed by the HF owner, so both modes attach.
 - T2W facade reuses matching assets/float16/timestep signature. Ordinary duplex
-  construction calls init_tts with matching defaults (10 timesteps); if config
-  deliberately chooses another timestep, it selects a different initializer.
+  construction receives the config-selected timestep explicitly so it uses the
+  same initializer signature, including nondefault timestep configurations.
   FC prepare builds session prompt caches; reset restores its cloned base,
   and cleanup releases them. Ordinary reset_session clears ordinary prompt
   cache on mode transitions, preserving the existing lifecycle.
