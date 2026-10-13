@@ -3101,7 +3101,7 @@ class UnifiedProcessor(BaseProcessor):
         # build the ready model (construct + place + init_unified + engine enable) via the framework.
         import os as _os
         _dep_mode = _os.environ.get("O5_DEPLOY_MODE", "single_eager")
-        if _dep_mode != "single_eager":
+        if _dep_mode != "single_eager" or _os.environ.get("O5_CANONICAL_PATH"):
             import core.deploy as _deploy
             _cfg = {
                 "model_path": self.model_path, "pt_path": self.pt_path,
@@ -3284,7 +3284,8 @@ class UnifiedProcessor(BaseProcessor):
         """
 
         if (
-            self.fc_model_family != "o5"
+            os.environ.get("O5_CANONICAL_PATH")
+            or self.fc_model_family != "o5"
             or not self.preload_both_tts
             or not self.ref_audio_path
             or os.environ.get("FC_DUPLEX_STARTUP_WARM", "1") == "0"
@@ -3338,9 +3339,7 @@ class UnifiedProcessor(BaseProcessor):
         Returns:
             ChatView instance.
         """
-        ModelProcessorMode = importlib.import_module(
-            f"modeling.{self.fc_model_family}.modeling_minicpmo_unified"
-        ).ProcessorMode
+        ModelProcessorMode = importlib.import_module(self.model.__class__.__module__).ProcessorMode
 
         if self._current_mode != ProcessorMode.CHAT:
             start = time.time()
@@ -3357,9 +3356,7 @@ class UnifiedProcessor(BaseProcessor):
         Returns:
             HalfDuplexView instance.
         """
-        ModelProcessorMode = importlib.import_module(
-            f"modeling.{self.fc_model_family}.modeling_minicpmo_unified"
-        ).ProcessorMode
+        ModelProcessorMode = importlib.import_module(self.model.__class__.__module__).ProcessorMode
 
         if self._current_mode != ProcessorMode.HALF_DUPLEX:
             start = time.time()
@@ -3376,9 +3373,7 @@ class UnifiedProcessor(BaseProcessor):
         Returns:
             DuplexView instance.
         """
-        ModelProcessorMode = importlib.import_module(
-            f"modeling.{self.fc_model_family}.modeling_minicpmo_unified"
-        ).ProcessorMode
+        ModelProcessorMode = importlib.import_module(self.model.__class__.__module__).ProcessorMode
 
         if self._current_mode != ProcessorMode.DUPLEX:
             start = time.time()

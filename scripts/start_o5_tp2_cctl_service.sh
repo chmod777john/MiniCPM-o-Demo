@@ -2,8 +2,8 @@
 set -euo pipefail
 
 PROJECT_DIR="${PROJECT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
-MODEL_PATH="${MODEL_PATH:-}"
-PT_PATH="${PT_PATH:-}"
+MODEL_PATH="${MODEL_PATH:-${O5_CANONICAL_PATH:-}}"
+PT_PATH="${O5_CHECKPOINT_PATH:-${PT_PATH:-}}"
 BACKBONE_DIR="${BACKBONE_DIR:-${O5_BACKBONE_DIR:-}}"
 VENV_DIR="${VENV_DIR:-${PROJECT_DIR}/.venv}"
 
@@ -42,6 +42,7 @@ export O5_SPMD_HEARTBEAT_INTERVAL
 export TORCHRUN="${VENV_DIR}/bin/torchrun"
 
 PYTHON="${VENV_DIR}/bin/python"
+export PYTHON
 BACKEND_URL="http://${BACKEND_HOST}:${BACKEND_PORT}"
 WORKER_ENDPOINT="${WORKER_HOST}:${WORKER_PORT}"
 GATEWAY_REGISTRY_URL="http://127.0.0.1:${GATEWAY_INTERNAL_PORT}/internal/workers/${WORKER_ID}"
@@ -49,7 +50,7 @@ GATEWAY_REGISTRY_URL="http://127.0.0.1:${GATEWAY_INTERNAL_PORT}/internal/workers
 if [ ! -x "${PYTHON}" ]; then echo "[tp2-start] missing python: ${PYTHON}" >&2; exit 1; fi
 if [ -z "${MODEL_PATH}" ] || [ ! -d "${MODEL_PATH}" ]; then echo "[tp2-start] missing MODEL_PATH=${MODEL_PATH}" >&2; exit 1; fi
 if [ -z "${PT_PATH}" ] || [ ! -f "${PT_PATH}" ]; then echo "[tp2-start] missing PT_PATH=${PT_PATH}" >&2; exit 1; fi
-if [ -z "${BACKBONE_DIR}" ] || [ ! -d "${BACKBONE_DIR}" ]; then echo "[tp2-start] missing BACKBONE_DIR=${BACKBONE_DIR}" >&2; exit 1; fi
+if [ -z "${O5_CANONICAL_PATH:-}" ] && { [ -z "${BACKBONE_DIR}" ] || [ ! -d "${BACKBONE_DIR}" ]; }; then echo "[tp2-start] missing BACKBONE_DIR=${BACKBONE_DIR}" >&2; exit 1; fi
 if [ "${WORKER_ONLY}" = "1" ] && { [ -z "${WORKER_ADVERTISE_HOST}" ] || [ -z "${WORKER_READY_DIR}" ]; }; then
     echo "[tp2-start] WORKER_ONLY=1 requires WORKER_ADVERTISE_HOST and WORKER_READY_DIR" >&2; exit 1
 fi
@@ -78,6 +79,7 @@ wait_http() {
 }
 
 echo "[tp2-start] project=${PROJECT_DIR}"
+echo "[tp2-start] commit=$(git rev-parse HEAD) canonical=${O5_CANONICAL_PATH:-vendored} acceleration=${O5_ACCELERATION_PATH:-none}"
 echo "[tp2-start] model=${MODEL_PATH}"
 echo "[tp2-start] pt=${PT_PATH}"
 echo "[tp2-start] backbone=${BACKBONE_DIR} llm_cache=${O5_LLM_CACHE} spmd_heartbeat=${O5_SPMD_HEARTBEAT_INTERVAL}"

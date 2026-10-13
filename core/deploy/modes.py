@@ -12,6 +12,7 @@ import torch
 
 from .base import DeploymentMode, BuildResult
 from .registry import register_mode
+from core.external_o5 import enabled as external_enabled, canonical_module, checkpoint_path, checkpoint_state
 
 logger = logging.getLogger("deploy.modes")
 
@@ -34,7 +35,10 @@ def _env_flag(name: str, default: bool) -> bool:
 
 # ─────────────────────────── shared helpers ───────────────────────────
 def _mk_config(cfg: Dict[str, Any]):
-    from modeling.o5.configuration_minicpmo import MiniCPMOConfig
+    if external_enabled():
+        MiniCPMOConfig = canonical_module("configuration_minicpmo").MiniCPMOConfig
+    else:
+        from modeling.o5.configuration_minicpmo import MiniCPMOConfig
 
     c = MiniCPMOConfig.from_pretrained(cfg["model_path"])
     c._attn_implementation = cfg.get("attn_implementation", "sdpa")
@@ -45,6 +49,14 @@ def _mk_config(cfg: Dict[str, Any]):
 def _load_o5_processor(model_path: str):
     """只使用仓库内 O5 processor/tokenizer 代码加载外部资产。"""
 
+    if external_enabled():
+        processing = canonical_module("processing_minicpmo")
+        tokenizer_class = canonical_module("tokenization_minicpmo_fast").MiniCPMOTokenizerFast
+        return processing.MiniCPMOProcessor(
+            image_processor=processing.MiniCPMVImageProcessor.from_pretrained(model_path),
+            audio_processor=processing.MiniCPMAAudioProcessor.from_pretrained(model_path),
+            tokenizer=tokenizer_class.from_pretrained(model_path),
+        )
     from modeling.o5.processing_minicpmo import (
         MiniCPMAAudioProcessor,
         MiniCPMOProcessor,
@@ -65,14 +77,12 @@ def _load_o5_processor(model_path: str):
 def _load_full(cfg: Dict[str, Any], device: str):
     """Single-card: build MiniCPMO, load the full .pt, place on `device`, init_unified."""
     from accelerate import init_empty_weights
-    from modeling.o5.modeling_minicpmo_unified import MiniCPMO
+    if external_enabled():
+        from modeling.external_o5_facade import MiniCPMO
+    else:
+        from modeling.o5.modeling_minicpmo_unified import MiniCPMO
     config = _mk_config(cfg)
-    sd = torch.load(
-        cfg["pt_path"],
-        map_location="cpu",
-        weights_only=True,
-        mmap=True,
-    )
+    sd = checkpoint_state(checkpoint_path(cfg))
     checkpoint_vocab_size = _checkpoint_vocab_size(sd)
     configured_vocab_size = int(
         getattr(config, "vocab_size", checkpoint_vocab_size)
@@ -87,8 +97,20 @@ def _load_full(cfg: Dict[str, Any], device: str):
         config.vocab_size = checkpoint_vocab_size
     with init_empty_weights():
         model = MiniCPMO(config)
-    model.load_state_dict(sd, strict=False, assign=True); del sd
-    model.bfloat16().eval().to(device)
+    info = model.load_state_dict(sd, strict=False, assign=True)
+    if external_enabled():
+        unexpected = [key for key in info.unexpected_keys if not key.startswith("llm.mtp.")]
+        if info.missing_keys or unexpected:
+            raise ValueError(f"Checkpoint mismatch: missing={info.missing_keys[:10]}, unexpected={unexpected[:10]}")
+        model._checkpoint_load_report = {"missing": [], "unexpected": [],
+                                         "excluded_training_keys": info.unexpected_keys}
+        for param in model.parameters():
+            if param.is_floating_point():
+                param.data = param.data.to(torch.bfloat16)
+        model.eval().to(device).requires_grad_(False)
+    else:
+        model.bfloat16().eval().to(device)
+    del sd
     model.processor = _load_o5_processor(cfg["model_path"])
     return model
 
@@ -132,10 +154,13 @@ def _surgery_tp(
     from accelerate import init_empty_weights
     from transformers import AutoConfig, AutoModelForCausalLM
     from .llm_wrapper import DistributedTPLLM
-    from modeling.o5.modeling_minicpmo_unified import MiniCPMO
+    if external_enabled():
+        from modeling.external_o5_facade import MiniCPMO
+    else:
+        from modeling.o5.modeling_minicpmo_unified import MiniCPMO
     with init_empty_weights():
         model = MiniCPMO(_mk_config(cfg))
-    sd = torch.load(cfg["pt_path"], map_location="cpu", weights_only=True, mmap=True)
+    sd = checkpoint_state(checkpoint_path(cfg))
     model.load_state_dict({k: v for k, v in sd.items() if not k.startswith("llm.")},
                           strict=False, assign=True); del sd
     model.llm = None
@@ -173,6 +198,25 @@ def _enable_engine(model, *, tp: bool, cfg: Dict[str, Any]):
     """Enable the deployed CUDA-graph optimization engine. Returns an engine-info dict.
     TP synchronization is handled by the LLM/graph runner, not by decoder-level
     sampling synchronization or backend method mirroring."""
+    if external_enabled():
+        if not os.environ.get("O5_ACCELERATION_PATH"):
+            return {"acceleration": "disabled", "tp": 2 if tp else 1}
+        from core.external_o5 import acceleration_module
+        accel = acceleration_module()
+        options = dict(cfg.get("acceleration_config", {}))
+        options.setdefault("hardware", os.environ.get("O5_ACCELERATION_HARDWARE", "auto"))
+        for option, env in (("llm_graph", "O5_LLM_GRAPH"), ("tts_graph", "O5_TTS_GRAPH"),
+                            ("t2w_graph", "O5_VOCODER_GRAPH"), ("compact_logits", "O5_COMPACT_LOGITS"),
+                            ("merge_unit_feed", "CANONICAL_UNIT_PREFILL_BATCH")):
+            options.setdefault(option, _env_flag(env, True))
+        options.setdefault("mode", cfg.get("parallel", "tp") if tp else "single")
+        if tp:
+            owner = int(cfg.get("gpu_id", 0))
+            options.setdefault("devices", (f"cuda:{owner}", f"cuda:{owner + 1}"))
+        else:
+            options.setdefault("devices", (str(next(model.llm.parameters()).device),))
+        accel.attach(model, accel.AccelerationConfig(**options))
+        return {"acceleration": os.environ["O5_ACCELERATION_PATH"], "tp": 2 if tp else 1}
     from modeling.o5.opt_flags import OPT
     # deployed MoE on both paths
     experts_impl = _experts_impl()
@@ -207,6 +251,8 @@ def _enable_engine(model, *, tp: bool, cfg: Dict[str, Any]):
 
 def _enable_vocoder_bucket(model):
     """Pre-capture the dominant vocoder chunk sizes off the serving hot path (call after warmup)."""
+    if external_enabled():
+        return
     try:
         from modeling.o5 import vocoder_graph as vg
         vg.enable_bucketed(model, lambda *a: logger.info("%s", " ".join(str(x) for x in a)), bucket=50)
@@ -218,7 +264,7 @@ def _init_unified(model, cfg: Dict[str, Any]):
     model.init_unified(
         preload_both_tts=cfg.get("preload_both_tts", True),
         duplex_config=cfg.get("duplex_config", _DEFAULT_DUP),
-        device="cuda",
+        device=str(next(model.llm.parameters()).device),
         chat_vocoder=cfg.get("chat_vocoder", "token2wav"),
     )
 
@@ -241,6 +287,28 @@ def build_single_opt(cfg, rank=0, world_size=1) -> BuildResult:
 
 
 def build_tp2(cfg, rank=0, world_size=2) -> BuildResult:
+    if external_enabled():
+        if int(os.environ.get("WORLD_SIZE", "1")) != 1:
+            raise RuntimeError("External O5 TP/EP uses one process; launch without torchrun")
+        if not os.environ.get("O5_ACCELERATION_PATH"):
+            raise RuntimeError("External TP/EP requires O5_ACCELERATION_PATH")
+        cfg = dict(cfg)
+        cfg.setdefault("parallel", os.environ.get("O5_MOE_PARALLEL", "tp").lower())
+        if cfg["parallel"] not in {"tp", "ep"}:
+            raise ValueError("O5_MOE_PARALLEL must be tp or ep")
+        owner = int(cfg.get("gpu_id", 0))
+        torch.cuda.set_device(owner)
+        if owner + 1 >= torch.cuda.device_count():
+            raise RuntimeError("External TP/EP requires two visible GPUs")
+        model = _load_full(cfg, f"cuda:{owner}")
+        from core.external_o5 import acceleration_module
+        acceleration_module()
+        from minicpm_o_accel.llm.initialization_memory import reserve_resize_memory
+        with reserve_resize_memory(model.llm):
+            _init_unified(model, cfg)
+        eng = _enable_engine(model, tp=True, cfg=cfg)
+        eng["mode"] = cfg["parallel"]
+        return BuildResult(model=model, world_size=1, rank=0, is_driver=True, engine=eng)
     import torch.distributed as dist
     from datetime import timedelta
     rank = int(os.environ.get("LOCAL_RANK", os.environ.get("RANK", rank)))
@@ -258,7 +326,7 @@ def build_tp2(cfg, rank=0, world_size=2) -> BuildResult:
     model = _surgery_tp(cfg, dev, rank=rank, world_size=world_size, sync_llm_calls=sync_llm_calls)
     _init_unified(model, cfg)
     eng = _enable_engine(model, tp=True, cfg=cfg); eng["mode"] = "tp2"
-    if llm_graph:
+    if llm_graph and not external_enabled():
         runner = model.duplex.decoder.ensure_llm_graph_runner()
         model._spmd_worker_loop = runner.worker_loop
         model._spmd_shutdown = runner.shutdown_worker
@@ -274,7 +342,7 @@ register_mode(DeploymentMode("single_eager", 1, False, build_single_eager,
                              "1 GPU, trusted eager path (production default)."))
 register_mode(DeploymentMode("single_opt", 1, False, build_single_opt,
                              "1 GPU, CUDA-graph optimization engine (batched_mm + tts/llm/vocoder graphs)."))
-register_mode(DeploymentMode("tp2", 2, True, build_tp2,
+register_mode(DeploymentMode("tp2", 1 if external_enabled() else 2, not external_enabled(), build_tp2,
                              "2 GPU tensor-parallel backbone with LLM/graph-boundary SPMD synchronization."))
-register_mode(DeploymentMode("tp2_llm", 2, True, build_tp2,
+register_mode(DeploymentMode("tp2_llm", 1 if external_enabled() else 2, not external_enabled(), build_tp2,
                              "Alias for tp2."))

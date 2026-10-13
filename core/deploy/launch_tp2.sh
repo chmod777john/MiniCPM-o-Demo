@@ -8,6 +8,10 @@
 #          (2) config.json: model.deployment_mode="tp2", model.backbone_dir, model.llm_cache_len.
 set -eo pipefail
 export O5_DEPLOY_MODE=${O5_DEPLOY_MODE:-tp2}
+if [ -n "${O5_CANONICAL_PATH:-}" ]; then
+    PYTHON=${PYTHON:-python}
+    exec "$PYTHON" -m py_backend.server "$@"
+fi
 export O5_BACKBONE_DIR=${O5_BACKBONE_DIR:?set to the extracted HF backbone dir}
 export O5_LLM_CACHE=${O5_LLM_CACHE:-32768}
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
