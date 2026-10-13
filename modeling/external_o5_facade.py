@@ -48,8 +48,8 @@ def _load_pt_state_dict(path):
 
 def _plain_duplex_system_prompt(prefix):
     text = prefix or "Streaming Omni Conversation."
-    if text.startswith("<|im_start|>system\\n"):
-        text = text[len("<|im_start|>system\\n"):]
+    if text.startswith("<|im_start|>system\n"):
+        text = text[len("<|im_start|>system\n"):]
     for marker in ("<|audio_start|>", "<|audio_end|>", "<|im_end|>"):
         text = text.replace(marker, "")
     return text.strip()
