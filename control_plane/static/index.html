@@ -37,11 +37,11 @@
       <details class="new-box" data-key="new-endpoint">
         <summary>＋ 新建端点</summary>
         <form id="new-endpoint" class="form-row">
-          <label>端点名<input name="name" required pattern="[a-z0-9][a-z0-9\-]{0,39}" placeholder="例如 f9t4"></label>
+          <label>端点名<input name="name" required pattern="[a-z0-9][a-z0-9\-]{0,39}" title="只能用小写字母、数字、连字符，以字母或数字开头，最多 40 位（例如 mergeall-300）" placeholder="例如 f9t4"></label>
           <label class="grow">说明（可选）<input name="description" placeholder="例如 Family 9 / T4 rejection iter_2000"></label>
           <button type="submit" class="primary">创建</button>
         </form>
-        <p class="hint">端点名会出现在接入地址里：小写字母、数字、连字符。</p>
+        <p class="hint">端点名会出现在接入地址里：只能用小写字母、数字、连字符，以字母或数字开头，最多 40 位。</p>
       </details>
     </section>
 
@@ -54,7 +54,7 @@
       <details id="template-editor" class="new-box" data-key="template-editor">
         <summary>＋ 新建 / 编辑模板</summary>
         <form id="template-form" class="grid">
-          <label>模板名<input name="name" required pattern="[a-z0-9][a-z0-9\-]{0,47}" placeholder="f9t4-rejection-iter2000"></label>
+          <label>模板名<input name="name" required pattern="[a-z0-9][a-z0-9\-]{0,47}" title="只能用小写字母、数字、连字符，以字母或数字开头，最多 48 位" placeholder="f9t4-rejection-iter2000"></label>
           <label class="wide">checkpoint 目录（含 model.pt 与 backbone/）<input name="model_dir" required placeholder="/backup/user/.../iter_0002000"></label>
           <p class="wide hint">下面几项只是<b>默认值</b>：调用方创建 Session 时没传才用它们，传了就以调用方为准。</p>
           <label>默认 tts_pad
