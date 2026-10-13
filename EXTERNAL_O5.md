@@ -82,3 +82,11 @@ selected evaluation profile's API version and audio options before claiming
 API v4 coverage.
 Backend board/tauvoice probes exercise the backend WebSocket protocol; public
 API acceptance must also use the public evaluation entry.
+
+## Updated acceptance and deployment
+
+See `docs/external-hf/DEPLOYMENT.md` for concrete three-material paths, environment,
+reference jobs and validation boundaries. `DEMO_EXTERNAL_ACCEPTANCE.md` records
+CPU delivery and subsequent root GPU/API follow-up. Ordinary session options and
+the inactive retained length_penalty control are documented in
+`docs/external-hf/ORDINARY_OPTIONS.md`.

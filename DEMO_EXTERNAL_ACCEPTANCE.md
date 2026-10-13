@@ -66,3 +66,15 @@ Vendored modeling stays available for deployments without O5_CANONICAL_PATH.
 - Board default training case exists. Tauvoice default training case is absent
   on this host. EXTERNAL_O5.md includes startup environment and probe entrypoints.
 - py_compile updated modules, bash -n launchers, git diff --check: PASS.
+
+## Root integration follow-up
+
+GPU/API evidence now exists under `docs/external-hf/evidence/`:
+allmerge ordinary/FC/ordinary sequence; FC checkpoint basic-1 real model tools
+and response queue; ordinary API basic window/LS settings and next-session reset.
+Independent module gates live in HF `fc/validation/evidence/20261013-initial-fc`
+and accel `docs/evidence/20261013-o5fc-ordinary` (native/TP fixed inputs).
+The earlier "Remaining validation" section describes the subagent's delivery
+boundary, not current root results. Root final scope/report is linked in
+`docs/external-hf/DEPLOYMENT.md`. EP/single, full quality and 64K/128K are not
+claimed by the current short-case TP evidence.
