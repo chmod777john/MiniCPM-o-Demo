@@ -1,0 +1,7 @@
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE}
+# application-refresh.tar is a Git archive of the explicit paths in release manifest.
+RUN --mount=type=bind,source=application-refresh.tar,target=/application-refresh.tar,readonly \
+    tar -xf /application-refresh.tar -C /opt/o5/demo
+COPY docker/external-hf/ /opt/o5/package/
+COPY release-input-manifest.json /opt/o5/release-input-manifest.json

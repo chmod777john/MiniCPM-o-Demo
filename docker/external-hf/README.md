@@ -69,3 +69,5 @@ python3 docker/external-hf/start_tp2.py --engine docker --sudo \
 ```
 
 For the Pro5000 host, `docker` is a rootless Podman compatibility wrapper. Use `--engine podman` without `--sudo`, and set `CONTAINERS_CONF` to the task-local configuration pointing at generated NVIDIA CDI metadata. No global runtime configuration changes are required by this package. Device injection and actual GPU startup remain pending until two GPUs are free.
+
+`Dockerfile.app-overlay` refreshes explicit committed application paths atop the immutable accepted image. The release manifest must enumerate the inherited application source, patch source/paths and actual file hashes; never relabel old native API evidence as a run of the new application layer.
