@@ -3325,7 +3325,7 @@ function App() {
   const messagesRef = useRef<ConversationEntry[]>([])
   const streamingWsRef = useRef<WebSocket | null>(null)
   const streamingPlayerRef = useRef<StreamingPcmPlayer | null>(null)
-  const streamingStopRef = useRef<(() => void) | null>(null)
+  const streamingStopRef = useRef<((options?: { unmount?: boolean }) => void) | null>(null)
   const threadEndRef = useRef<HTMLDivElement | null>(null)
   const threadWrapRef = useRef<HTMLDivElement | null>(null)
 
@@ -3879,9 +3879,12 @@ function App() {
 
   useEffect(() => {
     return () => {
-      streamingStopRef.current?.()
-      streamingWsRef.current?.close()
-      void streamingPlayerRef.current?.dispose()
+      const stop = streamingStopRef.current
+      if (stop) stop({ unmount: true })
+      else streamingWsRef.current?.close()
+      const player = streamingPlayerRef.current
+      streamingPlayerRef.current = null
+      void player?.dispose()
       clearIdleColdDownTimer()
       coldDownMic()
 
@@ -4873,10 +4876,22 @@ function App() {
     let receivedAnyData = false
     let currentWs: WebSocket | null = null
     let retryTimer: ReturnType<typeof setTimeout> | null = null
+    let cancelCloseTimer: ReturnType<typeof setTimeout> | null = null
+    let sessionCreated = false
+
+    const closeCancelledSocket = () => {
+      if (cancelCloseTimer !== null) {
+        clearTimeout(cancelCloseTimer)
+        cancelCloseTimer = null
+      }
+      if (currentWs && currentWs.readyState < WebSocket.CLOSING) {
+        try { currentWs.close() } catch { /* already closing */ }
+      }
+    }
 
     const finalize = (
       entry: ConversationEntry | null,
-      options: { errorMessage?: string; cutPlayback?: boolean } = {},
+      options: { errorMessage?: string; cutPlayback?: boolean; skipUi?: boolean } = {},
     ) => {
       if (finished) {
         return
@@ -4888,13 +4903,13 @@ function App() {
         retryTimer = null
       }
 
-      const { errorMessage, cutPlayback = false } = options
+      const { errorMessage, cutPlayback = false, skipUi = false } = options
 
       let resolvedEntry = entry
 
       const finalPlayer = player
       if (player) {
-        const merged = player.getMergedFloat32()
+        const merged = resolvedEntry ? player.getMergedFloat32() : null
         let mergedUrl: string | null = null
         let mergedBase64: string | null = null
         if (merged && merged.length > 0) {
@@ -4925,16 +4940,22 @@ function App() {
 
         if (cutPlayback) {
           void player.dispose()
-          setIsStreamAudioPlaying(false)
+          if (!skipUi) setIsStreamAudioPlaying(false)
         } else {
           player.markFinished()
-          setIsStreamAudioPlaying(true)
-          player.disposeAfterDrain(() => setIsStreamAudioPlaying(false))
+          if (!skipUi) setIsStreamAudioPlaying(true)
+          const drainingPlayer = player
+          player.disposeAfterDrain(() => {
+            if (streamingPlayerRef.current === drainingPlayer) {
+              streamingPlayerRef.current = null
+              if (!skipUi) setIsStreamAudioPlaying(false)
+            }
+          })
         }
         player = null
       }
 
-      if (isStillActive()) {
+      if (!skipUi && isStillActive()) {
         if (resolvedEntry) {
           setMessages([...nextMessages, resolvedEntry])
         } else if (errorMessage && !stoppedByUser) {
@@ -4951,7 +4972,7 @@ function App() {
         }
         setPendingReply(null)
         setIsGenerating(false)
-      } else if (resolvedEntry && resolvedEntry.kind === 'assistant') {
+      } else if (!skipUi && resolvedEntry && resolvedEntry.kind === 'assistant') {
         // User switched away from this session before the reply finished.
         // Save what we got back into the originating session so they can
         // come back to it instead of losing the partial response.
@@ -4969,7 +4990,7 @@ function App() {
         streamingWsRef.current = null
       }
 
-      if (streamingPlayerRef.current === finalPlayer) {
+      if (cutPlayback && streamingPlayerRef.current === finalPlayer) {
         streamingPlayerRef.current = null
       }
 
@@ -4978,18 +4999,29 @@ function App() {
       }
     }
 
-    streamingStopRef.current = () => {
+    streamingStopRef.current = ({ unmount = false } = {}) => {
+      if (finished || stoppedByUser) return
       stoppedByUser = true
-      if (retryTimer !== null) {
-        clearTimeout(retryTimer)
-        retryTimer = null
-      }
-      if (currentWs) {
+      // Finish locally now: playback/UI must not wait for the release ACK.
+      // Switching sessions persists the partial result in its original session.
+      finalize(unmount ? null : {
+        id: createId('assistant'),
+        role: 'assistant',
+        kind: 'assistant',
+        text: fullText.trim() || i18n.stoppedReply,
+        interrupted: true,
+        audioPreviewUrl: null,
+        recordingSessionId: null,
+      }, { cutPlayback: true, skipUi: unmount })
+
+      if (sessionCreated && currentWs?.readyState === WebSocket.OPEN) {
+        // Give the gateway a bounded chance to release the worker gracefully.
+        cancelCloseTimer = setTimeout(closeCancelledSocket, 1500)
         try {
-          currentWs.close()
-        } catch {
-          /* ignore */
-        }
+          currentWs.send(JSON.stringify({ type: 'session.close', reason: 'client_cancel' }))
+        } catch { closeCancelledSocket() }
+      } else {
+        closeCancelledSocket()
       }
     }
 
@@ -5011,6 +5043,8 @@ function App() {
       }
 
       currentWs = ws
+      sessionCreated = false
+      let initSent = false
       streamingWsRef.current = ws
 
       const sendWs = (payload: unknown) => {
@@ -5038,7 +5072,19 @@ function App() {
           return
         }
 
+        if (ws !== currentWs) return
+        if (stoppedByUser) {
+          if (msg.type === 'session.closed') closeCancelledSocket()
+          return
+        }
+        if (finished) {
+          if (msg.type === 'session.closed') ws.close()
+          return
+        }
+
         if (msg.type === 'session.queue_done') {
+          if (initSent) return
+          initSent = true
           try {
             sendWs({ type: 'session.init', payload: {} })
           } catch (error) {
@@ -5056,6 +5102,8 @@ function App() {
         }
 
         if (msg.type === 'session.created') {
+          if (sessionCreated) return
+          sessionCreated = true
           try {
             sendWs({ type: 'input.append', input: requestPayload })
           } catch (error) {
@@ -5199,24 +5247,12 @@ function App() {
       }
 
       ws.onclose = () => {
-        if (finished) {
-          return
+        if (ws !== currentWs) return
+        if (cancelCloseTimer !== null) {
+          clearTimeout(cancelCloseTimer)
+          cancelCloseTimer = null
         }
-
-        if (stoppedByUser) {
-          finalize(
-            {
-              id: createId('assistant'),
-              role: 'assistant',
-              kind: 'assistant',
-              text: fullText.trim() || i18n.stoppedReply,
-              audioPreviewUrl: null,
-              recordingSessionId: null,
-            },
-            { cutPlayback: true },
-          )
-          return
-        }
+        if (finished || stoppedByUser) return
 
         if (!receivedAnyData) {
           scheduleRetryOrFail(attempt, i18n.wsError)
