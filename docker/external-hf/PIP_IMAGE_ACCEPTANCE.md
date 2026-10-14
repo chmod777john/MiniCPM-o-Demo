@@ -1,10 +1,10 @@
-# 2026-10-14 pip/wheel 镜像构建与 CPU 验收
+# 2026-10-14 pip/wheel 镜像构建与 Pro5000 GPU/API 验收
 
 ## 范围
 
 本次把历史 site-packages 快照安装改成原始 wheel / 固定源码构建 wheel 的真实 pip 安装。137 个 Python distribution 在镜像全新 `/opt/o5/.venv` 中使用 `--no-index --no-deps --require-hashes` 安装；248 个系统包使用带签名索引及固定 SHA 的原始 Debian 包离线 apt 安装。
 
-镜像构建于37节点的专用4CPU/16GiB BuildKit Pod，无GPU。没有更改同事Pod或宿主runtime，没有推送registry或部署LIS。
+镜像构建于37节点的专用4CPU/16GiB BuildKit Pod。构建完成后按用户新授权正常关闭指定旧8GPU Pod，再使用独立2GPU运行真实新镜像验收；模型数据和其他任务保持，宿主runtime未改。临时loopback只读镜像源由kubelet正常CRI拉取，无外部registry推送或LIS部署。
 
 ## 固定代码身份
 
@@ -35,7 +35,7 @@
   o5-external-hf-gateway-pip-20261014.docker.tar
 ```
 
-四个OCI/Docker归档均已完整备份共享存储并通过全SHA和各blob校验：`/user/weihongliang/analysis-runs/20261014-docker-pip-install/`。Docker格式与OCI格式的manifest媒体类型/digest不同，config/image ID与层内容保持；Docker格式可供`docker load`，本轮尚未在GPU运行时load执行。
+四个OCI/Docker归档均已完整备份共享存储并通过全SHA和各blob校验：`/user/weihongliang/analysis-runs/20261014-docker-pip-install/`。Docker格式与OCI格式的manifest媒体类型/digest不同，config/image ID与层内容保持；Docker格式可供`docker load`；本轮实际GPU验收使用正常containerd/CRI按固定OCI digest拉取运行，没有使用Docker load路径。
 
 | OCI归档 | 大小（bytes） | 完整 SHA256 |
 | --- | ---: | --- |
@@ -68,9 +68,20 @@ decord 0.6.0 is not supported on this platform
 
 第一项维持已验版本组合；第二项来自官方decord wheel文件名`py3-none`但内部WHEEL残留`cp36-cp36m`。原wheel与元数据都未修改；固定WHEEL/native SHA，并实测ctypes读取4帧32x32视频与ffmpeg RGB逐像素相等。这个测试不覆盖所有视频编码。
 
+## Pro5000 GPU/API已通过范围
+
+- 实际Pro5000 72GB双卡Pod内，新native与旧reference分别独立进程运行，17项输出全部逐位一致：FA2、causal-conv1d及dense causal。
+- TP2原始checkpoint加载、grouped扩展编译、既有加速开关和20秒注册刷新正常。
+- 单工12/12请求，包含文本/语音流与非流、图片、真实视频解码和输入音频，返回PCM有限非零。
+- 普通双工初始音频2+视频2 unit通过；补充说话各12unit全部finalized并有有效PCM。后端wall_clock音频p50/max567.05/608.8ms、视频650.7/698.3ms，均0/12超过1秒。
+- FC录制basic1 8/8unit，通过3次实际工具调用/3份fixture回送/2份后续消费；5个PCM片段。客户端unit最大1017.86ms，无错误。
+- 上述模式后单工text/audio2/2再次通过。自己的GPU Pod和loopback registry已正常删除，资源交还root；BuildKit保留。
+
+详细证据见`docs/external-hf/pip-image-20261014/pro37-gpu/`。API是录制fixture及有限场景功能/媒体验收，未调用外部工具服务。
+
 ## 尚未覆盖
 
-新镜像的GPU算子新旧A/B、TP2真实模型API、Pro5000性能和完整音视频媒体回归尚未运行。旧镜像的GPU/API结果不能继承为这版验收。37尚未交接GPU；后续由root协调。
+本轮未新增64k/128k、全部hardcase、长时滑窗、完整模型hidden逐层paired精度或模型质量评测。普通说话KV最大2863，不能外推为所有工况实时；单工视频首次请求12.426s含cold执行/编译，非双工unit时延。公开registry/LIS部署仍待授权。
 
 ## 模型文件传输
 
@@ -79,7 +90,7 @@ decord 0.6.0 is not supported on this platform
 - `model.pt`：74606011097 bytes，完整SHA256 `0789c953677dc8ea71b6085543e1a946ae64bddecd2f6b911ac6380376ef01ff`。139分块已验，最终整文件SHA通过后原子命名，传输进程已退出，`.part`及锁已清。
 - `token2wav_causal_vocoder/`：8个原始文件逐SHA通过。
 
-最终证据见`checkpoint-transfer-result.json`、`checkpoint-final-state.json`和`vocoder-transfer-result.json`。这证明文件传输完整，不代替GPU模型加载验收。
+最终证据见`checkpoint-transfer-result.json`、`checkpoint-final-state.json`和`vocoder-transfer-result.json`。文件传输与随后本节列出的实际GPU模型加载分别有证据。
 
 ## 证据
 

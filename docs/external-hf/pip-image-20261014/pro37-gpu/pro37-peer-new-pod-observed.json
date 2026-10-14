@@ -1,0 +1,9 @@
+{
+  "uid": "adb1297f-c4ef-4de9-8756-19e4f0e2ee39",
+  "created": "2026-10-14T13:31:41Z",
+  "ownerReferences": [],
+  "gpu_limits": [
+    "6"
+  ],
+  "phase": "Pending"
+}

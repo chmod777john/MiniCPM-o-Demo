@@ -1,0 +1,138 @@
+{
+  "passed": true,
+  "archive_bytes": 39557120,
+  "archive_sha256": "4297806c560934d8603f858272a8229f685630cea9401cbdf3f9be213f1c0b38",
+  "ordinary_metrics": {
+    "mobile_video_basic_12unit_speech.events": {
+      "units": 12,
+      "metrics_scope": "per-unit backend report; excludes client queue/network, wall_clock_ms from output delta and finalize separate",
+      "wall_clock_ms": {
+        "n": 12,
+        "min": 393.9,
+        "p50": 650.7,
+        "max": 698.3
+      },
+      "prefill_ms": {
+        "n": 12,
+        "min": 292.9,
+        "p50": 302.45000000000005,
+        "max": 308.4
+      },
+      "generate_ms": {
+        "n": 12,
+        "min": 86.62629127502441,
+        "p50": 349.79963302612305,
+        "max": 393.25976371765137
+      },
+      "cost_llm_ms": {
+        "n": 12,
+        "min": 73.5630989074707,
+        "p50": 96.89009189605713,
+        "max": 150.70772171020508
+      },
+      "cost_tts_ms": {
+        "n": 12,
+        "min": 12.584209442138672,
+        "p50": 68.3138370513916,
+        "max": 72.08037376403809
+      },
+      "cost_token2wav_ms": {
+        "n": 12,
+        "min": 0.30922889709472656,
+        "p50": 175.26841163635254,
+        "max": 199.88441467285156
+      },
+      "kv_cache_length": {
+        "n": 12,
+        "min": 316,
+        "p50": 1588.5,
+        "max": 2863
+      },
+      "n_tokens": {
+        "n": 12,
+        "min": 1,
+        "p50": 2.5,
+        "max": 6
+      },
+      "n_tts_tokens": {
+        "n": 12,
+        "min": 0,
+        "p50": 24.5,
+        "max": 25
+      },
+      "gt_1000ms": 0,
+      "gt_1300ms": 0,
+      "audio_chunks": 11,
+      "audio_samples": 229440,
+      "audio_max_abs": 0.49365234375
+    },
+    "mobile_audio_basic_12unit_speech.events": {
+      "units": 12,
+      "metrics_scope": "per-unit backend report; excludes client queue/network, wall_clock_ms from output delta and finalize separate",
+      "wall_clock_ms": {
+        "n": 12,
+        "min": 491.4,
+        "p50": 567.05,
+        "max": 608.8
+      },
+      "prefill_ms": {
+        "n": 12,
+        "min": 193.3,
+        "p50": 198.85,
+        "max": 201.3
+      },
+      "generate_ms": {
+        "n": 12,
+        "min": 291.8565273284912,
+        "p50": 368.7865734100342,
+        "max": 410.42613983154297
+      },
+      "cost_llm_ms": {
+        "n": 12,
+        "min": 73.3177661895752,
+        "p50": 104.12907600402832,
+        "max": 134.25707817077637
+      },
+      "cost_tts_ms": {
+        "n": 12,
+        "min": 40.22336006164551,
+        "p50": 71.67863845825195,
+        "max": 143.73421669006348
+      },
+      "cost_token2wav_ms": {
+        "n": 12,
+        "min": 170.06206512451172,
+        "p50": 191.90573692321777,
+        "max": 195.5101490020752
+      },
+      "kv_cache_length": {
+        "n": 12,
+        "min": 107,
+        "p50": 220.5,
+        "max": 334
+      },
+      "n_tokens": {
+        "n": 12,
+        "min": 1,
+        "p50": 3.0,
+        "max": 5
+      },
+      "n_tts_tokens": {
+        "n": 12,
+        "min": 12,
+        "p50": 25.0,
+        "max": 25
+      },
+      "gt_1000ms": 0,
+      "gt_1300ms": 0,
+      "audio_chunks": 12,
+      "audio_samples": 285120,
+      "audio_max_abs": 0.65032958984375
+    }
+  },
+  "fc_audio": {
+    "chunks": 5,
+    "samples": 104640,
+    "finite_nonzero": true
+  }
+}

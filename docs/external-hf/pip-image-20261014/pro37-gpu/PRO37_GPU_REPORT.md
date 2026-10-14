@@ -37,3 +37,33 @@ Native初次尝试未触及GPU输出：capabilities.drop=ALL使容器root不能�
 ## TP2模型加载与注册通过
 
 原image entrypoint正常启动backend/worker，model.pt加载成功；TP2/pro5000各加速开关均为既有固定配置（LLM/TTS/vocoder graph、merge-unit、retained KV等），启动grouped C++扩展在真实容器成功编译加载。2026-10-14 13:24 UTC backend和worker均health200并按20s幂等刷新向gateway注册成功。模型启动约92s，包括49.94s warmup。开始同历史脚本的12个单工API请求；未改推理实现。
+
+阶段证据已提交ec25e651（docs-only），镜像build仍79177c66。单工探针第一次在客户端读/opt/o5/hf/assets/system_ref_audio.wav时失败，尚未发API：该历史参考音频为本地未跟踪测试输入，不在HF git archive中。只将同源539032B/SHA2c4109b2…参考音频传到/validation/probes并改探针绝对路径，镜像/模型代码不动；重新执行原12个case。
+
+## 单工真实API 12/12通过
+
+实际新镜像Pro5000 TP2，经gateway /v1/realtime?mode=chat：文本流/非流、语音流/非流、history、高清图像、输入语音、cap1语音、视频+音频流/非流、长语音、thinking文本共12/12通过。语音PCM finite/nonzero、文本颜色/history检查通过。视频路径实际解码decord已触达。首个video_audio_stream请求12.426s（含首次运行/cold compile，非unit指标），随后video非流1.537s；不能把整请求耗时和双工1s unit混用。thinking case是48tok上限功能冒烟，输出仍为思考内容且截断，非模型质量结论。summary见pro37-simplex-summary.json，完整事件/音频在37 /validation/api-simplex。继续普通双工与FC。
+
+FC探针首次在客户端SDK payload转换时缺历史fixture绝对路径HTRef06.wav，尚未发API。复制该原始参考音频到独立探针目录（不替换内容），只重映射file_path再用原v4 converter。普通双工2+2unit全部过但均force-listen，补充12+12unit、force_listen_count=0/speak_threshold=0以实际覆盖说话/TTS/vocoder，不把listen-only当说话覆盖。
+
+## FC真实API通过
+
+官方v4转换后的历史basic-1录制fixture，8/8units committed；真实模型发get_client_location/amap_weather/show_card三次工具调用，回送3份fixture结果、其中2份在停止前被后续unit消费，5个语音delta，errors为空，FC_API_PROBE_DONE。每unit客户端提交到commit耗时0.200～1.018s，此为这8unit范围，非所有hardcase/64k保证。工具结果来自录制fixture，没有对外调用真实天气服务。输出pro37-fc-summary.json及完整events/PCM。
+
+更正：前段沿用历史措辞写5个语音delta不准确；本轮pro37-fc-summary.json实际response.spoken.delta=9，以原始JSON为准。
+
+普通说话补充探针请求speak_threshold=0被公开Pydantic范围(gt0)正确拒绝，未推理。读接口后改为合法1e-6保持近似强制说话覆盖；保留两次session.closed/backend_error记录，不改API校验或模型代码。
+
+普通说话补充r2实际24/24 unit正常完成且返回audio/text，但新增客户端断言误把kind=speak当协议；实际v4是kind=audio。属于探针检查错误，原事件明确有PCM，保留r2失败记录。按实际schema改检查audio+PCM finite/nonzero，随后重跑到独立r3输出目录；不改服务。
+
+## 普通双工说话与跨模式回归通过
+
+合法配置force_listen_count0、speak_threshold1e-6进行功能覆盖；音频12/12/video12/12 finalized，audio分别12/11 chunks，PCM finite/nonzero。backend wall_clock_ms音频p50=567.05/max608.8，视频p50=650.7/max698.3，均0/12>1s；音频KV107～334、视频KV316～2863，basic8k/6k未触发滑窗，不扩展为长上下文性能。prefill音频p50=198.85ms、视频302.45ms；此为backend整prefill含媒体，不是纯LLM token曲线。
+
+FC结束与普通双工说话结束后再跑单工text/audio两请求均通过，验证同一checkpoint同进程跨模式恢复。FC事件9个spoken.delta，其中5个携带PCM，总104640 samples finite/nonzero。完整汇总pro37-gpu-api-summary.json。最终原始事件/音频/native输出39,557,120B归档，SHA4297806c560934d8603f858272a8229f685630cea9401cbdf3f9be213f1c0b38，正在回传共享目录。
+
+## GPU/临时服务正常释放
+
+按root确认，UID限定正常删除自己的validation Pod和loopback registry；backend259/worker405日志明确Application shutdown complete/Finished server process，两个Pod均list不存在。本任务GPU配额已释放，没有新GPU或模型服务。BuildKit仍保留root管理。
+
+最终list发现同名dev-8gpu-37已由他方重新创建，UID与先前授权关闭的cffaf7f3…不同，现申请6GPU；只记录，绝不继续删除/进入/干预。原授权只针对旧UID。详情pro37-peer-new-pod-observed.json。
