@@ -42,10 +42,12 @@ export GATEWAY_HOST=0.0.0.0 GATEWAY_PORT=18141 GATEWAY_INTERNAL_PORT=18142 GATEW
 export ENABLE_FRP=0 PYTHONNOUSERSITE=1 OMP_NUM_THREADS=4
 export LOG_DIR=/path/to/isolated/run/logs
 export O5_DEMO_CONFIG_PATH=/path/to/isolated/run/config.json
-export REF_AUDIO_PATH="$O5_CANONICAL_PATH/assets/system_ref_audio.wav"
 unset PYTHONPATH FC_DEPLOYMENT_PROFILE O5_MODEL_PROFILE
 bash "$PROJECT_DIR/scripts/start_o5_tp2_cctl_service.sh"
 ```
+
+默认参考音频来自 Demo 自带的 `assets/ref_audio/ref_minicpm_signature.wav`。需要更换时，
+在 config.json 设置 `audio.ref_audio_path`；`REF_AUDIO_PATH` 环境变量没有被此启动链消费。
 
 config.json 至少配置 model.model_path、model.pt_path、model.deployment_mode="tp2"、
 model.compile=false 和独立 service.data_dir。完整已运行脚本参考
