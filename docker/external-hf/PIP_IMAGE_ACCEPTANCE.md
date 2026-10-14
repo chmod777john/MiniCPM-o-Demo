@@ -35,12 +35,17 @@
   o5-external-hf-gateway-pip-20261014.docker.tar
 ```
 
-两个OCI归档已备份共享存储：`/user/weihongliang/analysis-runs/20261014-docker-pip-install/`。Docker格式与OCI格式的manifest媒体类型/digest不同，config/image ID与层内容保持；Docker格式可供`docker load`，本轮尚未在GPU运行时load执行。
+四个OCI/Docker归档均已完整备份共享存储并通过全SHA和各blob校验：`/user/weihongliang/analysis-runs/20261014-docker-pip-install/`。Docker格式与OCI格式的manifest媒体类型/digest不同，config/image ID与层内容保持；Docker格式可供`docker load`，本轮尚未在GPU运行时load执行。
 
 | OCI归档 | 大小（bytes） | 完整 SHA256 |
 | --- | ---: | --- |
 | worker | 4148780544 | `cb1ffe46cd2f2d4a6723327522f2ada3f32f7675a647741ee74870ecf4d0da04` |
 | gateway | 4148781056 | `bf6488cb23abb0a786ee416ab996624214dd4d26e27a9255554d5c3ebf372eda` |
+
+| Docker归档 | 大小（bytes） | 完整 SHA256 |
+| --- | ---: | --- |
+| worker | 4148783104 | `d21385e842eb4923c84db5335408b7b169229e0b74612c4c57a11768066b32a4` |
+| gateway | 4148783616 | `98a6365f9924b70ad1c3098724b1cfd98e98d0224907879ff48c61827e167505` |
 
 ## 已通过的检查
 
@@ -48,7 +53,7 @@
 - 真实容器安装137包完成；CUDA13官方redistribution最小SM120编译通过。
 - 14项CPU门：新FA2/causal/dense加载、FLA/SDK/utils导入、外部HF modeling与backend/gateway/worker导入、实际decord视频解码、3项入口生命周期/LIS配置/镜像选择契约。
 - 实际gateway入口启动：public/internal health、桌面Omni、mobile、mobile-omni均HTTP200；SIGTERM退出0。
-- OCI归档全SHA、manifest/config/每层blob的大小及SHA全部通过；镜像中source/install/audit/CPU报告已提取。
+- OCI/Docker四个归档全SHA、manifest/config/每层blob的大小及SHA全部通过；镜像中source/install/audit/CPU报告已提取。
 - 实际镜像中的137包版本完全匹配输入；三份物料、packaging和移动资产共1444个文件，missing/changed/extra全部0。移动端两个tree hash与原已验版相同。
 - Root独立复核decord例外、核验脚本、源文件一致性及两角色layers相同，记录在`ROOT_ENV_REVIEW.md`。
 
@@ -67,7 +72,14 @@ decord 0.6.0 is not supported on this platform
 
 新镜像的GPU算子新旧A/B、TP2真实模型API、Pro5000性能和完整音视频媒体回归尚未运行。旧镜像的GPU/API结果不能继承为这版验收。37尚未交接GPU；后续由root协调。
 
-原始checkpoint及vocoder传输以证据目录的`checkpoint-transfer-result.json`和`vocoder-transfer-result.json`为准；大checkpoint必须最终完整SHA通过后才原子命名。中途分块进度不代表完成。
+## 模型文件传输
+
+原始checkpoint及vocoder均已完成传输。37宿主模型目录为`/data/weihongliang/o5-pip-image-20261014/model`，可作为`MODEL_PATH`整体挂载：
+
+- `model.pt`：74606011097 bytes，完整SHA256 `0789c953677dc8ea71b6085543e1a946ae64bddecd2f6b911ac6380376ef01ff`。139分块已验，最终整文件SHA通过后原子命名，传输进程已退出，`.part`及锁已清。
+- `token2wav_causal_vocoder/`：8个原始文件逐SHA通过。
+
+最终证据见`checkpoint-transfer-result.json`、`checkpoint-final-state.json`和`vocoder-transfer-result.json`。这证明文件传输完整，不代替GPU模型加载验收。
 
 ## 证据
 

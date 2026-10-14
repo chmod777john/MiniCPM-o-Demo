@@ -1,0 +1,26 @@
+{
+  "passed": true,
+  "checks": [
+    {
+      "package": "flash-attn",
+      "binary": "flash_attn_2_cuda.cpython-310-x86_64-linux-gnu.so",
+      "sha256": "7b0ef15d5ff43a26c12c134912a13ea3e9af5f3aac894763c29d7dff8829a8b2",
+      "installed_path": "flash_attn_2_cuda.cpython-310-x86_64-linux-gnu.so",
+      "passed": true
+    },
+    {
+      "package": "causal-conv1d",
+      "binary": "causal_conv1d_cuda.cpython-310-x86_64-linux-gnu.so",
+      "sha256": "d4c0dcc3d1e9441f905daffe637973398ab5d395ec8162a00dea4445fdf601f4",
+      "installed_path": "causal_conv1d_cuda.cpython-310-x86_64-linux-gnu.so",
+      "passed": true
+    },
+    {
+      "package": "minicpm-o-accel-dense-pro5000",
+      "binary": "minicpm_dense_pro5000_4343f6e6870e01693462ff40.so",
+      "sha256": "eee9fc7ea6eabc3f3708de930a8f907fdba59c8d78efa18ad5f590c5ee74cb3e",
+      "installed_path": "../../../var/cache/minicpm-o-accel/4343f6e6870e01693462ff40/minicpm_dense_pro5000_4343f6e6870e01693462ff40.so",
+      "passed": true
+    }
+  ]
+}

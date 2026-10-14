@@ -1,0 +1,7 @@
+{
+  "passed": true,
+  "archive_sha256": "d21385e842eb4923c84db5335408b7b169229e0b74612c4c57a11768066b32a4",
+  "config_digest": "sha256:b094e9eea2ad246129947c9f940df7881328c2ee5a47305d87742d6453ff7c7b",
+  "blobs_checked": 18,
+  "docker_load_tested": false
+}
