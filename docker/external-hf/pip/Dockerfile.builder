@@ -1,4 +1,3 @@
-# syntax=docker/dockerfile:1.7
 FROM python:3.10-slim-bookworm@sha256:5be5aaecb962a41567bc8041f1e9e3432cb085b037fe057f9a562630b2e4b370
 RUN apt-get update && apt-get install -y --no-install-recommends g++ make git patch ffmpeg libsndfile1 libgomp1 ca-certificates curl procps xz-utils && rm -rf /var/lib/apt/lists/*
 # Official CUDA redistribution components, never restored from site-packages.
