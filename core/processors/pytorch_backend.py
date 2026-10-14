@@ -252,7 +252,6 @@ class PyTorchBackend:
         session_id: str,
         generate_audio: bool = True,
         max_new_tokens: int = 256,
-        length_penalty: float = 1.1,
         do_sample: bool = True,
     ) -> Iterator[StreamingChunk]:
         chat_view = self.processor.set_chat_mode()
@@ -260,7 +259,6 @@ class PyTorchBackend:
             session_id=session_id,
             generate_audio=generate_audio,
             max_new_tokens=max_new_tokens,
-            length_penalty=length_penalty,
             do_sample=do_sample,
         )
 
@@ -272,7 +270,6 @@ class PyTorchBackend:
         use_tts_template: bool = True,
         enable_thinking: bool = False,
         tts_ref_audio: Optional[np.ndarray] = None,
-        length_penalty: float = 1.1,
     ) -> Any:
         chat_view = self.processor.set_chat_mode()
         return chat_view.generate(
@@ -284,7 +281,6 @@ class PyTorchBackend:
             enable_thinking=enable_thinking,
             tts_ref_audio=tts_ref_audio,
             tts_sampling_params=None,
-            length_penalty=length_penalty,
         )
 
     def chat_complete(
@@ -297,7 +293,6 @@ class PyTorchBackend:
         max_slice_nums: Optional[int] = None,
         enable_thinking: bool = False,
         tts_ref_audio: Optional[np.ndarray] = None,
-        length_penalty: float = 1.1,
         do_sample: bool = True,
     ) -> Any:
         chat_view = self.processor.set_chat_mode()
@@ -316,7 +311,6 @@ class PyTorchBackend:
                 messages=messages,
                 generation=GenerationConfig(
                     max_new_tokens=max_new_tokens,
-                    length_penalty=length_penalty,
                 ),
                 tts=tts_config,
                 image=ImageConfig(max_slice_nums=max_slice_nums),

@@ -6,7 +6,7 @@ import {
   applyFrontendDefaults, validateDuplexOptions,
 } from '../src/shared/nofc-options.ts'
 
-const chatOptions = { maxNewTokens: 256, lengthPenalty: 1.1, ttsEnabled: true, refAudio: 'PCM_FLOAT32', hdImages: false, enableThinking: false }
+const chatOptions = { maxNewTokens: 256, ttsEnabled: true, refAudio: 'PCM_FLOAT32', hdImages: false, enableThinking: false }
 
 test('simplex keeps complete ordered history for both output modes', () => {
   const messages = [{ role: 'system', content: 'system' }, { role: 'user', content: 'first' }, { role: 'assistant', content: 'answer' }, { role: 'user', content: 'followup' }]
@@ -14,7 +14,7 @@ test('simplex keeps complete ordered history for both output modes', () => {
     const body = buildChatPayload(messages, streaming, chatOptions)
     assert.equal(body.messages, messages)
     assert.equal(body.streaming, streaming)
-    assert.deepEqual(body.generation, { max_new_tokens: 256, do_sample: true, length_penalty: 1.1 })
+    assert.deepEqual(body.generation, { max_new_tokens: 256, do_sample: true })
     assert.equal(body.tts.ref_audio_data, 'PCM_FLOAT32')
     assert.equal(body.tts.mode, 'audio_assistant')
     assert.equal(body.enable_thinking, false)

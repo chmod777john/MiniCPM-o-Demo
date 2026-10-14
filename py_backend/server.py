@@ -501,13 +501,17 @@ class BackendProtocolSession:
                     session_id=self.session_id,
                     generate_audio=request.generate_audio,
                     max_new_tokens=request.max_new_tokens,
-                    length_penalty=request.length_penalty,
                     do_sample=request.do_sample,
                 )
                 try:
                     for chunk in iterator:
                         if cancelled.is_set():
-                            break
+                            if request.generate_audio:
+                                break
+                            # HF text streaming owns a producer thread. It has no
+                            # cancellation contract, so drain it without output
+                            # before releasing this worker to the next request.
+                            continue
                         loop.call_soon_threadsafe(queue.put_nowait, ("chunk", chunk))
                 finally:
                     iterator.close()
@@ -576,7 +580,6 @@ class BackendProtocolSession:
             max_slice_nums=request.max_slice_nums,
             enable_thinking=request.enable_thinking,
             tts_ref_audio=request.tts_ref_audio,
-            length_penalty=request.length_penalty,
             do_sample=request.do_sample,
         )
 

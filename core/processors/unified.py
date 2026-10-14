@@ -260,7 +260,6 @@ class ChatView(MiniCPMOProcessorMixin):
         tts_ref_audio=None,
         tts_sampling_params=None,
         output_audio_path=None,
-        length_penalty: float = 1.1,
     ):
         """基于已有 KV cache 做非流式 generate + 可选 TTS"""
         if getattr(self._model, "_external_hf_chat", False):
@@ -274,7 +273,7 @@ class ChatView(MiniCPMOProcessorMixin):
                 **inputs, stream=False, max_new_tokens=max_new_tokens,
                 do_sample=do_sample, generate_audio=generate_audio,
                 tts_sampling_params=tts_sampling_params, output_audio_path=output_audio_path,
-                length_penalty=length_penalty, num_beams=1,
+                num_beams=1,
             )
         result = self._model.non_streaming_generate(
             session_id=session_id,
@@ -286,7 +285,6 @@ class ChatView(MiniCPMOProcessorMixin):
             tts_ref_audio=tts_ref_audio,
             tts_sampling_params=tts_sampling_params,
             output_audio_path=output_audio_path,
-            length_penalty=length_penalty,
         )
         return result
     
@@ -296,7 +294,6 @@ class ChatView(MiniCPMOProcessorMixin):
         generate_audio: bool = True,
         max_new_tokens: int = 256,
         do_sample: bool = True,
-        length_penalty: float = 1.1,
     ):
         """基于已有 KV cache 做流式 generate（yield StreamingChunk）"""
         import base64
@@ -312,7 +309,6 @@ class ChatView(MiniCPMOProcessorMixin):
                 iter_gen = self._model.chat(
                     **inputs, stream=True, do_sample=do_sample,
                     generate_audio=generate_audio, max_new_tokens=max_new_tokens,
-                    length_penalty=length_penalty,
                 )
             else:
                 iter_gen = self._model.streaming_generate(
@@ -321,7 +317,6 @@ class ChatView(MiniCPMOProcessorMixin):
                     generate_audio=generate_audio,
                     max_new_tokens=max_new_tokens,
                     use_tts_template=True,
-                    length_penalty=length_penalty,
                 )
             
             for item in iter_gen:
@@ -481,7 +476,6 @@ class ChatView(MiniCPMOProcessorMixin):
         prompt = None
 
         with torch.no_grad():
-            length_penalty = request.generation.length_penalty if hasattr(request, 'generation') and request.generation else 1.1
             result = self._model.chat(
                 msgs=msgs,
                 do_sample=do_sample,
@@ -497,7 +491,6 @@ class ChatView(MiniCPMOProcessorMixin):
                 return_prompt=return_prompt_flag,
                 max_slice_nums=request.image.max_slice_nums if hasattr(request, 'image') and request.image else None,
                 use_image_id=request.image.use_image_id if hasattr(request, 'image') and request.image else False,
-                length_penalty=length_penalty,
                 # O5 uses 3D M-RoPE position_ids shaped [3, batch, seq].
                 # Transformers beam search expands ordinary [batch, seq]
                 # position_ids along dim 0, which corrupts O5's M-RoPE axis

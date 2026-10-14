@@ -1,0 +1,9 @@
+# Minimal simplex bridge
+
+This Demo candidate pairs with HF `minicpm-o-5-fix-3d-rope-o5fc-20261013-minimal-simplex` (initial commit `6139d9d`). HF retains only complete-history speech streaming wiring and the required TTS configuration compatibility; the earlier text producer cancellation and strict token-cap additions are removed.
+
+The chat parser, backend/View, desktop and mobile payload no longer use `length_penalty`. The shared legacy generation schema and half/full duplex paths keep their prior fields and algorithms. Desktop Cancel now owns the active realtime session, sends `session.close`, preserves only received partial text, pauses PCM and ignores late messages from cancelled or completed turns. Queued/connecting requests close their transport. New questions can queue while the previous request finishes.
+
+Text-only streaming cancellation stops delivering output and drains the original HF producer before freeing the worker. It does not interrupt model computation. Speech streaming closes after the current chunk. Nonstreaming requests finish before the worker is reused. These choices keep producer lifecycle management out of HF while preventing overlapping generations on one worker. A text-producer failure without EOF remains an upstream limitation; no general cancellation/hang recovery is claimed.
+
+CPU gates: current ChatView bridge, chat request parser, actual backend cancel/drain coroutine, actual desktop cancellation callbacks (late messages/partial history/PCM stop), 24 existing mobile contracts and TypeScript/Vite build. Focused GPU API results are recorded after execution under `/user/weihongliang/analysis-runs/20261014-hf-simplex-minimal/`; previous HF5fea768 cancellation/strictcap evidence does not apply to this candidate. End-user browser interaction remains for user acceptance.

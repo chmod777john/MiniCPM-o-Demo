@@ -34,7 +34,7 @@ def test_parse_worker_chat_request_message():
                 "ref_audio_data": base64.b64encode(ref_audio.tobytes()).decode("utf-8"),
             },
             "omni_mode": True,
-            "enable_thinking": True,
+            "enable_thinking": False,
         },
     }
 
@@ -43,11 +43,11 @@ def test_parse_worker_chat_request_message():
     assert parsed.messages == [{"role": "user", "content": "hi"}]
     assert parsed.streaming is False
     assert parsed.max_new_tokens == 32
-    assert parsed.length_penalty == 0.9
+    assert not hasattr(parsed, "length_penalty")
     assert parsed.max_slice_nums == 2
     assert parsed.generate_audio is True
     assert parsed.use_tts_template is True
     assert parsed.omni_mode is True
-    assert parsed.enable_thinking is True
+    assert parsed.enable_thinking is False
     np.testing.assert_allclose(parsed.tts_ref_audio, ref_audio)
 

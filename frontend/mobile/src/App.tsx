@@ -196,7 +196,6 @@ type SettingsState = {
   audio_duplex: ModeSettings
   omni: ModeSettings
   maxNewTokens: number
-  turnLengthPenalty: number
   audioDuplexLengthPenalty: number
   videoDuplexLengthPenalty: number
   turnTtsEnabled: boolean
@@ -242,7 +241,6 @@ const DEFAULT_SETTINGS: SettingsState = {
     systemContent: null,
   },
   maxNewTokens: 256,
-  turnLengthPenalty: 1.1,
   audioDuplexLengthPenalty: 1.05,
   videoDuplexLengthPenalty: 1.1,
   turnTtsEnabled: true,
@@ -611,19 +609,6 @@ function getPresetModeLabel(mode: PresetMode, tr: Translations): string {
   }
 
   return mode === 'audio_duplex' ? tr.audioDuplex : tr.videoDuplex
-}
-
-function getLengthPenaltyForMode(
-  settings: SettingsState,
-  presetMode: PresetMode,
-): number {
-  if (presetMode === 'turnbased') {
-    return settings.turnLengthPenalty
-  }
-
-  return presetMode === 'audio_duplex'
-    ? settings.audioDuplexLengthPenalty
-    : settings.videoDuplexLengthPenalty
 }
 
 function summarizePrompt(prompt: string, tr: Translations): string {
@@ -2176,7 +2161,6 @@ type SettingsSummaryProps = {
   presetName: string
   refAudio: RefAudioState
   systemPrompt: string
-  lengthPenalty: number
   maxNewTokens?: number
   turnTtsEnabled?: boolean
   turnStreamingEnabled?: boolean
@@ -2188,7 +2172,6 @@ function SettingsSummary({
   presetName,
   refAudio,
   systemPrompt,
-  lengthPenalty,
   maxNewTokens,
   turnTtsEnabled,
   turnStreamingEnabled,
@@ -2210,7 +2193,6 @@ function SettingsSummary({
         <span className="settings-chip">
           Ref: {refAudio.base64 ? refAudio.name : i18n.notSet}
         </span>
-        {typeof turnStreamingEnabled === 'boolean' && <span className="settings-chip">Len: {lengthPenalty.toFixed(2)}</span>}
         {typeof maxNewTokens === 'number' ? (
           <span className="settings-chip">Tokens: {maxNewTokens}</span>
         ) : null}
@@ -2236,7 +2218,6 @@ type SettingsSheetProps = {
   activePresets: PresetMetadata[]
   activeUserPresets: UserPreset[]
   defaultRefAudio: RefAudioState | null
-  lengthPenalty: number
   maxNewTokens: number
   turnTtsEnabled: boolean
   turnStreamingEnabled: boolean
@@ -2253,7 +2234,6 @@ type SettingsSheetProps = {
   onDeleteUserPreset: (presetId: string) => void
   onPromptChange: (value: string) => void
   onSystemContentChange: (items: BackendContentItem[]) => void
-  onLengthPenaltyChange: (value: number) => void
   onMaxTokensChange: (value: number) => void
   onTurnTtsEnabledChange: (value: boolean) => void
   onTurnStreamingEnabledChange: (value: boolean) => void
@@ -2649,7 +2629,6 @@ function SettingsSheet({
   activePresets,
   activeUserPresets,
   defaultRefAudio,
-  lengthPenalty,
   maxNewTokens,
   turnTtsEnabled,
   turnStreamingEnabled,
@@ -2666,7 +2645,6 @@ function SettingsSheet({
   onDeleteUserPreset,
   onPromptChange,
   onSystemContentChange,
-  onLengthPenaltyChange,
   onMaxTokensChange,
   onTurnTtsEnabledChange,
   onTurnStreamingEnabledChange,
@@ -2859,21 +2837,6 @@ function SettingsSheet({
         <div className="settings-section">
           <div className="settings-section-title">{i18n.params}</div>
           <div className="settings-grid">
-            {activeMode === 'turnbased' && <label className="settings-field">
-              <span>{i18n.lengthPenalty}</span>
-              <input
-                className="settings-input"
-                type="number"
-                min="0.1"
-                max="5"
-                step="0.05"
-                value={lengthPenalty}
-                onChange={(event) => {
-                  onLengthPenaltyChange(Number(event.target.value))
-                }}
-              />
-            </label>}
-
             {activeMode === 'turnbased' ? (
               <label className="settings-field">
                 <span>{i18n.maxTokens}</span>
@@ -3387,7 +3350,6 @@ function App() {
   const activePresetMode = getPresetModeForScreen(screen)
   const activeModeSettings = settings[activePresetMode]
   const activeModePresets = presetsByMode[activePresetMode]
-  const activeLengthPenalty = getLengthPenaltyForMode(settings, activePresetMode)
   const activeModeLabel = getPresetModeLabel(activePresetMode, i18n)
 
   // Best backend session id available for sharing — prefer the most recent
@@ -4403,29 +4365,6 @@ function App() {
     return items
   }
 
-  function handleLengthPenaltyChange(mode: PresetMode, value: number) {
-    const nextValue = Number.isFinite(value) ? value : 1.1
-
-    setSettings((previous) => {
-      if (mode === 'turnbased') {
-        return {
-          ...previous,
-          turnLengthPenalty: nextValue,
-        }
-      }
-
-      return mode === 'audio_duplex'
-        ? {
-            ...previous,
-            audioDuplexLengthPenalty: nextValue,
-          }
-        : {
-            ...previous,
-            videoDuplexLengthPenalty: nextValue,
-          }
-    })
-  }
-
   function handlePlayActiveRefAudio(audioIndex?: number) {
     let base64 = activeModeSettings.refAudio.base64
     if (activePresetMode === 'turnbased' && audioIndex !== undefined) {
@@ -4816,7 +4755,6 @@ function App() {
   ) {
     return buildChatPayload(buildRequestMessages(nextMessages, systemMessage), streaming, {
       maxNewTokens: settings.maxNewTokens,
-      lengthPenalty: settings.turnLengthPenalty,
       ttsEnabled: settings.turnTtsEnabled,
       refAudio: settings.turnbased.refAudio.base64,
       hdImages: settings.turnHdImages,
@@ -5836,7 +5774,6 @@ function App() {
         activePresets={activeModePresets}
         activeUserPresets={userPresets.filter((p) => p.mode === activePresetMode)}
         defaultRefAudio={defaultRefAudio}
-        lengthPenalty={activeLengthPenalty}
         maxNewTokens={settings.maxNewTokens}
         turnTtsEnabled={settings.turnTtsEnabled}
         turnStreamingEnabled={settings.turnStreamingEnabled}
@@ -5864,9 +5801,6 @@ function App() {
         }}
         onSystemContentChange={(items) => {
           handleSystemContentChange(activePresetMode, items)
-        }}
-        onLengthPenaltyChange={(value) => {
-          handleLengthPenaltyChange(activePresetMode, value)
         }}
         onMaxTokensChange={(value) => {
           setSettings((previous) => ({

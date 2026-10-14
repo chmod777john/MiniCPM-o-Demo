@@ -956,10 +956,6 @@
                         <label style="font-size:11px; color:#bbb;">new tokens</label>
                         <input type="number" id="maxTokensInit" value="1024" min="1" max="2048" style="width:48px; font-size:11px; padding:2px 4px; border:1px solid #e5e5e0; border-radius:4px; color:#888;">
                     </div>
-                    <div class="opt-group" style="display:flex; align-items:center; gap:3px;">
-                        <label style="font-size:11px; color:#bbb;" data-tooltip="Higher value = longer responses. EOS logit divided by this value.">len_pen</label>
-                        <input type="number" id="lengthPenaltyInit" value="1.1" min="0.1" max="5.0" step="0.05" style="width:48px; font-size:11px; padding:2px 4px; border:1px solid #e5e5e0; border-radius:4px; color:#888;">
-                    </div>
                 </div>
                 <div class="input-actions">
                     <button class="btn-mic" id="micBtnInit" title="Record audio (Space key)">🎤 <span class="kbd-hint">Space</span></button>
@@ -1044,10 +1040,6 @@
                             <label style="font-size:11px; color:#bbb;">tokens</label>
                             <input type="number" id="maxTokens" value="256" min="1" max="2048" style="width:48px; font-size:11px; padding:2px 4px; border:1px solid #e5e5e0; border-radius:4px; color:#888;">
                         </div>
-                        <div class="opt-group" style="display:flex; align-items:center; gap:3px;">
-                            <label style="font-size:11px; color:#bbb;" data-tooltip="Higher value = longer responses. EOS logit divided by this value.">len_pen</label>
-                            <input type="number" id="lengthPenalty" value="1.1" min="0.1" max="5.0" step="0.05" style="width:48px; font-size:11px; padding:2px 4px; border:1px solid #e5e5e0; border-radius:4px; color:#888;">
-                        </div>
                     </div>
                     <div class="input-actions">
                         <button class="btn-mic" id="micBtnChat" title="Record audio (Space key)">🎤 <span class="kbd-hint">Space</span></button>
@@ -1079,8 +1071,7 @@ const state = {
     isGenerating: false,
     generationPhase: 'idle',    // 'idle' | 'queuing' | 'generating'
     currentTicketId: null,      // ticket_id from gateway queue (Streaming only)
-    abortController: null,
-    streamingWs: null,
+    activeChat: null,
     ws: null,
     requestId: 'req_' + Date.now(),
     composeEditorInit: null, // UserContentEditor 实例（初始视图）
@@ -1465,7 +1456,6 @@ function switchToConversation() {
     // 同步配置：content editor 已通过 onChange 回调同步
     document.getElementById('enableStreaming').checked = document.getElementById('enableStreamingInit').checked;
     document.getElementById('maxTokens').value = document.getElementById('maxTokensInit').value;
-    document.getElementById('lengthPenalty').value = document.getElementById('lengthPenaltyInit').value;
     document.getElementById('enableTts').checked = document.getElementById('enableTtsInit').checked;
     updateSysConfigBarSummary();
 
@@ -1868,47 +1858,24 @@ function escapeHtml(text) {
 
 function cancelGeneration() {
     if (!state.isGenerating) return;
-    const phase = state.generationPhase;
-
-    // --- Chat mode: always abort fetch ---
-    if (state.abortController) {
-        state.abortController.abort();
-        state.abortController = null;
-    }
-
-    // --- Streaming mode: phase-aware ---
-    if (state.streamingWs) {
-        if (phase === 'generating') {
-            // Graceful stop: tell worker to stop, let normal 'done' handler clean up
-            fetch(`${API_BASE}/api/streaming/stop`, { method: 'POST' }).catch(() => {});
-            // Don't close WS — server will send 'done' with stopped: true
-            return;
-        }
-        // Queuing phase: cancel ticket + close WS immediately
-        if (state.currentTicketId) {
-            fetch(`${API_BASE}/api/queue/${state.currentTicketId}`, { method: 'DELETE' }).catch(() => {});
-        }
-        try { state.streamingWs.close(); } catch (_) {}
-        state.streamingWs = null;
-    }
-
+    state.activeChat?.cancel();
     queueCountdownStop();
     setGenerating(false);
-    _cleanupLastAssistantMessage();
 }
 
-function _cleanupLastAssistantMessage() {
+function _cleanupLastAssistantMessage(partialText = null) {
     const msgEls = document.querySelectorAll('.message.assistant');
     const lastEl = msgEls[msgEls.length - 1];
     if (!lastEl) return;
     const contentEl = lastEl.querySelector('.content');
-    const text = contentEl?.textContent?.trim() || '';
+    const text = partialText ?? contentEl?.textContent?.trim() ?? '';
     const isPlaceholder = !text || text === '...' || contentEl?.classList.contains('is-system-log');
 
     if (isPlaceholder) {
         lastEl.remove();
     } else {
         state.messages.push({ role: 'assistant', content: text, displayText: text });
+        lastEl.dataset.msgIndex = state.messages.length - 1;
         updateLastAssistantMeta({ mode: 'cancelled', totalMs: 0 });
     }
 }
@@ -2474,7 +2441,6 @@ function _buildChatWSBody(maxTokens, streaming) {
         generation: {
             max_new_tokens: maxTokens,
             do_sample: true,
-            length_penalty: parseFloat(document.getElementById('lengthPenalty').value) || 1.1,
         },
         image: { max_slice_nums: hasVideo ? 1 : getHDMaxSliceNums() },
         omni_mode: hasVideo,
@@ -2497,61 +2463,68 @@ function _openRealtimeChatWS(body, handlers) {
     let initSent = false;
     let inputSent = false;
     let closeSent = false;
-
-    const sendInit = () => {
-        if (initSent || ws.readyState !== WebSocket.OPEN) return;
-        initSent = true;
-        ws.send(JSON.stringify({ type: 'session.init', payload: {} }));
+    let finished = false;
+    const current = () => !finished && state.activeChat === connection;
+    const finish = (callback, value) => {
+        if (!current()) return;
+        finished = true;
+        state.activeChat = null;
+        callback?.(value);
     };
-
-    const sendInput = () => {
-        if (inputSent || ws.readyState !== WebSocket.OPEN) return;
-        inputSent = true;
-        ws.send(JSON.stringify({ type: 'input.append', input: body }));
-    };
-
     const sendClose = (reason = 'turn_done') => {
         if (closeSent || ws.readyState !== WebSocket.OPEN) return;
         closeSent = true;
         ws.send(JSON.stringify({ type: 'session.close', reason }));
     };
-
-    const getCloseError = (msg) => {
-        const reason = msg.reason || '';
-        const diagnostic = msg.diagnostic?.message || msg.error?.message || msg.error || '';
-        if (diagnostic) return diagnostic;
-        if (reason && !['turn_done', 'client_closed'].includes(reason)) return reason;
-        return '';
+    const connection = {
+        cancel() {
+            if (!current()) return;
+            finish(handlers.onCancel);
+            if (inputSent && ws.readyState === WebSocket.OPEN) sendClose('client_cancel');
+            else ws.close();
+        },
     };
+    state.activeChat = connection;
 
     ws.onmessage = (event) => {
         const msg = JSON.parse(event.data);
+        // A cancelled/completed turn must never update the next turn's UI.
+        if (!current()) {
+            if (msg.type === 'session.closed') ws.close();
+            return;
+        }
         if (msg.type === 'session.queue_done') {
-            sendInit();
+            if (!initSent) {
+                initSent = true;
+                ws.send(JSON.stringify({ type: 'session.init', payload: {} }));
+            }
         } else if (msg.type === 'session.created') {
-            sendInput();
+            if (!inputSent) {
+                inputSent = true;
+                ws.send(JSON.stringify({ type: 'input.append', input: body }));
+            }
         } else if (msg.type === 'response.output.delta') {
             handlers.onDelta?.(msg);
         } else if (msg.type === 'response.done') {
-            handlers.onDone?.(msg);
+            finish(handlers.onDone, msg);
             sendClose();
         } else if (msg.type === 'session.closed') {
-            const closeError = getCloseError(msg);
-            if (closeError) {
-                handlers.onError?.(closeError);
-            } else {
-                handlers.onClosed?.(msg);
-            }
+            const reason = msg.reason || '';
+            const error = msg.diagnostic?.message || msg.error?.message || msg.error ||
+                (!['', 'turn_done', 'client_closed', 'client_cancel'].includes(reason) ? reason : '');
+            finish(error ? handlers.onError : handlers.onClosed, error || msg);
             ws.close();
         } else if (msg.type === 'error') {
-            handlers.onError?.(msg.error?.message || msg.error || 'Unknown error');
+            finish(handlers.onError, msg.error?.message || msg.error || 'Unknown error');
             sendClose('error');
         }
     };
-
-    ws.onerror = () => handlers.onError?.('WebSocket error');
-    ws.onclose = () => handlers.onClosed?.();
-    return ws;
+    ws.onerror = () => {
+        finish(handlers.onError, 'WebSocket error');
+        ws.close();
+    };
+    ws.onclose = () => finish(handlers.onClosed);
+    return connection;
 }
 
 // ============ Chat 模式（非流式，走 /v1/realtime?mode=chat） ============
@@ -2597,6 +2570,7 @@ async function sendChatMessage(maxTokens) {
                 updateLastAssistantMessage(`Error: ${message}`, 'error');
                 setGenerating(false);
             },
+            onCancel: () => _cleanupLastAssistantMessage(''),
             onClosed: () => { if (state.isGenerating) setGenerating(false); },
         });
 
@@ -3191,6 +3165,13 @@ async function sendStreamingMessage(maxTokens) {
                 updateLastAssistantMessage(`Error: ${message}`, 'error');
                 setGenerating(false);
             },
+            onCancel: () => {
+                if (streamAudioPlayer) {
+                    streamAudioPlayer.pause();
+                    streamAudioPlayer.markStreamFinished();
+                }
+                _cleanupLastAssistantMessage(fullText);
+            },
             onClosed: () => { if (state.isGenerating) setGenerating(false); },
         });
 
@@ -3265,11 +3246,10 @@ document.querySelectorAll('.toggle-label').forEach(lbl => {
     else if (txt === 'Voice Response') lbl.textContent = t.voiceResponse;
 });
 
-// ── new tokens / len_pen labels ──
+// ── new tokens labels ──
 document.querySelectorAll('.opt-group label, .input-options > label').forEach(lbl => {
     const txt = lbl.textContent.trim();
     if (txt === 'new tokens' || txt === 'tokens') lbl.textContent = t.newTokens;
-    else if (txt === 'len_pen') lbl.textContent = t.lenPen;
 });
 
 // ── Mic button title + Space hint ──

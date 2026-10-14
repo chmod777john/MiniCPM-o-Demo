@@ -34,7 +34,6 @@ class WorkerChatRequest:
     streaming: bool
     max_new_tokens: int
     do_sample: bool
-    length_penalty: float
     max_slice_nums: Optional[int]
     generate_audio: bool
     tts_ref_audio: Optional[np.ndarray]
@@ -86,7 +85,6 @@ def parse_worker_chat_request_message(msg: Dict[str, Any]) -> WorkerChatRequest:
         streaming=bool(payload.get("streaming", True)),
         max_new_tokens=int(generation.get("max_new_tokens", 256)),
         do_sample=bool(generation.get("do_sample", True)),
-        length_penalty=float(generation.get("length_penalty", 1.1)),
         max_slice_nums=max_slice_nums,
         generate_audio=generate_audio,
         tts_ref_audio=tts_ref_audio,

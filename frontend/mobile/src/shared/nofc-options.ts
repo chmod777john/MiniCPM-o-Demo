@@ -95,7 +95,6 @@ export function buildDuplexPreparePayload(
 type ChatMessage = { role: string; content: string | { type: string }[] }
 export type ChatOptions = {
   maxNewTokens: number
-  lengthPenalty: number
   ttsEnabled: boolean
   refAudio: string | null
   hdImages: boolean
@@ -110,7 +109,6 @@ export function buildChatPayload<M extends ChatMessage>(messages: M[], streaming
     generation: {
       max_new_tokens: options.maxNewTokens,
       do_sample: true,
-      length_penalty: options.lengthPenalty,
     },
     image: { max_slice_nums: hasVideo ? 1 : options.hdImages ? 2 : 1 },
     omni_mode: hasVideo,

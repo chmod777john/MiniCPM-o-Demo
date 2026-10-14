@@ -42,12 +42,12 @@ for audio in (False, True):
                      use_tts_template=audio, enable_thinking=False)==""
     assert not m.calls
     chunks=list(v.streaming_generate("one", generate_audio=audio, do_sample=False,
-                                    max_new_tokens=12, length_penalty=1.7))
+                                    max_new_tokens=12))
     assert m.closed and len(m.calls)==1
     call=m.calls[0]
     assert call["msgs"] is history and call["stream"] is True
     assert call["do_sample"] is False and call["max_new_tokens"]==12
-    assert call["max_slice_nums"]==2 and call["length_penalty"]==1.7
+    assert call["max_slice_nums"]==2 and "length_penalty" not in call
     assert call["omni_mode"] is True and call["enable_thinking"] is False
     assert chunks[0].text_delta=="你好"
     if audio:
@@ -62,7 +62,7 @@ q=parse_worker_chat_request_message({"type":"chat.request", "payload":{
     "generation":{"do_sample":False,"max_new_tokens":7,"length_penalty":1.4},
     "image":{"max_slice_nums":2}, "tts":{"enabled":True}, "omni_mode":True}})
 assert not q.do_sample and not q.streaming and q.max_new_tokens==7
-assert q.length_penalty==1.4 and q.max_slice_nums==2 and q.generate_audio
+assert not hasattr(q, "length_penalty") and q.max_slice_nums==2 and q.generate_audio
 assert q.omni_mode and q.use_tts_template
 for payload in ({}, {"messages":[{}],"generation":{"max_new_tokens":0}},
                 {"messages":[{}],"tts":{"enabled":True},"enable_thinking":True}):
