@@ -5,7 +5,9 @@
   "gateway_registry_port": 8007,
   "worker_port": 22400,
   "backend_port": 22500,
-  "worker_backend": {"bind_host": "0.0.0.0"},
+  "worker_backend": {
+    "bind_host": "0.0.0.0"
+  },
   "worker_registration": {
     "mode": "dynamic",
     "collection_path": "/internal/workers",
@@ -16,12 +18,26 @@
     "max_backoff_seconds": 20
   },
   "lifecycle_contract": {
-    "gateway_liveness": {"type": "http", "path": "/health"},
-    "worker_backend_readiness": {"type": "worker_http", "path": "/health"},
+    "gateway_liveness": {
+      "type": "http",
+      "path": "/health"
+    },
+    "worker_backend_readiness": {
+      "type": "worker_http",
+      "path": "/health"
+    },
     "registration_status": {
-      "type": "http", "service_role": "gateway", "port_name": "http",
-      "path": "/status", "schema": "minicpm_o_gateway_status_v1"
+      "type": "http",
+      "service_role": "public",
+      "port_name": "http",
+      "path": "/status",
+      "schema": "minicpm_o_gateway_status_v1"
     }
   },
-  "gateway_config": {"mount_path": "/app/config.json", "recording": {"enabled": false}}
+  "gateway_config": {
+    "mount_path": "/app/config.json",
+    "recording": {
+      "enabled": false
+    }
+  }
 }

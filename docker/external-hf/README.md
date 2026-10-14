@@ -114,3 +114,25 @@ python docker/external-hf/test_entrypoint.py
 python docker/external-hf/test_lis_contract.py
 python docker/external-hf/test_launcher_image.py
 ```
+
+For historical `lisctl template base create-realtime`, use the **flat**
+`lis-contract-flat.json` as `--contract-json`; the nested `lis-contract.json` is
+only a description of runtime fields. `lis-resources-pro5000.example.json` is a
+conservative planning example (16 CPU, 192 GiB host RAM, two GPUs), not a measured
+minimum or physical Pro5000 admission guarantee. Replace its `gpu_types` string
+with the cluster's actual registered SKU. Two Pro6000 GPUs on host34 provide the
+local acceptance environment. A final LIS command, after separately publishing
+and approving actual image records, has this shape:
+
+```sh
+lisctl template base create-realtime \
+  --name o5-external-hf-tp2 \
+  --release-id o5-external-hf-20261014-split \
+  --gateway-image-id '<LIS gateway image UUID>' \
+  --worker-image-id '<LIS worker image UUID>' \
+  --contract-json @docker/external-hf/lis-contract-flat.json \
+  --resources-json @docker/external-hf/lis-resources-pro5000.example.json
+```
+
+Image UUIDs above are platform records, not Docker image IDs. This command is a
+handoff recipe; this task does not execute it or create platform resources.

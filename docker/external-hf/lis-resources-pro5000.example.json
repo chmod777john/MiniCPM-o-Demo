@@ -1,0 +1,10 @@
+{
+  "gateway_cpu_cores": 2,
+  "gateway_memory_gb": 4,
+  "worker_cpu_cores": 16,
+  "worker_memory_gb": 192,
+  "gpu_types": [
+    "NVIDIA-RTX-PRO-5000-Blackwell"
+  ],
+  "gpu_count": 2
+}
