@@ -209,6 +209,9 @@ def _enable_engine(model, *, tp: bool, cfg: Dict[str, Any]):
                             ("t2w_graph", "O5_VOCODER_GRAPH"), ("compact_logits", "O5_COMPACT_LOGITS"),
                             ("merge_unit_feed", "CANONICAL_UNIT_PREFILL_BATCH")):
             options.setdefault(option, _env_flag(env, True))
+        for option, env in (("tts_fa2_whole_decode", "O5_TTS_FA2_WHOLE_DECODE"),
+                            ("canvas_window_exact_chain", "O5_CANVAS_WINDOW_EXACT_CHAIN")):
+            options.setdefault(option, _env_flag(env, False))
         options.setdefault("mode", cfg.get("parallel", "tp") if tp else "single")
         if tp:
             owner = int(cfg.get("gpu_id", 0))
