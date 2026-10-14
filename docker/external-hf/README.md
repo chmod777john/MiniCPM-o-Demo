@@ -6,9 +6,11 @@ This image assembles three independent committed materials under `/opt/o5/{hf,ac
 
 `materials/hf.tar`, `materials/demo.tar`, `materials/accel-runtime.tar` are Git archives; `materials/mobile/` is the current Demo build:static output. The assembler requires clean committed inputs and runs `npm run build:static` with the selected Node/npm toolchain. `materials/source-manifest.json` records application commits, packaging commit and per-file/tree hashes, mobile build inputs/tools and mobile/mobile-omni output hashes. The latter covers generated React assets and the Omni shell/widget. The acceleration archive includes src, pyproject.toml and README only, excluding benchmark evidence.
 
-`runtime/pro5000-python310-site.tar.gz` contains the verified Pro5000 project's site-packages and its qualified native dense causal artifact. `tools/ninja` must be copied from the source venv/bin (the installed Python ninja package does not embed that executable). `runtime/cuda13-compiler.tar.gz` contains nvcc, nvvm, CUDA13 headers and libcudart. It is intentional to restore this verified Python3.10/Torch2.14+cu130 environment: the older requirements-pro5000.txt described a discarded Python3.12/Torch2.9 candidate. Installed versions are captured in requirements-pro5000.lock. Source environment provenance and archive SHA256 belong in the delivery manifest.
+Runtime packages are installed into a fresh `/opt/o5/.venv` from original or fixed-source-built wheels. See [pip/README.md](pip/README.md) for pinned inputs, native build provenance and the explicit utils/librosa metadata exception. `pip/public-wheel-inputs.json` contains official source URLs and SHA256; `requirements-install.lock` is generated only after every actual wheel has been verified. `requirements-pro5000.lock` remains a historical installed-version inventory, not the new installation lock.
 
-SDK0.0.6 and minicpmo-utils1.0.7 wheels go in wheels/. They are installed without dependency resolution, preserving the tested runtime. minicpmo-utils optional metadata has older Torch/Transformers/librosa pins; API tests, not pip's old optional pins, qualify this exact combination.
+`pip/download_locked.py` prepares `wheelhouse/`, official CUDA compiler `sources/`, and the public hash lock. Add the original SDK/utils wheels and the newly source-built FA2/causal/dense wheels, then run `pip/assemble_installation.py` with their native build manifest to produce the complete `requirements-install.lock` and `installation-manifest.json`. Final Docker build runs pip with `--no-index --no-deps --require-hashes`; no existing site-packages archive is restored. The wheel-provided Ninja executable is installed by pip. A CPU nvcc compilation checks the assembled official CUDA redistributions, and an installed dependency audit permits only the documented utils/librosa exception.
+
+The default Dockerfile now describes this pip path. Final native/API acceptance for this revision is in progress; the historical image results later in this document apply only to the older snapshot images.
 
 Build from assembled context:
 
@@ -72,7 +74,7 @@ For the Pro5000 host, `docker` is a rootless Podman compatibility wrapper. Use `
 
 `Dockerfile.app-overlay` refreshes explicit committed application paths atop the immutable accepted image. The release manifest must enumerate the inherited application source, patch source/paths and actual file hashes; never relabel old native API evidence as a run of the new application layer.
 
-The qualified runtime snapshot contains versioned cuBLAS `.so.13` files. The image provides link-time `libcublas.so`/`libcublasLt.so` symlinks under CUDA_HOME/lib64 for acceleration C++ extension builds; both links target the unchanged runtime libraries. The native single smoke does not exercise this grouped-extension linker path.
+The fixed NVIDIA cuBLAS wheel contains versioned `.so.13` files. The image provides link-time `libcublas.so`/`libcublasLt.so` symlinks under CUDA_HOME/lib64 for acceleration C++ extension builds; both links target the unchanged runtime libraries. The native single smoke does not exercise this grouped-extension linker path.
 
 The local v9 image above passed TP2 API probes on two Pro6000 using the Pro5000 acceleration preset. It has not been pushed. The previously published v6 tag predates the TP2 compatibility repairs and is not the TP2 delivery image. See `docs/external-hf/DOCKER_TP2_ACCEPTANCE.md` for scope and restart commands.
 
