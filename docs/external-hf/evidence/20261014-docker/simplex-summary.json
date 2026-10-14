@@ -1,0 +1,111 @@
+[
+  {
+    "case": "text_nonstream",
+    "request_to_done_s": 24.79776408150792,
+    "text": "你好。",
+    "audio_chunks": 0,
+    "audio_bytes": 0,
+    "pass": true,
+    "seconds": 26.426917841657996,
+    "events": [
+      "session.queue_done",
+      "session.created",
+      "response.done"
+    ]
+  },
+  {
+    "case": "text_stream",
+    "request_to_done_s": 0.6476772399619222,
+    "text": "你好。",
+    "audio_chunks": 0,
+    "audio_bytes": 0,
+    "pass": true,
+    "seconds": 2.454888234846294,
+    "events": [
+      "session.queue_done",
+      "session.created",
+      "response.output.delta",
+      "response.output.delta",
+      "response.done"
+    ]
+  },
+  {
+    "case": "audio_nonstream",
+    "request_to_done_s": 4.7011415110901,
+    "text": "你好。",
+    "audio_chunks": 1,
+    "audio_bytes": 195840,
+    "pass": true,
+    "seconds": 6.514671618118882,
+    "events": [
+      "session.queue_done",
+      "session.created",
+      "response.output.delta",
+      "response.done"
+    ]
+  },
+  {
+    "case": "audio_stream",
+    "request_to_done_s": 10.499087750911713,
+    "text": "你好。",
+    "audio_chunks": 1,
+    "audio_bytes": 69120,
+    "pass": true,
+    "seconds": 12.300382441841066,
+    "events": [
+      "session.queue_done",
+      "session.created",
+      "response.output.delta",
+      "response.output.delta",
+      "response.done"
+    ]
+  },
+  {
+    "case": "image_hd_stream",
+    "request_to_done_s": 0.8036495512351394,
+    "text": "红色",
+    "audio_chunks": 0,
+    "audio_bytes": 0,
+    "pass": true,
+    "seconds": 2.6059489408507943,
+    "events": [
+      "session.queue_done",
+      "session.created",
+      "response.output.delta",
+      "response.done"
+    ]
+  },
+  {
+    "case": "input_audio_stream",
+    "request_to_done_s": 2.118826312944293,
+    "text": "人声",
+    "audio_chunks": 0,
+    "audio_bytes": 0,
+    "pass": true,
+    "seconds": 3.92711213324219,
+    "events": [
+      "session.queue_done",
+      "session.created",
+      "response.output.delta",
+      "response.output.delta",
+      "response.done"
+    ]
+  },
+  {
+    "case": "video_audio_stream",
+    "request_to_done_s": 21.648318578489125,
+    "text": "画面是纯红色的。",
+    "audio_chunks": 2,
+    "audio_bytes": 145920,
+    "pass": true,
+    "seconds": 23.460860762745142,
+    "events": [
+      "session.queue_done",
+      "session.created",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.done"
+    ]
+  }
+]

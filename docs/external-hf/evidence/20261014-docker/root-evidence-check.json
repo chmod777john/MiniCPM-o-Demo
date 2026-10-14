@@ -1,0 +1,26 @@
+{
+  "simplex/probe-summary.json": {
+    "sha256": "537f19aa0323e66a53451b19ac874ac84595ffbffe85f66e6a148d24500d1288",
+    "kind": "JSON recorded evidence",
+    "passed_cases": 7
+  },
+  "ordinary/mobile-api-summary.json": {
+    "sha256": "eaa6fd8cd80ffc00538f98542d17b1e42486bec23f51e7a6f27678856fd31471",
+    "kind": "JSON recorded evidence",
+    "passed_cases": 2
+  },
+  "recorded-basic1-v4/summary.json": {
+    "sha256": "59defa0907161b8d6df3db64f3cdb328fa67d7dcc8d9ca362633d54670682559",
+    "kind": "JSON recorded evidence",
+    "units": 8,
+    "model_tool_calls": 3,
+    "supplied_results": 3,
+    "consumed_results": 2,
+    "external_tool_execution": "recorded fixture replay"
+  },
+  "after-fc/probe-summary.json": {
+    "sha256": "51071818332e1fdd006e1bd5e0951b021cfe8547863eca98677632541a99684e",
+    "kind": "JSON recorded evidence",
+    "passed_cases": 2
+  }
+}

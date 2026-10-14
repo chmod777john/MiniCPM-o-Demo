@@ -1,0 +1,91 @@
+{
+  "schema": 1,
+  "application_sources": {
+    "hf": {
+      "path": "/user/weihongliang/worktrees/minicpm-o-5-fix-3d-rope-o5fc-20261013-hf-chat-20261014",
+      "sha": "5cccbf73e8ca7bc01b0377eff299891e9dd45248"
+    },
+    "accel": {
+      "path": "/user/weihongliang/worktrees/hf-accel-no-fc-3d-rope-20261009-canvas-window-20261010-combined-batch-tts-20261010-exact-window-20261010-bulk-window-20261010-paired-rotation-20261010-direct-table-20261010-o5fc",
+      "sha": "6e33931cdf7e1fcff2f896d706bb73b949fc4a39"
+    },
+    "demo": {
+      "path": "/user/weihongliang/worktrees/o5-fc-dev-external-hf-20261013-hf-chat-20261014-docker-lis-20261014",
+      "sha": "08c22855e618e8b979d1b11a496ee9551146fd18"
+    }
+  },
+  "packaging": {
+    "commit": "01716c8290fea71a1f47b2a2b02fb699de06e3c9",
+    "tree_sha256": "44218e2ae1bca0943b2308e3b382a9d20b0c68021538a52929c8bb4a64729028",
+    "files": {
+      "Dockerfile": "cd055bc1aaceca3959d77f81fb2e9ebd19360c1a6b713f2118f4ac65358c9900",
+      "Dockerfile.gateway-role": "388e877dd839d231466a2508b1eacd8aac5f198e8c504cac02017ae6c61b6cf6",
+      "Dockerfile.overlay": "2978ccd10dc43cc31eb493a84db817d6c4a52fa87ddbf960f1e52cba81752aad",
+      "README.md": "57e9225c1a1e46fe533853f3da6e14e46956c91fbcbea4737ed4984587378c3b",
+      "assemble_sources.py": "e327cae2fd420b666ef55efbae98cb6b38e54e68fb09a2baea7027f45d15f6b4",
+      "entrypoint.py": "8b264954bdd4668bf9f11f1915dc2c990df9a2e60b4f3ca9b9060d65ae2d48bd",
+      "import_probe.py": "6f055ad35fc6697379aa9609ac3a830e1fe2352a1264c671e302389a353bee9d",
+      "requirements-pro5000.lock": "7db2088e3cd52c6bb8a4bb1f31ca9bbbd026cacc1a3bb074bb4992cac5dc56f1",
+      "runtime-provenance.json": "8fa0b440cd3568435467a1b46eecaf11836ae29a68c3d20db20fa76fb8342c0e",
+      "test_entrypoint.py": "16e25fed6f00779cadc464c328fb42e33820e10a04618cc67b10bd8fde6700ce"
+    }
+  },
+  "mobile_build": {
+    "input_commit": "08c22855e618e8b979d1b11a496ee9551146fd18",
+    "rebuilt_at_packaging_commit": "eefb04f499208f2c19b22996d555633db2451bf2",
+    "input_paths_identical_to_application_commit": true,
+    "command": "npm run build:static",
+    "cwd": "frontend/mobile",
+    "node": "22.23.3",
+    "npm": "10.9.9",
+    "vite": "8.3.4",
+    "outputs": {
+      "mobile": {
+        "tree_sha256": "75d0f5db6c2227358c4c364e8c4a5c7c7c9e01818234fb817dc564a82c456d33",
+        "files": {
+          "assets/index-DV4XD7rX.js": "62f32ead73cd46c5d918f0f8339e06eb3629cecd6ae5d6b5aed67e8bde1303c5",
+          "assets/index-to4roNkp.css": "b498d0d9c50255ec40f0dcc548488f73adb8c2e73d42d8eecfd602ec4277167c",
+          "index.html": "a06961bfd5fa2b1c2a072455ea5d44bc86ed461e3c9ceb16f2fe3ae9ab553bde"
+        }
+      },
+      "mobile-omni": {
+        "tree_sha256": "6091fae64f8942a3911b9e3fc26e6c15fa39ad7706af7bf95c519642c140bc2e",
+        "files": {
+          "index.html": "07f07f4d857ee5b3b212c1466f56f2a15de13bd57340a53eca2650176b53a316",
+          "mobile-bridge.js": "0656c58250c802c7a63f8bcb17db5f49378ec8f9d120fdac36b4cf35a98bd6ee",
+          "mobile-omni.css": "45c4f0ad913342e68827e8df114da71f91e7868a1cf2ea07fc68ec9bb0e34851",
+          "settings-widget.css": "4582d083cc34b87faa2657293cd5bb2cf2c98f7760ec8c2eaf3f86f84f19f320",
+          "settings-widget.js": "493f34d32bc5e3fbf922fcc0498f80977c2971e874bf8ab216046684aa8fbec0"
+        }
+      }
+    }
+  },
+  "runtime": {
+    "source_host": "118.89.233.148",
+    "source_venv": "/data/weihongliang/o5-canonical-enhanced-20260925/.venv-py310-cu130",
+    "source_python": "3.10.21",
+    "container_python": "3.10.22",
+    "source_native_scope": "Pro5000 TP acceptance 2026-10-01; torch/native runtime snapshot, not model weights",
+    "runtime_archive_sha256": "6fd80ea8714a6f2e7a9f467bfd3c343b961a35cb846d7b7ddb3d94672ff99ec0",
+    "cuda13_compiler_archive_sha256": "12d6c6bacd7a24f2a82466e7c096b770d3775a7f49ff714a5a445fff6221f49f",
+    "torch_git": "08187d9e0fba026dc8217405802ab5381dc88d90",
+    "dense_artifact_binary_sha256": "ff1e0b1a95aadf4796a476c75386f13d38199481e022cf60726d9d3874eebf36",
+    "adjustments": [
+      "minicpmo-utils 1.0.6 -> 1.0.7 --no-deps",
+      "minicpm-o5-sdk 0.0.6 --no-deps"
+    ],
+    "package_native_gate": "2026-10-14 host34 Pro6000 SM120; CUDA primitives PASS; not Pro5000 model acceptance",
+    "ninja_executable_sha256": "08639e194fffa7f08b259fc4abfa4803aff66b64de52549cee42ec527d55cea6"
+  },
+  "base_image": {
+    "local_id": "sha256:eff3d1938183691975d62bdf73669c7fb763718dcd78c8683c7615a6f5f70a1a",
+    "tag": "o5-external-hf:20261014-v2"
+  },
+  "model": {
+    "source": "/user/chenjinpeng/Checkpoints/job_1054182/checkpoints/iter_0001275/job_1054182_iter_0001275.pt",
+    "bytes": 74606011097,
+    "sha256": "0789c953677dc8ea71b6085543e1a946ae64bddecd2f6b911ac6380376ef01ff",
+    "embedded_in_image": false
+  },
+  "scope": "Native real API on one Pro6000; Pro5000 TP2 remains untested. No model numerical equivalence claim."
+}
