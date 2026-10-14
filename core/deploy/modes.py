@@ -219,7 +219,8 @@ def _enable_engine(model, *, tp: bool, cfg: Dict[str, Any]):
         else:
             options.setdefault("devices", (str(next(model.llm.parameters()).device),))
         accel.attach(model, accel.AccelerationConfig(**options))
-        return {"acceleration": os.environ["O5_ACCELERATION_PATH"], "tp": 2 if tp else 1}
+        return {"acceleration": os.environ["O5_ACCELERATION_PATH"], "tp": 2 if tp else 1,
+                "acceleration_info": dict(model._acceleration_info)}
     from modeling.o5.opt_flags import OPT
     # deployed MoE on both paths
     experts_impl = _experts_impl()

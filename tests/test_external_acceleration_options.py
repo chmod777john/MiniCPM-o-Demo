@@ -17,8 +17,11 @@ ns = dict(os=os, Any=Any, Dict=Dict, external_enabled=lambda: True)
 exec(compile(ast.Module(functions, type_ignores=[]), str(source), "exec"), ns)
 
 calls = []
-accel = SimpleNamespace(AccelerationConfig=lambda **kwargs: dict(kwargs),
-                        attach=lambda model, cfg: calls.append((model, cfg)))
+def attach(model, cfg):
+    calls.append((model, cfg))
+    model._acceleration_info = {"package": "minicpm_o_accel", **cfg, "resolved_marker": True}
+
+accel = SimpleNamespace(AccelerationConfig=lambda **kwargs: dict(kwargs), attach=attach)
 module = ModuleType("core.external_o5")
 module.acceleration_module = lambda: accel
 model = SimpleNamespace(llm=SimpleNamespace(parameters=lambda: iter([SimpleNamespace(device="cuda:3")])))
@@ -28,7 +31,10 @@ flags = {"O5_TTS_FA2_WHOLE_DECODE": "tts_fa2_whole_decode",
 
 with patch.dict(sys.modules, {"core.external_o5": module}):
     with patch.dict(os.environ, base, clear=True):
-        ns["_enable_engine"](model, tp=True, cfg={})
+        result = ns["_enable_engine"](model, tp=True, cfg={})
+        assert result["acceleration_info"] == model._acceleration_info
+        assert result["acceleration_info"]["resolved_marker"] is True
+        assert result["acceleration_info"] is not model._acceleration_info
         cfg = calls[-1][1]
         assert cfg["hardware"] == "pro5000" and cfg["mode"] == "tp"
         assert cfg["devices"] == ("cuda:0", "cuda:1")
