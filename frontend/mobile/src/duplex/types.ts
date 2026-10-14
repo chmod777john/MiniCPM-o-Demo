@@ -1,3 +1,4 @@
+import type { DuplexOptions } from '../shared/nofc-options'
 import type { ComponentType } from 'react'
 
 export type DuplexEntry = {
@@ -41,6 +42,8 @@ export type DuplexSettings = {
   omni: DuplexModeSettings
   audioDuplexLengthPenalty: number
   videoDuplexLengthPenalty: number
+  audioDuplexOptions: DuplexOptions
+  videoDuplexOptions: DuplexOptions
 }
 
 // Components / icons that screens accept from App via props (alpha mode:

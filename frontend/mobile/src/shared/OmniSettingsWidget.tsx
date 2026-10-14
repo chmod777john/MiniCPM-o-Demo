@@ -1,3 +1,5 @@
+import { DuplexOptionsFields } from './DuplexOptionsFields'
+import { DEFAULT_DUPLEX_OPTIONS, type DuplexOptions } from './nofc-options'
 import { useEffect, useRef, useState, type ChangeEvent } from 'react'
 import { useI18n } from '../i18n'
 import type {
@@ -132,9 +134,7 @@ export type OmniSettingsWidgetProps = {
 export function OmniSettingsWidget({ open, bridge, onClose }: OmniSettingsWidgetProps) {
   const { lang, setLang: onSetLang, t: i18n } = useI18n()
   const [systemPrompt, setSystemPrompt] = useState('')
-  const [lengthPenalty, setLengthPenalty] = useState(1.1)
-  const [playbackDelay, setPlaybackDelay] = useState(0)
-  const [maxKv, setMaxKv] = useState(8192)
+  const [duplexOptions, setDuplexOptions] = useState<DuplexOptions>({ ...DEFAULT_DUPLEX_OPTIONS })
 
   const [presets, setPresets] = useState<PresetMetadata[]>([])
   const [userPresets, setUserPresets] = useState<UserPreset[]>([])
@@ -163,14 +163,12 @@ export function OmniSettingsWidget({ open, bridge, onClose }: OmniSettingsWidget
   useEffect(() => {
     if (!open) return
     setSystemPrompt(bridge.getSystemPrompt())
-    setLengthPenalty(bridge.getLengthPenalty())
-    setPlaybackDelay(bridge.getPlaybackDelay())
-    setMaxKv(bridge.getMaxKv())
+    setDuplexOptions(bridge.getDuplexOptions())
 
     const existingB64 = bridge.getRefAudioBase64()
-    if (existingB64) {
-      setRefAudio((prev) => (prev.base64 === existingB64 ? prev : { ...prev, base64: existingB64, source: prev.source === 'none' ? 'default' : prev.source }))
-    }
+    setRefAudio((prev) => existingB64
+      ? (prev.base64 === existingB64 ? prev : { ...prev, base64: existingB64, source: 'preset', name: 'Current reference' })
+      : cloneRefAudio(EMPTY_REF_AUDIO))
 
     void loadPresets()
     void idbGetAll().then(setUserPresets)
@@ -216,10 +214,6 @@ export function OmniSettingsWidget({ open, bridge, onClose }: OmniSettingsWidget
             base64: payload.base64,
           }
           setDefaultRefAudio(dra)
-          setRefAudio((prev) => {
-            if (prev.source === 'none' || !prev.base64) return dra
-            return prev
-          })
         }
       }
     } catch (err) {
@@ -229,15 +223,9 @@ export function OmniSettingsWidget({ open, bridge, onClose }: OmniSettingsWidget
 
   function syncToBridge(patch: {
     prompt?: string
-    lp?: number
-    delay?: number
-    kv?: number
     ref?: RefAudioState
   }) {
     if (patch.prompt !== undefined) bridge.setSystemPrompt(patch.prompt)
-    if (patch.lp !== undefined) bridge.setLengthPenalty(patch.lp)
-    if (patch.delay !== undefined) bridge.setPlaybackDelay(patch.delay)
-    if (patch.kv !== undefined) bridge.setMaxKv(patch.kv)
     if (patch.ref !== undefined) {
       bridge.setRefAudioBase64(patch.ref.base64, patch.ref.name, patch.ref.duration)
     }
@@ -443,24 +431,6 @@ export function OmniSettingsWidget({ open, bridge, onClose }: OmniSettingsWidget
     syncToBridge({ prompt: value })
   }
 
-  function handleLpChange(value: number) {
-    const v = Number.isFinite(value) ? value : 1.1
-    setLengthPenalty(v)
-    syncToBridge({ lp: v })
-  }
-
-  function handleDelayChange(value: number) {
-    const v = Number.isFinite(value) ? value : 0
-    setPlaybackDelay(v)
-    syncToBridge({ delay: v })
-  }
-
-  function handleKvChange(value: number) {
-    const v = Number.isFinite(value) ? value : 8192
-    setMaxKv(v)
-    syncToBridge({ kv: v })
-  }
-
   if (!open) return null
 
   return (
@@ -550,20 +520,7 @@ export function OmniSettingsWidget({ open, bridge, onClose }: OmniSettingsWidget
 
         <div className="settings-section">
           <div className="settings-section-title">{i18n.params}</div>
-          <div className="settings-grid">
-            <label className="settings-field">
-              <span>{i18n.lengthPenalty}</span>
-              <input className="settings-input" type="number" min="0.1" max="5" step="0.05" value={lengthPenalty} onChange={(e) => handleLpChange(Number(e.target.value))} />
-            </label>
-            <label className="settings-field">
-              <span>Playback Delay (ms)</span>
-              <input className="settings-input" type="number" min="0" max="2000" step="50" value={playbackDelay} onChange={(e) => handleDelayChange(Number(e.target.value))} />
-            </label>
-            <label className="settings-field">
-              <span>Max KV (tok)</span>
-              <input className="settings-input" type="number" min="512" max="16384" step="512" value={maxKv} onChange={(e) => handleKvChange(Number(e.target.value))} />
-            </label>
-          </div>
+          <DuplexOptionsFields value={duplexOptions} video allowedModes={bridge.getAllowedWindowModes()} disabled={bridge.isSessionActive()} onChange={(value) => { setDuplexOptions(value); bridge.setDuplexOptions(value) }} />
         </div>
 
         <div className="settings-section">

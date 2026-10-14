@@ -4,7 +4,7 @@ type DuplexQueueUpdate = {
   queue_length?: number
 }
 
-type DuplexMetrics =
+export type DuplexMetrics =
   | {
       type: 'state'
       sessionState?: string
@@ -20,6 +20,7 @@ type DuplexMetrics =
       type: 'audio'
       ahead?: number
     }
+  | { type: 'window'; windowEventCount: number; windowEvent: { before: number; after: number; duration_ms: number; inputId?: string } }
 
 export type DuplexResultLike = {
   is_listen: boolean
@@ -68,6 +69,8 @@ type DuplexSessionConstructor = new (
     getMaxKvTokens?: () => number
     getPlaybackDelayMs?: () => number
     outputSampleRate?: number
+    enableReconnect?: boolean
+    getWsUrl?: () => string
   },
 ) => DuplexSessionLike
 

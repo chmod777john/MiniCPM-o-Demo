@@ -1,3 +1,5 @@
+import { buildDuplexPreparePayload, validateDuplexOptions } from '../shared/nofc-options'
+import { appendClientIdentity } from '../shared/client-identity'
 import { useEffect, useRef, useState, type RefObject } from 'react'
 import {
   MobileLiveMediaProvider,
@@ -57,6 +59,8 @@ export type UseDuplexSessionApi = {
   pauseState: DuplexPauseState
   forceListen: boolean
   badgeText: string
+  kvCacheLength: number
+  windowEventCount: number
   audioScreenOpen: boolean
   videoScreenOpen: boolean
   hasSession: boolean
@@ -95,6 +99,8 @@ export function useDuplexSession(
   const [pauseState, setPauseState] = useState<DuplexPauseState>('active')
   const [forceListen, setForceListen] = useState(false)
   const [hasSession, setHasSession] = useState(false)
+  const [kvCacheLength, setKvCacheLength] = useState(0)
+  const [windowEventCount, setWindowEventCount] = useState(0)
 
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
@@ -206,6 +212,8 @@ export function useDuplexSession(
   function openScreen(nextMode: DuplexMode) {
     setMode(nextMode)
     setEntries([])
+    setKvCacheLength(0)
+    setWindowEventCount(0)
     setMicEnabled(true)
     setPauseState('active')
     setHasSession(false)
@@ -270,11 +278,14 @@ export function useDuplexSession(
     const modeLabel = getDuplexModeLabel(nextMode, i18n)
     const withVideo = nextMode === 'video'
     const duplexSettings = withVideo ? settings.omni : settings.audio_duplex
+    const options = withVideo ? settings.videoDuplexOptions : settings.audioDuplexOptions
 
     startInFlightRef.current = true
     listenEntryIdRef.current = null
     setMode(nextMode)
     setEntries([])
+    setKvCacheLength(0)
+    setWindowEventCount(0)
     setMicEnabled(true)
     setPauseState('active')
     setStatus('starting')
@@ -283,6 +294,7 @@ export function useDuplexSession(
     )
 
     try {
+      validateDuplexOptions(options)
       const runtime = await loadDuplexRuntime()
       // Reuse the preview-time media provider when present (video mode opens a
       // camera stream during attachPreview). Recreating one here orphans the
@@ -302,8 +314,10 @@ export function useDuplexSession(
         mediaRef.current = media
       }
       const session = new runtime.DuplexSession(withVideo ? 'omni' : 'adx', {
-        getMaxKvTokens: () => 8192,
-        getPlaybackDelayMs: () => 200,
+        getMaxKvTokens: () => options.maxKvTokens,
+        getPlaybackDelayMs: () => options.playbackDelayMs,
+        enableReconnect: true,
+        getWsUrl: () => appendClientIdentity(`${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/v1/realtime?mode=${withVideo ? 'video' : 'audio'}`),
         outputSampleRate: 24000,
       })
 
@@ -313,6 +327,10 @@ export function useDuplexSession(
       media.setMicEnabled(true)
       await media.setCameraEnabled(withVideo)
 
+      session.onMetrics = (metrics) => {
+        if (metrics.type === 'result' && metrics.kvCacheLength != null) setKvCacheLength(metrics.kvCacheLength)
+        if (metrics.type === 'window') setWindowEventCount(metrics.windowEventCount)
+      }
       session.onSystemLog = (text) => {
         appendEntry('system', text)
       }
@@ -398,23 +416,7 @@ export function useDuplexSession(
         setStatusText(i18n.duplexEnded(modeLabel))
       }
 
-      const preparePayload: Record<string, unknown> = {
-        config: {
-          length_penalty: withVideo
-            ? settings.videoDuplexLengthPenalty
-            : settings.audioDuplexLengthPenalty,
-        },
-      }
-
-      if (duplexSettings.refAudio.base64) {
-        preparePayload.ref_audio_base64 = duplexSettings.refAudio.base64
-        preparePayload.tts_ref_audio_base64 = duplexSettings.refAudio.base64
-      }
-
-      if (withVideo) {
-        preparePayload.max_slice_nums = 1
-        preparePayload.deferred_finalize = true
-      }
+      const preparePayload = buildDuplexPreparePayload(options, duplexSettings.refAudio.base64, withVideo)
 
       await session.start(
         duplexSettings.systemPrompt.trim() || 'You are a helpful assistant.',
@@ -441,6 +443,7 @@ export function useDuplexSession(
         setLastSessionId(session.recordingSessionId)
       }
     } catch (error) {
+      sessionRef.current?.cleanup()
       mediaRef.current?.stop()
       mediaRef.current = null
       sessionRef.current = null
@@ -516,6 +519,8 @@ export function useDuplexSession(
     pauseState,
     forceListen,
     badgeText,
+    kvCacheLength,
+    windowEventCount,
     audioScreenOpen,
     videoScreenOpen,
     hasSession,

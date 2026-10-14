@@ -300,3 +300,18 @@ body.mobile-omni .fs-ctrl-btn {
 body.mobile-omni .fs-chat-overlay {
     bottom: calc(env(safe-area-inset-bottom, 0px) + 64px) !important;
 }
+
+/* Mirror the shared runtime's real KV/window metrics on the mobile stage. */
+.mb-stage-metrics {
+    position: absolute;
+    top: calc(env(safe-area-inset-top, 0px) + 58px);
+    left: 12px;
+    max-width: calc(100% - 24px);
+    padding: 4px 8px;
+    color: #fff;
+    background: rgba(0, 0, 0, .4);
+    border-radius: 8px;
+    font-size: 11px;
+    z-index: 21;
+    pointer-events: none;
+}

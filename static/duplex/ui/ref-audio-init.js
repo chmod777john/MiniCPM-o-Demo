@@ -18,19 +18,23 @@ export function initRefAudio(containerId, callbacks = {}) {
     let base64 = null;
     let name = '';
     let isDefault = false;
+    let revision = 0;
 
     const rap = new RefAudioPlayer(document.getElementById(containerId), {
         theme: 'light',
         onUpload(b64, n, duration) {
+            revision += 1;
             base64 = b64;
             name = n;
             isDefault = false;
         },
         onRemove() {
+            const requestedRevision = ++revision;
             base64 = null;
             name = '';
             isDefault = false;
             fetch('/api/default_ref_audio').then(r => r.json()).then(data => {
+                if (revision !== requestedRevision) return;
                 base64 = data.base64;
                 name = data.name;
                 isDefault = true;
@@ -39,8 +43,10 @@ export function initRefAudio(containerId, callbacks = {}) {
         },
     });
 
-    // Load default ref audio
+    // Load default ref audio unless a user/preset has already supplied one.
+    const defaultRevision = revision;
     fetch('/api/default_ref_audio').then(r => r.json()).then(data => {
+        if (revision !== defaultRevision) return;
         base64 = data.base64;
         name = data.name;
         isDefault = true;
@@ -57,6 +63,7 @@ export function initRefAudio(containerId, callbacks = {}) {
         isDefault: () => isDefault,
         rap,
         setAudio(b64, n, dur) {
+            revision += 1;
             base64 = b64;
             name = n || '';
             isDefault = false;

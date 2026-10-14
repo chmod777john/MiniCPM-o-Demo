@@ -293,6 +293,7 @@ export function AudioDuplexScreen({
           <div className="halfduplex-top-title-main">{i18n.audioCall}</div>
           <div className={`halfduplex-top-title-sub status-${status}`}>
             {statusText}
+            {hasSession && <span> · KV {duplex.kvCacheLength} · ✂ {duplex.windowEventCount}</span>}
           </div>
         </div>
         <div className="halfduplex-top-actions">

@@ -1,3 +1,4 @@
+import type { DuplexOptions, SlidingWindowMode } from './nofc-options'
 export type RefAudioState = {
   source: 'none' | 'default' | 'preset' | 'upload'
   name: string
@@ -36,14 +37,12 @@ export const EMPTY_REF_AUDIO: RefAudioState = {
 }
 
 export type OmniBridge = {
+  getDuplexOptions: () => DuplexOptions
+  setDuplexOptions: (value: DuplexOptions) => void
+  getAllowedWindowModes: () => SlidingWindowMode[]
+  isSessionActive: () => boolean
   getSystemPrompt: () => string
   setSystemPrompt: (v: string) => void
-  getLengthPenalty: () => number
-  setLengthPenalty: (v: number) => void
-  getPlaybackDelay: () => number
-  setPlaybackDelay: (v: number) => void
-  getMaxKv: () => number
-  setMaxKv: (v: number) => void
   getRefAudioBase64: () => string | null
   setRefAudioBase64: (b64: string | null, name: string, duration: number) => void
 }

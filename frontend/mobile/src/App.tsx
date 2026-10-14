@@ -38,6 +38,8 @@ import {
 import { appendClientIdentity } from './shared/client-identity'
 import { I18nContext, useI18n, detectLang, persistLang, t as getT } from './i18n'
 import type { Lang, Translations } from './i18n'
+import { DuplexOptionsFields } from './shared/DuplexOptionsFields'
+import { applyFrontendDefaults, buildChatPayload, DEFAULT_DUPLEX_OPTIONS, type DuplexOptions, type SlidingWindowMode, type FrontendDefaults } from './shared/nofc-options'
 import './App.css'
 
 // Static AudioWorklet module used by the mobile turn-based recorder.
@@ -199,6 +201,9 @@ type SettingsState = {
   videoDuplexLengthPenalty: number
   turnTtsEnabled: boolean
   turnStreamingEnabled: boolean
+  turnHdImages: boolean
+  audioDuplexOptions: DuplexOptions
+  videoDuplexOptions: DuplexOptions
 }
 
 type IconProps = {
@@ -242,6 +247,9 @@ const DEFAULT_SETTINGS: SettingsState = {
   videoDuplexLengthPenalty: 1.1,
   turnTtsEnabled: true,
   turnStreamingEnabled: true,
+  turnHdImages: false,
+  audioDuplexOptions: { ...DEFAULT_DUPLEX_OPTIONS },
+  videoDuplexOptions: { ...DEFAULT_DUPLEX_OPTIONS },
 }
 
 function createId(prefix: string): string {
@@ -2202,7 +2210,7 @@ function SettingsSummary({
         <span className="settings-chip">
           Ref: {refAudio.base64 ? refAudio.name : i18n.notSet}
         </span>
-        <span className="settings-chip">Len: {lengthPenalty.toFixed(2)}</span>
+        {typeof turnStreamingEnabled === 'boolean' && <span className="settings-chip">Len: {lengthPenalty.toFixed(2)}</span>}
         {typeof maxNewTokens === 'number' ? (
           <span className="settings-chip">Tokens: {maxNewTokens}</span>
         ) : null}
@@ -2232,6 +2240,12 @@ type SettingsSheetProps = {
   maxNewTokens: number
   turnTtsEnabled: boolean
   turnStreamingEnabled: boolean
+  turnHdImages: boolean
+  onTurnHdImagesChange: (value: boolean) => void
+  duplexOptions: DuplexOptions
+  onDuplexOptionsChange: (value: DuplexOptions) => void
+  allowedWindowModes: SlidingWindowMode[]
+  duplexSessionActive: boolean
   onClose: () => void
   onSelectPreset: (presetId: string) => void
   onSelectUserPreset: (presetId: string) => void
@@ -2639,6 +2653,12 @@ function SettingsSheet({
   maxNewTokens,
   turnTtsEnabled,
   turnStreamingEnabled,
+  turnHdImages,
+  onTurnHdImagesChange,
+  duplexOptions,
+  onDuplexOptionsChange,
+  allowedWindowModes,
+  duplexSessionActive,
   onClose,
   onSelectPreset,
   onSelectUserPreset,
@@ -2839,7 +2859,7 @@ function SettingsSheet({
         <div className="settings-section">
           <div className="settings-section-title">{i18n.params}</div>
           <div className="settings-grid">
-            <label className="settings-field">
+            {activeMode === 'turnbased' && <label className="settings-field">
               <span>{i18n.lengthPenalty}</span>
               <input
                 className="settings-input"
@@ -2852,7 +2872,7 @@ function SettingsSheet({
                   onLengthPenaltyChange(Number(event.target.value))
                 }}
               />
-            </label>
+            </label>}
 
             {activeMode === 'turnbased' ? (
               <label className="settings-field">
@@ -2872,8 +2892,10 @@ function SettingsSheet({
             ) : null}
           </div>
 
+          {activeMode !== 'turnbased' && <DuplexOptionsFields value={duplexOptions} onChange={onDuplexOptionsChange} allowedModes={allowedWindowModes} video={activeMode === 'omni'} disabled={duplexSessionActive} />}
           {activeMode === 'turnbased' ? (
             <>
+              <label className="settings-toggle"><input type="checkbox" checked={turnHdImages} onChange={(event) => onTurnHdImagesChange(event.target.checked)} /><span>{lang === 'zh' ? '高清图片（2 切片；视频固定 1）' : 'HD images (2 slices; video uses 1)'}</span></label>
               <label className="settings-toggle">
                 <input
                   type="checkbox"
@@ -3301,7 +3323,6 @@ function App() {
   const [shareSuccess, setShareSuccess] = useState<string | null>(null)
 
   const messagesRef = useRef<ConversationEntry[]>([])
-  const abortRef = useRef<AbortController | null>(null)
   const streamingWsRef = useRef<WebSocket | null>(null)
   const streamingPlayerRef = useRef<StreamingPcmPlayer | null>(null)
   const streamingStopRef = useRef<(() => void) | null>(null)
@@ -3334,6 +3355,24 @@ function App() {
   const recordingActionRef = useRef<'send' | 'cancel'>('send')
   const refAudioInputRef = useRef<HTMLInputElement | null>(null)
   const refAudioTargetIndexRef = useRef<number | null>(null)
+
+  const [frontendDefaultsReady, setFrontendDefaultsReady] = useState(false)
+  const [allowedWindowModes, setAllowedWindowModes] = useState<SlidingWindowMode[]>(['off', 'basic', 'kv_surgery'])
+  useEffect(() => {
+    let cancelled = false
+    void fetch('/api/frontend_defaults').then(async (response) => {
+      if (!response.ok) throw new Error(`frontend defaults: ${response.status}`)
+      const defaults = await response.json() as FrontendDefaults
+      if (cancelled) return
+      if (defaults.sliding_window_modes?.length) setAllowedWindowModes(defaults.sliding_window_modes)
+      setSettings((previous) => ({
+        ...previous,
+        audioDuplexOptions: applyFrontendDefaults(previous.audioDuplexOptions, defaults),
+        videoDuplexOptions: applyFrontendDefaults(previous.videoDuplexOptions, defaults),
+      }))
+    }).catch((error) => console.warn('Using desktop fallback session defaults', error)).finally(() => { if (!cancelled) setFrontendDefaultsReady(true) })
+    return () => { cancelled = true }
+  }, [])
 
   const duplex = useDuplexSession({
     screen,
@@ -3840,7 +3879,9 @@ function App() {
 
   useEffect(() => {
     return () => {
-      abortRef.current?.abort()
+      streamingStopRef.current?.()
+      streamingWsRef.current?.close()
+      void streamingPlayerRef.current?.dispose()
       clearIdleColdDownTimer()
       coldDownMic()
 
@@ -4718,8 +4759,6 @@ function App() {
   }
 
   function stopCurrentReply() {
-    abortRef.current?.abort()
-
     const stop = streamingStopRef.current
     if (stop) {
       streamingStopRef.current = null
@@ -4772,213 +4811,23 @@ function App() {
     systemMessage: string | BackendContentItem[] | null | undefined,
     streaming: boolean,
   ) {
-    return {
-      messages: buildRequestMessages(nextMessages, systemMessage),
-      streaming,
-      generation: {
-        max_new_tokens: settings.maxNewTokens,
-        length_penalty: settings.turnLengthPenalty,
-      },
-      ...(settings.turnTtsEnabled
-        ? {
-            use_tts_template: true,
-          }
-        : {}),
-      tts: {
-        enabled: settings.turnTtsEnabled,
-        ...(settings.turnTtsEnabled && settings.turnbased.refAudio.base64
-          ? {
-              mode: 'audio_assistant',
-              ref_audio_data: settings.turnbased.refAudio.base64,
-            }
-          : settings.turnTtsEnabled
-            ? {
-                mode: 'audio_assistant',
-              }
-            : {}),
-      },
-    }
+    return buildChatPayload(buildRequestMessages(nextMessages, systemMessage), streaming, {
+      maxNewTokens: settings.maxNewTokens,
+      lengthPenalty: settings.turnLengthPenalty,
+      ttsEnabled: settings.turnTtsEnabled,
+      refAudio: settings.turnbased.refAudio.base64,
+      hdImages: settings.turnHdImages,
+      enableThinking: false,
+    })
   }
 
   async function submitConversation(nextMessages: ConversationEntry[]) {
-    if (settings.turnStreamingEnabled) {
-      await submitConversationStreaming(nextMessages)
-    } else {
-      await submitConversationNonStreaming(nextMessages)
-    }
-  }
-
-  async function submitConversationNonStreaming(
-    nextMessages: ConversationEntry[],
-  ) {
-    const systemMessage = buildTurnSystemMessage()
-    const submissionSessionId = activeSessionIdRef.current
-    const isStillActive = () =>
-      activeSessionIdRef.current === submissionSessionId
-
-    setPendingReply({
-      id: createId('pending'),
-      role: 'assistant',
-      kind: 'pending',
-      text: i18n.thinking,
-    })
-    setIsGenerating(true)
-
-    const controller = new AbortController()
-
-    abortRef.current = controller
-
-    // Auto-retry semantics for the non-streaming HTTP path: silently retry
-    // network-level failures up to MAX_ATTEMPTS before surfacing to the user.
-    // We deliberately do NOT retry on backend-reported errors (HTTP 4xx/5xx
-    // with a parsed payload) because those are deterministic and re-issuing
-    // the same request won't help.
-    const MAX_ATTEMPTS = 3
-    const RETRY_BASE_DELAY_MS = 400
-    const requestBody = JSON.stringify(
-      buildChatRequestBody(nextMessages, systemMessage, false),
-    )
-
-    type ChatPayload = {
-      text?: string
-      error?: string
-      success?: boolean
-      audio_data?: string | null
-      audio_sample_rate?: number
-      recording_session_id?: string | null
-    }
-
-    const fetchOnce = async (): Promise<ChatPayload> => {
-      const response = await fetch('/api/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: requestBody,
-        signal: controller.signal,
-      })
-
-      const rawText = await response.text()
-      let payload: ChatPayload
-      try {
-        payload = JSON.parse(rawText) as ChatPayload
-      } catch {
-        throw new Error(rawText || `HTTP ${response.status}`)
-      }
-
-      if (!response.ok || payload.success === false) {
-        throw new Error(payload.error || `HTTP ${response.status}`)
-      }
-
-      return payload
-    }
-
-    const isTransientNetworkError = (err: unknown): boolean => {
-      if (controller.signal.aborted) return false
-      // TypeError covers Fetch's "Failed to fetch" / network failure.
-      // We treat any error that isn't an HTTP-with-payload error as
-      // transient — fetchOnce throws Error('HTTP ...') / Error(payload.error)
-      // for those, so they end up here looking like transient too. To keep
-      // the surface narrow we only retry true TypeError network failures.
-      return err instanceof TypeError
-    }
-
-    try {
-      let payload: ChatPayload | null = null
-      let lastError: unknown = null
-      for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
-        try {
-          payload = await fetchOnce()
-          break
-        } catch (err) {
-          lastError = err
-          if (controller.signal.aborted) {
-            throw err
-          }
-          if (
-            !isTransientNetworkError(err) ||
-            attempt + 1 >= MAX_ATTEMPTS
-          ) {
-            throw err
-          }
-          await new Promise((r) =>
-            setTimeout(r, RETRY_BASE_DELAY_MS * (attempt + 1)),
-          )
-        }
-      }
-
-      if (!payload) {
-        throw lastError ?? new Error(i18n.requestFailed)
-      }
-
-      let assistantAudioUrl: string | null = null
-      const assistantAudioSampleRate = payload.audio_sample_rate ?? 24000
-
-      if (payload.audio_data) {
-        try {
-          assistantAudioUrl = audioBase64ToBlobUrl(
-            payload.audio_data,
-            assistantAudioSampleRate,
-          )
-        } catch {
-          assistantAudioUrl = null
-        }
-      }
-
-      const assistantEntry: ConversationEntry = {
-        id: createId('assistant'),
-        role: 'assistant',
-        kind: 'assistant',
-        text: payload.text?.trim() || i18n.emptyReply,
-        audioPreviewUrl: assistantAudioUrl,
-        // Keep the raw bytes so we can rebuild the Blob URL after a
-        // page reload (Blob URLs themselves don't survive).
-        audioBase64: payload.audio_data ?? null,
-        audioSampleRate: payload.audio_data ? assistantAudioSampleRate : null,
-        recordingSessionId: payload.recording_session_id ?? null,
-      }
-
-      if (isStillActive()) {
-        setMessages([...nextMessages, assistantEntry])
-        setLastSessionId(payload.recording_session_id ?? null)
-      } else {
-        // Reply landed after the user already switched away. Save it
-        // back into the originating session marked as interrupted so
-        // the partial / completed response is not lost on switch-back.
-        persistEntryToSession(submissionSessionId, [
-          ...nextMessages,
-          { ...assistantEntry, interrupted: true },
-        ])
-      }
-    } catch (error) {
-      const errorText =
-        controller.signal.aborted
-          ? i18n.stoppedReply
-          : i18n.requestFailedDetail(getErrorMessage(error))
-
-      if (isStillActive() && !controller.signal.aborted) {
-        setMessages([
-          ...nextMessages,
-          {
-            id: createId('assistant'),
-            role: 'assistant',
-            kind: 'assistant',
-            text: errorText,
-            error: true,
-          },
-        ])
-      }
-    } finally {
-      if (abortRef.current === controller) {
-        abortRef.current = null
-      }
-      if (isStillActive()) {
-        setPendingReply(null)
-        setIsGenerating(false)
-      }
-    }
+    await submitConversationStreaming(nextMessages, settings.turnStreamingEnabled)
   }
 
   async function submitConversationStreaming(
     nextMessages: ConversationEntry[],
+    streaming: boolean,
   ) {
     const systemMessage = buildTurnSystemMessage()
     const submissionSessionId = activeSessionIdRef.current
@@ -5043,6 +4892,7 @@ function App() {
 
       let resolvedEntry = entry
 
+      const finalPlayer = player
       if (player) {
         const merged = player.getMergedFloat32()
         let mergedUrl: string | null = null
@@ -5119,7 +4969,7 @@ function App() {
         streamingWsRef.current = null
       }
 
-      if (streamingPlayerRef.current === player) {
+      if (streamingPlayerRef.current === finalPlayer) {
         streamingPlayerRef.current = null
       }
 
@@ -5143,7 +4993,7 @@ function App() {
       }
     }
 
-    const requestPayload = buildChatRequestBody(nextMessages, systemMessage, true)
+    const requestPayload = buildChatRequestBody(nextMessages, systemMessage, streaming)
 
     const runAttempt = (attempt: number) => {
       if (finished || stoppedByUser) {
@@ -5954,6 +5804,12 @@ function App() {
         maxNewTokens={settings.maxNewTokens}
         turnTtsEnabled={settings.turnTtsEnabled}
         turnStreamingEnabled={settings.turnStreamingEnabled}
+        turnHdImages={settings.turnHdImages}
+        onTurnHdImagesChange={(value) => setSettings((previous) => ({ ...previous, turnHdImages: value }))}
+        duplexOptions={activePresetMode === 'omni' ? settings.videoDuplexOptions : settings.audioDuplexOptions}
+        onDuplexOptionsChange={(value) => setSettings((previous) => ({ ...previous, [activePresetMode === 'omni' ? 'videoDuplexOptions' : 'audioDuplexOptions']: value }))}
+        allowedWindowModes={allowedWindowModes}
+        duplexSessionActive={duplex.hasSession || !frontendDefaultsReady}
         onClose={() => {
           setSettingsOpen(false)
         }}
@@ -6045,7 +5901,7 @@ function App() {
                 className="topbar-icon-btn"
                 type="button"
                 onClick={() => duplex.openScreen('audio')}
-                disabled={isGenerating || isRecording || isPreparingRecording}
+                disabled={!frontendDefaultsReady || isGenerating || isRecording || isPreparingRecording}
                 aria-label={i18n.enterAudioDuplex}
               >
                 <PhoneIcon className="app-icon app-icon-md" />
@@ -6059,6 +5915,8 @@ function App() {
                   try {
                     const payload = {
                       systemPrompt: settings.omni.systemPrompt,
+                      refAudio: settings.omni.refAudio,
+                      options: settings.videoDuplexOptions,
                     }
                     sessionStorage.setItem('mobileOmni:settings', JSON.stringify(payload))
                   } catch {
@@ -6066,7 +5924,7 @@ function App() {
                   }
                   window.location.assign('/mobile-omni/')
                 }}
-                disabled={isGenerating || isRecording || isPreparingRecording}
+                disabled={!frontendDefaultsReady || isGenerating || isRecording || isPreparingRecording}
                 aria-label={i18n.enterVideoDuplex}
               >
                 <VideoCallIcon className="app-icon app-icon-md" />
@@ -6397,7 +6255,7 @@ function App() {
                     setAttachMenuOpen(false)
                     duplex.openScreen('audio')
                   }}
-                  disabled={isGenerating || isRecording || isPreparingRecording}
+                  disabled={!frontendDefaultsReady || isGenerating || isRecording || isPreparingRecording}
                 >
                   <span className="attach-drawer-icon attach-drawer-icon-phone">
                     <PhoneIcon className="app-icon app-icon-lg" />

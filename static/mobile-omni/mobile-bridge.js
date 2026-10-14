@@ -75,51 +75,69 @@
         el.dispatchEvent(new Event('change', { bubbles: true }));
     }
 
-    function getDesktopRefAudioPlayer() {
-        return document.getElementById('omniRefAudioPlayer');
+    const numericOptions = {
+        maxKvTokens: ['maxKvTokens', 262144], playbackDelayMs: ['playbackDelay', 200],
+        basicWindowHighTokens: ['basicWindowHighTokens', 8000], basicWindowLowTokens: ['basicWindowLowTokens', 6000],
+        contextMaxUnits: ['contextMaxUnits', 250], textSink: ['textSink', 512], textSlidingWindow: ['textSlidingWindow', 10240],
+        speakThreshold: ['speakThreshold', 0.3], visionFixedSliceNums: ['visionFixedSliceNums', 2], visionStrategySliceNums: ['visionStrategySliceNums', 4],
+    };
+    function getDuplexOptions() {
+        const result = {};
+        for (const [key, [id, fallback]] of Object.entries(numericOptions)) {
+            const value = Number(getDesktopInput(id)?.value);
+            result[key] = Number.isFinite(value) ? value : fallback;
+        }
+        result.slidingWindowMode = document.querySelector('input[name="slidingWindowMode"]:checked')?.value || 'basic';
+        result.listenSpeakDecision = !!getDesktopInput('listenSpeakDecisionEnabled')?.checked;
+        result.useTts = !!getDesktopInput('ttsEnabled')?.checked;
+        result.ttsRefAudioBase64 = window.__omniTtsRef?.mode === 'independent' ? window.__omniTtsRef.audioBase64 : null;
+        result.visionHDMode = getDesktopInput('visionHDMode')?.value || 'fixed';
+        return result;
     }
-
+    function setDuplexOptions(value) {
+        if ('ttsRefAudioBase64' in value && window.__omniTtsRef) {
+            const ctrl = window.__omniTtsRef;
+            ctrl.audioBase64 = value.ttsRefAudioBase64;
+            const mode = value.ttsRefAudioBase64 ? 'independent' : 'extract';
+            const radio = document.querySelector(`input[name="omniTtsRefMode"][value="${mode}"]`);
+            if (radio) radio.checked = true;
+            ctrl.onModeChange();
+            if (value.ttsRefAudioBase64) ctrl.rap?.setAudio(value.ttsRefAudioBase64, 'Mobile TTS reference', 0);
+            else ctrl.rap?.clear();
+        }
+        for (const [key, [id]] of Object.entries(numericOptions)) {
+            if (Number.isFinite(value[key])) setDesktopInput(id, String(value[key]));
+        }
+        for (const [key, id] of [['listenSpeakDecision', 'listenSpeakDecisionEnabled'], ['useTts', 'ttsEnabled']]) {
+            const el = getDesktopInput(id);
+            if (el && typeof value[key] === 'boolean') {
+                el.checked = value[key];
+                el.dispatchEvent(new Event('change', { bubbles: true }));
+            }
+        }
+        if (value.visionHDMode) setDesktopInput('visionHDMode', value.visionHDMode);
+        const radio = [...document.querySelectorAll('input[name="slidingWindowMode"]')].find((el) => el.value === value.slidingWindowMode && !el.disabled);
+        if (radio) { radio.checked = true; radio.dispatchEvent(new Event('change', { bubbles: true })); }
+    }
     function buildBridge() {
         return {
+            getDuplexOptions,
+            setDuplexOptions,
+            getAllowedWindowModes() {
+                return [...document.querySelectorAll('input[name="slidingWindowMode"]')].filter((el) => !el.disabled).map((el) => el.value);
+            },
+            isSessionActive() { return !!getDesktopInput('btnStart')?.disabled; },
             getSystemPrompt() {
                 return getDesktopInput('systemPrompt')?.value || '';
             },
             setSystemPrompt(v) {
                 setDesktopInput('systemPrompt', v);
             },
-            getLengthPenalty() {
-                return parseFloat(getDesktopInput('omniLengthPenalty')?.value) || 1.1;
-            },
-            setLengthPenalty(v) {
-                setDesktopInput('omniLengthPenalty', String(v));
-            },
-            getPlaybackDelay() {
-                return parseInt(getDesktopInput('playbackDelay')?.value, 10) || 0;
-            },
-            setPlaybackDelay(v) {
-                setDesktopInput('playbackDelay', String(v));
-            },
-            getMaxKv() {
-                return parseInt(getDesktopInput('maxKvTokens')?.value, 10) || 8192;
-            },
-            setMaxKv(v) {
-                setDesktopInput('maxKvTokens', String(v));
-            },
             getRefAudioBase64() {
-                return null;
+                return window.__omniRefAudio?.getBase64() || null;
             },
             setRefAudioBase64(b64, name, duration) {
-                const rap = getDesktopRefAudioPlayer();
-                if (!rap) return;
-                if (b64 === null) {
-                    const removeBtn = rap.querySelector('.rap-remove-btn');
-                    if (removeBtn) removeBtn.click();
-                    return;
-                }
-                const ev = new CustomEvent('mobileSetRefAudio', {
-                    detail: { base64: b64, name: name, duration: duration },
-                });
-                rap.dispatchEvent(ev);
+                window.__omniRefAudio?.setAudio(b64, name, duration);
             },
         };
     }
@@ -180,6 +198,26 @@
     // (comment modal, upload, copy link, toast) runs unchanged via
     // SaveShareUI from save-share.js.
     // ========================================================================
+    function injectStageMetrics() {
+        const container = document.getElementById('videoContainer');
+        const kv = document.getElementById('kvCacheDisplay');
+        const count = document.getElementById('windowCountDisplay');
+        const latest = document.getElementById('windowLatestDisplay');
+        if (!container || !kv || !count || !latest) return;
+        const badge = document.createElement('div');
+        badge.className = 'mb-stage-metrics';
+        badge.setAttribute('aria-live', 'polite');
+        const refresh = () => {
+            badge.textContent = `KV ${kv.textContent || '0'} · ✂ ${count.textContent || '0'} · ${latest.textContent || ''}`;
+            badge.title = latest.title;
+        };
+        refresh();
+        container.appendChild(badge);
+        const observer = new MutationObserver(refresh);
+        for (const el of [kv, count, latest]) observer.observe(el, { childList: true, characterData: true, subtree: true, attributes: true, attributeFilter: ['title'] });
+        window.addEventListener('pagehide', () => observer.disconnect(), { once: true });
+    }
+
     function injectStageShareButton() {
         const container = document.getElementById('videoContainer');
         if (!container) return;
@@ -261,9 +299,10 @@
         let s;
         try { s = JSON.parse(raw); } catch (_) { return; }
         if (!s || typeof s !== 'object') return;
-        if (typeof s.systemPrompt === 'string') {
-            setDesktopInput('systemPrompt', s.systemPrompt);
-        }
+        if (typeof s.systemPrompt === 'string') setDesktopInput('systemPrompt', s.systemPrompt);
+        // Match the service defaults already applied by the desktop runtime.
+        if (s.options) setDuplexOptions(s.options);
+        if (s.refAudio?.base64) buildBridge().setRefAudioBase64(s.refAudio.base64, s.refAudio.name || 'Mobile reference', s.refAudio.duration || 0);
     }
 
     // ========================================================================
@@ -390,11 +429,12 @@
             mountSettingsWidget();
             rebindFullscreenButtonAsGear();
             keepGearVisible();
-            applyMobileSettings();
+            Promise.resolve(window.__omniFrontendReady).then(applyMobileSettings).catch(console.warn);
             injectTorchButton();
             watchVideoElement();
             bindPinchZoom();
             injectStageShareButton();
+            injectStageMetrics();
         }, 0);
     }
 

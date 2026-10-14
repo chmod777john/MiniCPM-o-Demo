@@ -188,8 +188,10 @@ const frontendDefaultsReady = loadFrontendDefaults().then((defaults) => {
         }
         syncSlidingWindowSettings();
     }
-    _omniPreset.init();
+    return _omniPreset.init();
 });
+// Mobile settings wait until service defaults and preset initialization finish.
+window.__omniFrontendReady = frontendDefaultsReady;
 const omniDeviceSelector = new AudioDeviceSelector({
     micSelectEl: document.getElementById('omniMicDevice'),
     speakerSelectEl: document.getElementById('omniSpeakerDevice'),
@@ -217,6 +219,9 @@ const refAudio = initRefAudio('omniRefAudioPlayer', {
     onTtsHintUpdate: () => omniTtsRef.updateHint(),
 });
 omniTtsRef.init();
+// UI-only bridge: the mobile React widget shares this reference-audio state.
+window.__omniRefAudio = refAudio;
+window.__omniTtsRef = omniTtsRef;
 
 // ============================================================================
 // Preset Selector

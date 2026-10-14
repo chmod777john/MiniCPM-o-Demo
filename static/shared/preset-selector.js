@@ -44,12 +44,12 @@ class PresetSelector {
 
         const saved = localStorage.getItem(this._storageKey);
         if (saved && this._presets.some(p => p.id === saved)) {
-            this.select(saved, false);
+            await this.select(saved, false);
         } else {
             const lang = (window.I18n && window.I18n.getLang) ? window.I18n.getLang() : 'zh';
             const langTag = lang === 'en' ? 'english' : 'chinese';
             const matched = this._presets.find(p => p.id && p.id.includes(langTag));
-            this.select((matched || this._presets[0]).id, false);
+            await this.select((matched || this._presets[0]).id, false);
         }
     }
 
