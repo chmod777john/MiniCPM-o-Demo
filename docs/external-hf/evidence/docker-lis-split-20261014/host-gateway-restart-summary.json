@@ -1,0 +1,39 @@
+{
+  "pass": true,
+  "before": {
+    "container_id": "7d8ba48ade27fcd7e6744b76253e9ef7a1ee4567d0c653e4828f87c748101520",
+    "started_at": "2026-10-14T07:38:42.819629898Z",
+    "host_pid": 558209,
+    "top": "PID                 PPID                COMMAND\n558209              558186              /opt/o5/.venv/bin/python /opt/o5/package/entrypoint.py\n558460              558209              /opt/o5/.venv/bin/python -m py_backend.server --host 0.0.0.0 --port 22524 --gpu-id 0 --model-path /opt/o5/hf --pt-path /mnt/model-cache/split-fixture/model/model.pt\n558797              558209              /opt/o5/.venv/bin/python worker.py --host 0.0.0.0 --port 22424 --gpu-id 0 --backend-server-url http://127.0.0.1:22524\n"
+  },
+  "stop_epoch": 1791963860.5395613,
+  "while_gateway_down": {
+    "container_id": "7d8ba48ade27fcd7e6744b76253e9ef7a1ee4567d0c653e4828f87c748101520",
+    "started_at": "2026-10-14T07:38:42.819629898Z",
+    "host_pid": 558209,
+    "top": "PID                 PPID                COMMAND\n558209              558186              /opt/o5/.venv/bin/python /opt/o5/package/entrypoint.py\n558460              558209              /opt/o5/.venv/bin/python -m py_backend.server --host 0.0.0.0 --port 22524 --gpu-id 0 --model-path /opt/o5/hf --pt-path /mnt/model-cache/split-fixture/model/model.pt\n558797              558209              /opt/o5/.venv/bin/python worker.py --host 0.0.0.0 --port 22424 --gpu-id 0 --backend-server-url http://127.0.0.1:22524\n"
+  },
+  "start_epoch": 1791963883.2471476,
+  "recovered_epoch": 1791963892.4020526,
+  "status": {
+    "gateway_healthy": true,
+    "total_workers": 1,
+    "idle_workers": 1,
+    "busy_workers": 0,
+    "duplex_workers": 0,
+    "loading_workers": 0,
+    "error_workers": 0,
+    "offline_workers": 0,
+    "queue_length": 0,
+    "max_queue_size": 1000,
+    "running_tasks": []
+  },
+  "after": {
+    "container_id": "7d8ba48ade27fcd7e6744b76253e9ef7a1ee4567d0c653e4828f87c748101520",
+    "started_at": "2026-10-14T07:38:42.819629898Z",
+    "host_pid": 558209,
+    "top": "PID                 PPID                COMMAND\n558209              558186              /opt/o5/.venv/bin/python /opt/o5/package/entrypoint.py\n558460              558209              /opt/o5/.venv/bin/python -m py_backend.server --host 0.0.0.0 --port 22524 --gpu-id 0 --model-path /opt/o5/hf --pt-path /mnt/model-cache/split-fixture/model/model.pt\n558797              558209              /opt/o5/.venv/bin/python worker.py --host 0.0.0.0 --port 22424 --gpu-id 0 --backend-server-url http://127.0.0.1:22524\n"
+  },
+  "recovery_seconds_from_start": 9.154905080795288,
+  "platform_config_sha256": "2da49d6ae6ce5072cd561f40045f767ebc48eaa7aed250393cafe3b0ea8bf549"
+}

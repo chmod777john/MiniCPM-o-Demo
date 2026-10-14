@@ -1,0 +1,938 @@
+[
+  {
+    "elapsed": 1.1986567927524447,
+    "state": {
+      "total": 1,
+      "workers": [
+        {
+          "worker_id": "worker-0",
+          "host": "worker-0.headless.test.svc",
+          "port": 22424,
+          "gpu_id": 0,
+          "gpu_group": "gpu-0",
+          "labels": {
+            "model": "o5",
+            "runtime": "external-hf",
+            "profile": "raw-ckpt"
+          },
+          "status": "duplex_active",
+          "current_ticket_id": "q_4c0dee472126",
+          "total_requests": 0,
+          "avg_inference_time_ms": 0.0,
+          "last_heartbeat": "2026-10-14T07:42:32.771123",
+          "current_request_type": "audio_duplex",
+          "task_started_at": "2026-10-14T07:42:33.027792",
+          "capabilities": [
+            "chat",
+            "streaming",
+            "half_duplex_audio",
+            "audio_duplex",
+            "omni_duplex"
+          ],
+          "draining": false,
+          "model_info": {}
+        }
+      ]
+    }
+  },
+  {
+    "elapsed": 2.3913772674277425,
+    "state": {
+      "total": 1,
+      "workers": [
+        {
+          "worker_id": "worker-0",
+          "host": "worker-0.headless.test.svc",
+          "port": 22424,
+          "gpu_id": 0,
+          "gpu_group": "gpu-0",
+          "labels": {
+            "model": "o5",
+            "runtime": "external-hf",
+            "profile": "raw-ckpt"
+          },
+          "status": "duplex_active",
+          "current_ticket_id": "q_4c0dee472126",
+          "total_requests": 0,
+          "avg_inference_time_ms": 0.0,
+          "last_heartbeat": "2026-10-14T07:42:32.771123",
+          "current_request_type": "audio_duplex",
+          "task_started_at": "2026-10-14T07:42:33.027792",
+          "capabilities": [
+            "chat",
+            "streaming",
+            "half_duplex_audio",
+            "audio_duplex",
+            "omni_duplex"
+          ],
+          "draining": false,
+          "model_info": {}
+        }
+      ]
+    }
+  },
+  {
+    "elapsed": 3.8120859237387776,
+    "state": {
+      "total": 1,
+      "workers": [
+        {
+          "worker_id": "worker-0",
+          "host": "worker-0.headless.test.svc",
+          "port": 22424,
+          "gpu_id": 0,
+          "gpu_group": "gpu-0",
+          "labels": {
+            "model": "o5",
+            "runtime": "external-hf",
+            "profile": "raw-ckpt"
+          },
+          "status": "duplex_active",
+          "current_ticket_id": "q_4c0dee472126",
+          "total_requests": 0,
+          "avg_inference_time_ms": 0.0,
+          "last_heartbeat": "2026-10-14T07:42:32.771123",
+          "current_request_type": "audio_duplex",
+          "task_started_at": "2026-10-14T07:42:33.027792",
+          "capabilities": [
+            "chat",
+            "streaming",
+            "half_duplex_audio",
+            "audio_duplex",
+            "omni_duplex"
+          ],
+          "draining": false,
+          "model_info": {}
+        }
+      ]
+    }
+  },
+  {
+    "elapsed": 5.004125499166548,
+    "state": {
+      "total": 1,
+      "workers": [
+        {
+          "worker_id": "worker-0",
+          "host": "worker-0.headless.test.svc",
+          "port": 22424,
+          "gpu_id": 0,
+          "gpu_group": "gpu-0",
+          "labels": {
+            "model": "o5",
+            "runtime": "external-hf",
+            "profile": "raw-ckpt"
+          },
+          "status": "duplex_active",
+          "current_ticket_id": "q_4c0dee472126",
+          "total_requests": 0,
+          "avg_inference_time_ms": 0.0,
+          "last_heartbeat": "2026-10-14T07:42:32.771123",
+          "current_request_type": "audio_duplex",
+          "task_started_at": "2026-10-14T07:42:33.027792",
+          "capabilities": [
+            "chat",
+            "streaming",
+            "half_duplex_audio",
+            "audio_duplex",
+            "omni_duplex"
+          ],
+          "draining": false,
+          "model_info": {}
+        }
+      ]
+    }
+  },
+  {
+    "elapsed": 6.196017202921212,
+    "state": {
+      "total": 1,
+      "workers": [
+        {
+          "worker_id": "worker-0",
+          "host": "worker-0.headless.test.svc",
+          "port": 22424,
+          "gpu_id": 0,
+          "gpu_group": "gpu-0",
+          "labels": {
+            "model": "o5",
+            "runtime": "external-hf",
+            "profile": "raw-ckpt"
+          },
+          "status": "duplex_active",
+          "current_ticket_id": "q_4c0dee472126",
+          "total_requests": 0,
+          "avg_inference_time_ms": 0.0,
+          "last_heartbeat": "2026-10-14T07:42:32.771123",
+          "current_request_type": "audio_duplex",
+          "task_started_at": "2026-10-14T07:42:33.027792",
+          "capabilities": [
+            "chat",
+            "streaming",
+            "half_duplex_audio",
+            "audio_duplex",
+            "omni_duplex"
+          ],
+          "draining": false,
+          "model_info": {}
+        }
+      ]
+    }
+  },
+  {
+    "elapsed": 7.388113619759679,
+    "state": {
+      "total": 1,
+      "workers": [
+        {
+          "worker_id": "worker-0",
+          "host": "worker-0.headless.test.svc",
+          "port": 22424,
+          "gpu_id": 0,
+          "gpu_group": "gpu-0",
+          "labels": {
+            "model": "o5",
+            "runtime": "external-hf",
+            "profile": "raw-ckpt"
+          },
+          "status": "duplex_active",
+          "current_ticket_id": "q_4c0dee472126",
+          "total_requests": 0,
+          "avg_inference_time_ms": 0.0,
+          "last_heartbeat": "2026-10-14T07:42:40.841074",
+          "current_request_type": "audio_duplex",
+          "task_started_at": "2026-10-14T07:42:33.027792",
+          "capabilities": [
+            "chat",
+            "streaming",
+            "half_duplex_audio",
+            "audio_duplex",
+            "omni_duplex"
+          ],
+          "draining": false,
+          "model_info": {}
+        }
+      ]
+    }
+  },
+  {
+    "elapsed": 8.580131347291172,
+    "state": {
+      "total": 1,
+      "workers": [
+        {
+          "worker_id": "worker-0",
+          "host": "worker-0.headless.test.svc",
+          "port": 22424,
+          "gpu_id": 0,
+          "gpu_group": "gpu-0",
+          "labels": {
+            "model": "o5",
+            "runtime": "external-hf",
+            "profile": "raw-ckpt"
+          },
+          "status": "duplex_active",
+          "current_ticket_id": "q_4c0dee472126",
+          "total_requests": 0,
+          "avg_inference_time_ms": 0.0,
+          "last_heartbeat": "2026-10-14T07:42:40.841074",
+          "current_request_type": "audio_duplex",
+          "task_started_at": "2026-10-14T07:42:33.027792",
+          "capabilities": [
+            "chat",
+            "streaming",
+            "half_duplex_audio",
+            "audio_duplex",
+            "omni_duplex"
+          ],
+          "draining": false,
+          "model_info": {}
+        }
+      ]
+    }
+  },
+  {
+    "elapsed": 9.772366002202034,
+    "state": {
+      "total": 1,
+      "workers": [
+        {
+          "worker_id": "worker-0",
+          "host": "worker-0.headless.test.svc",
+          "port": 22424,
+          "gpu_id": 0,
+          "gpu_group": "gpu-0",
+          "labels": {
+            "model": "o5",
+            "runtime": "external-hf",
+            "profile": "raw-ckpt"
+          },
+          "status": "duplex_active",
+          "current_ticket_id": "q_4c0dee472126",
+          "total_requests": 0,
+          "avg_inference_time_ms": 0.0,
+          "last_heartbeat": "2026-10-14T07:42:42.773046",
+          "current_request_type": "audio_duplex",
+          "task_started_at": "2026-10-14T07:42:33.027792",
+          "capabilities": [
+            "chat",
+            "streaming",
+            "half_duplex_audio",
+            "audio_duplex",
+            "omni_duplex"
+          ],
+          "draining": false,
+          "model_info": {}
+        }
+      ]
+    }
+  },
+  {
+    "elapsed": 10.965223620645702,
+    "state": {
+      "total": 1,
+      "workers": [
+        {
+          "worker_id": "worker-0",
+          "host": "worker-0.headless.test.svc",
+          "port": 22424,
+          "gpu_id": 0,
+          "gpu_group": "gpu-0",
+          "labels": {
+            "model": "o5",
+            "runtime": "external-hf",
+            "profile": "raw-ckpt"
+          },
+          "status": "duplex_active",
+          "current_ticket_id": "q_4c0dee472126",
+          "total_requests": 0,
+          "avg_inference_time_ms": 0.0,
+          "last_heartbeat": "2026-10-14T07:42:42.773046",
+          "current_request_type": "audio_duplex",
+          "task_started_at": "2026-10-14T07:42:33.027792",
+          "capabilities": [
+            "chat",
+            "streaming",
+            "half_duplex_audio",
+            "audio_duplex",
+            "omni_duplex"
+          ],
+          "draining": false,
+          "model_info": {}
+        }
+      ]
+    }
+  },
+  {
+    "elapsed": 12.157251581549644,
+    "state": {
+      "total": 1,
+      "workers": [
+        {
+          "worker_id": "worker-0",
+          "host": "worker-0.headless.test.svc",
+          "port": 22424,
+          "gpu_id": 0,
+          "gpu_group": "gpu-0",
+          "labels": {
+            "model": "o5",
+            "runtime": "external-hf",
+            "profile": "raw-ckpt"
+          },
+          "status": "duplex_active",
+          "current_ticket_id": "q_4c0dee472126",
+          "total_requests": 0,
+          "avg_inference_time_ms": 0.0,
+          "last_heartbeat": "2026-10-14T07:42:42.773046",
+          "current_request_type": "audio_duplex",
+          "task_started_at": "2026-10-14T07:42:33.027792",
+          "capabilities": [
+            "chat",
+            "streaming",
+            "half_duplex_audio",
+            "audio_duplex",
+            "omni_duplex"
+          ],
+          "draining": false,
+          "model_info": {}
+        }
+      ]
+    }
+  },
+  {
+    "elapsed": 13.350028817541897,
+    "state": {
+      "total": 1,
+      "workers": [
+        {
+          "worker_id": "worker-0",
+          "host": "worker-0.headless.test.svc",
+          "port": 22424,
+          "gpu_id": 0,
+          "gpu_group": "gpu-0",
+          "labels": {
+            "model": "o5",
+            "runtime": "external-hf",
+            "profile": "raw-ckpt"
+          },
+          "status": "duplex_active",
+          "current_ticket_id": "q_4c0dee472126",
+          "total_requests": 0,
+          "avg_inference_time_ms": 0.0,
+          "last_heartbeat": "2026-10-14T07:42:42.773046",
+          "current_request_type": "audio_duplex",
+          "task_started_at": "2026-10-14T07:42:33.027792",
+          "capabilities": [
+            "chat",
+            "streaming",
+            "half_duplex_audio",
+            "audio_duplex",
+            "omni_duplex"
+          ],
+          "draining": false,
+          "model_info": {}
+        }
+      ]
+    }
+  },
+  {
+    "elapsed": 14.541792392730713,
+    "state": {
+      "total": 1,
+      "workers": [
+        {
+          "worker_id": "worker-0",
+          "host": "worker-0.headless.test.svc",
+          "port": 22424,
+          "gpu_id": 0,
+          "gpu_group": "gpu-0",
+          "labels": {
+            "model": "o5",
+            "runtime": "external-hf",
+            "profile": "raw-ckpt"
+          },
+          "status": "duplex_active",
+          "current_ticket_id": "q_4c0dee472126",
+          "total_requests": 0,
+          "avg_inference_time_ms": 0.0,
+          "last_heartbeat": "2026-10-14T07:42:42.773046",
+          "current_request_type": "audio_duplex",
+          "task_started_at": "2026-10-14T07:42:33.027792",
+          "capabilities": [
+            "chat",
+            "streaming",
+            "half_duplex_audio",
+            "audio_duplex",
+            "omni_duplex"
+          ],
+          "draining": false,
+          "model_info": {}
+        }
+      ]
+    }
+  },
+  {
+    "elapsed": 15.733796740882099,
+    "state": {
+      "total": 1,
+      "workers": [
+        {
+          "worker_id": "worker-0",
+          "host": "worker-0.headless.test.svc",
+          "port": 22424,
+          "gpu_id": 0,
+          "gpu_group": "gpu-0",
+          "labels": {
+            "model": "o5",
+            "runtime": "external-hf",
+            "profile": "raw-ckpt"
+          },
+          "status": "duplex_active",
+          "current_ticket_id": "q_4c0dee472126",
+          "total_requests": 0,
+          "avg_inference_time_ms": 0.0,
+          "last_heartbeat": "2026-10-14T07:42:42.773046",
+          "current_request_type": "audio_duplex",
+          "task_started_at": "2026-10-14T07:42:33.027792",
+          "capabilities": [
+            "chat",
+            "streaming",
+            "half_duplex_audio",
+            "audio_duplex",
+            "omni_duplex"
+          ],
+          "draining": false,
+          "model_info": {}
+        }
+      ]
+    }
+  },
+  {
+    "elapsed": 16.92588516138494,
+    "state": {
+      "total": 1,
+      "workers": [
+        {
+          "worker_id": "worker-0",
+          "host": "worker-0.headless.test.svc",
+          "port": 22424,
+          "gpu_id": 0,
+          "gpu_group": "gpu-0",
+          "labels": {
+            "model": "o5",
+            "runtime": "external-hf",
+            "profile": "raw-ckpt"
+          },
+          "status": "duplex_active",
+          "current_ticket_id": "q_4c0dee472126",
+          "total_requests": 0,
+          "avg_inference_time_ms": 0.0,
+          "last_heartbeat": "2026-10-14T07:42:42.773046",
+          "current_request_type": "audio_duplex",
+          "task_started_at": "2026-10-14T07:42:33.027792",
+          "capabilities": [
+            "chat",
+            "streaming",
+            "half_duplex_audio",
+            "audio_duplex",
+            "omni_duplex"
+          ],
+          "draining": false,
+          "model_info": {}
+        }
+      ]
+    }
+  },
+  {
+    "elapsed": 18.117742002010345,
+    "state": {
+      "total": 1,
+      "workers": [
+        {
+          "worker_id": "worker-0",
+          "host": "worker-0.headless.test.svc",
+          "port": 22424,
+          "gpu_id": 0,
+          "gpu_group": "gpu-0",
+          "labels": {
+            "model": "o5",
+            "runtime": "external-hf",
+            "profile": "raw-ckpt"
+          },
+          "status": "duplex_active",
+          "current_ticket_id": "q_4c0dee472126",
+          "total_requests": 0,
+          "avg_inference_time_ms": 0.0,
+          "last_heartbeat": "2026-10-14T07:42:42.773046",
+          "current_request_type": "audio_duplex",
+          "task_started_at": "2026-10-14T07:42:33.027792",
+          "capabilities": [
+            "chat",
+            "streaming",
+            "half_duplex_audio",
+            "audio_duplex",
+            "omni_duplex"
+          ],
+          "draining": false,
+          "model_info": {}
+        }
+      ]
+    }
+  },
+  {
+    "elapsed": 19.539836823940277,
+    "state": {
+      "total": 1,
+      "workers": [
+        {
+          "worker_id": "worker-0",
+          "host": "worker-0.headless.test.svc",
+          "port": 22424,
+          "gpu_id": 0,
+          "gpu_group": "gpu-0",
+          "labels": {
+            "model": "o5",
+            "runtime": "external-hf",
+            "profile": "raw-ckpt"
+          },
+          "status": "duplex_active",
+          "current_ticket_id": "q_4c0dee472126",
+          "total_requests": 0,
+          "avg_inference_time_ms": 0.0,
+          "last_heartbeat": "2026-10-14T07:42:52.777008",
+          "current_request_type": "audio_duplex",
+          "task_started_at": "2026-10-14T07:42:33.027792",
+          "capabilities": [
+            "chat",
+            "streaming",
+            "half_duplex_audio",
+            "audio_duplex",
+            "omni_duplex"
+          ],
+          "draining": false,
+          "model_info": {}
+        }
+      ]
+    }
+  },
+  {
+    "elapsed": 20.96139010041952,
+    "state": {
+      "total": 1,
+      "workers": [
+        {
+          "worker_id": "worker-0",
+          "host": "worker-0.headless.test.svc",
+          "port": 22424,
+          "gpu_id": 0,
+          "gpu_group": "gpu-0",
+          "labels": {
+            "model": "o5",
+            "runtime": "external-hf",
+            "profile": "raw-ckpt"
+          },
+          "status": "duplex_active",
+          "current_ticket_id": "q_4c0dee472126",
+          "total_requests": 0,
+          "avg_inference_time_ms": 0.0,
+          "last_heartbeat": "2026-10-14T07:42:52.777008",
+          "current_request_type": "audio_duplex",
+          "task_started_at": "2026-10-14T07:42:33.027792",
+          "capabilities": [
+            "chat",
+            "streaming",
+            "half_duplex_audio",
+            "audio_duplex",
+            "omni_duplex"
+          ],
+          "draining": false,
+          "model_info": {}
+        }
+      ]
+    }
+  },
+  {
+    "elapsed": 22.153429243713617,
+    "state": {
+      "total": 1,
+      "workers": [
+        {
+          "worker_id": "worker-0",
+          "host": "worker-0.headless.test.svc",
+          "port": 22424,
+          "gpu_id": 0,
+          "gpu_group": "gpu-0",
+          "labels": {
+            "model": "o5",
+            "runtime": "external-hf",
+            "profile": "raw-ckpt"
+          },
+          "status": "duplex_active",
+          "current_ticket_id": "q_4c0dee472126",
+          "total_requests": 0,
+          "avg_inference_time_ms": 0.0,
+          "last_heartbeat": "2026-10-14T07:42:52.777008",
+          "current_request_type": "audio_duplex",
+          "task_started_at": "2026-10-14T07:42:33.027792",
+          "capabilities": [
+            "chat",
+            "streaming",
+            "half_duplex_audio",
+            "audio_duplex",
+            "omni_duplex"
+          ],
+          "draining": false,
+          "model_info": {}
+        }
+      ]
+    }
+  },
+  {
+    "elapsed": 23.346240686252713,
+    "state": {
+      "total": 1,
+      "workers": [
+        {
+          "worker_id": "worker-0",
+          "host": "worker-0.headless.test.svc",
+          "port": 22424,
+          "gpu_id": 0,
+          "gpu_group": "gpu-0",
+          "labels": {
+            "model": "o5",
+            "runtime": "external-hf",
+            "profile": "raw-ckpt"
+          },
+          "status": "duplex_active",
+          "current_ticket_id": "q_4c0dee472126",
+          "total_requests": 0,
+          "avg_inference_time_ms": 0.0,
+          "last_heartbeat": "2026-10-14T07:42:52.777008",
+          "current_request_type": "audio_duplex",
+          "task_started_at": "2026-10-14T07:42:33.027792",
+          "capabilities": [
+            "chat",
+            "streaming",
+            "half_duplex_audio",
+            "audio_duplex",
+            "omni_duplex"
+          ],
+          "draining": false,
+          "model_info": {}
+        }
+      ]
+    }
+  },
+  {
+    "elapsed": 24.767353889532387,
+    "state": {
+      "total": 1,
+      "workers": [
+        {
+          "worker_id": "worker-0",
+          "host": "worker-0.headless.test.svc",
+          "port": 22424,
+          "gpu_id": 0,
+          "gpu_group": "gpu-0",
+          "labels": {
+            "model": "o5",
+            "runtime": "external-hf",
+            "profile": "raw-ckpt"
+          },
+          "status": "duplex_active",
+          "current_ticket_id": "q_4c0dee472126",
+          "total_requests": 0,
+          "avg_inference_time_ms": 0.0,
+          "last_heartbeat": "2026-10-14T07:42:52.777008",
+          "current_request_type": "audio_duplex",
+          "task_started_at": "2026-10-14T07:42:33.027792",
+          "capabilities": [
+            "chat",
+            "streaming",
+            "half_duplex_audio",
+            "audio_duplex",
+            "omni_duplex"
+          ],
+          "draining": false,
+          "model_info": {}
+        }
+      ]
+    }
+  },
+  {
+    "elapsed": 25.960032715462148,
+    "state": {
+      "total": 1,
+      "workers": [
+        {
+          "worker_id": "worker-0",
+          "host": "worker-0.headless.test.svc",
+          "port": 22424,
+          "gpu_id": 0,
+          "gpu_group": "gpu-0",
+          "labels": {
+            "model": "o5",
+            "runtime": "external-hf",
+            "profile": "raw-ckpt"
+          },
+          "status": "duplex_active",
+          "current_ticket_id": "q_4c0dee472126",
+          "total_requests": 0,
+          "avg_inference_time_ms": 0.0,
+          "last_heartbeat": "2026-10-14T07:42:52.777008",
+          "current_request_type": "audio_duplex",
+          "task_started_at": "2026-10-14T07:42:33.027792",
+          "capabilities": [
+            "chat",
+            "streaming",
+            "half_duplex_audio",
+            "audio_duplex",
+            "omni_duplex"
+          ],
+          "draining": false,
+          "model_info": {}
+        }
+      ]
+    }
+  },
+  {
+    "elapsed": 27.15226268954575,
+    "state": {
+      "total": 1,
+      "workers": [
+        {
+          "worker_id": "worker-0",
+          "host": "worker-0.headless.test.svc",
+          "port": 22424,
+          "gpu_id": 0,
+          "gpu_group": "gpu-0",
+          "labels": {
+            "model": "o5",
+            "runtime": "external-hf",
+            "profile": "raw-ckpt"
+          },
+          "status": "duplex_active",
+          "current_ticket_id": "q_4c0dee472126",
+          "total_requests": 0,
+          "avg_inference_time_ms": 0.0,
+          "last_heartbeat": "2026-10-14T07:43:00.866118",
+          "current_request_type": "audio_duplex",
+          "task_started_at": "2026-10-14T07:42:33.027792",
+          "capabilities": [
+            "chat",
+            "streaming",
+            "half_duplex_audio",
+            "audio_duplex",
+            "omni_duplex"
+          ],
+          "draining": false,
+          "model_info": {}
+        }
+      ]
+    }
+  },
+  {
+    "elapsed": 28.344958946108818,
+    "state": {
+      "total": 1,
+      "workers": [
+        {
+          "worker_id": "worker-0",
+          "host": "worker-0.headless.test.svc",
+          "port": 22424,
+          "gpu_id": 0,
+          "gpu_group": "gpu-0",
+          "labels": {
+            "model": "o5",
+            "runtime": "external-hf",
+            "profile": "raw-ckpt"
+          },
+          "status": "duplex_active",
+          "current_ticket_id": "q_4c0dee472126",
+          "total_requests": 0,
+          "avg_inference_time_ms": 0.0,
+          "last_heartbeat": "2026-10-14T07:43:00.866118",
+          "current_request_type": "audio_duplex",
+          "task_started_at": "2026-10-14T07:42:33.027792",
+          "capabilities": [
+            "chat",
+            "streaming",
+            "half_duplex_audio",
+            "audio_duplex",
+            "omni_duplex"
+          ],
+          "draining": false,
+          "model_info": {}
+        }
+      ]
+    }
+  },
+  {
+    "elapsed": 29.537112067453563,
+    "state": {
+      "total": 1,
+      "workers": [
+        {
+          "worker_id": "worker-0",
+          "host": "worker-0.headless.test.svc",
+          "port": 22424,
+          "gpu_id": 0,
+          "gpu_group": "gpu-0",
+          "labels": {
+            "model": "o5",
+            "runtime": "external-hf",
+            "profile": "raw-ckpt"
+          },
+          "status": "duplex_active",
+          "current_ticket_id": "q_4c0dee472126",
+          "total_requests": 0,
+          "avg_inference_time_ms": 0.0,
+          "last_heartbeat": "2026-10-14T07:43:02.780436",
+          "current_request_type": "audio_duplex",
+          "task_started_at": "2026-10-14T07:42:33.027792",
+          "capabilities": [
+            "chat",
+            "streaming",
+            "half_duplex_audio",
+            "audio_duplex",
+            "omni_duplex"
+          ],
+          "draining": false,
+          "model_info": {}
+        }
+      ]
+    }
+  },
+  {
+    "elapsed": 30.729716200381517,
+    "state": {
+      "total": 1,
+      "workers": [
+        {
+          "worker_id": "worker-0",
+          "host": "worker-0.headless.test.svc",
+          "port": 22424,
+          "gpu_id": 0,
+          "gpu_group": "gpu-0",
+          "labels": {
+            "model": "o5",
+            "runtime": "external-hf",
+            "profile": "raw-ckpt"
+          },
+          "status": "duplex_active",
+          "current_ticket_id": "q_4c0dee472126",
+          "total_requests": 0,
+          "avg_inference_time_ms": 0.0,
+          "last_heartbeat": "2026-10-14T07:43:02.780436",
+          "current_request_type": "audio_duplex",
+          "task_started_at": "2026-10-14T07:42:33.027792",
+          "capabilities": [
+            "chat",
+            "streaming",
+            "half_duplex_audio",
+            "audio_duplex",
+            "omni_duplex"
+          ],
+          "draining": false,
+          "model_info": {}
+        }
+      ]
+    }
+  },
+  {
+    "elapsed": 31.922169040888548,
+    "state": {
+      "total": 1,
+      "workers": [
+        {
+          "worker_id": "worker-0",
+          "host": "worker-0.headless.test.svc",
+          "port": 22424,
+          "gpu_id": 0,
+          "gpu_group": "gpu-0",
+          "labels": {
+            "model": "o5",
+            "runtime": "external-hf",
+            "profile": "raw-ckpt"
+          },
+          "status": "duplex_active",
+          "current_ticket_id": "q_4c0dee472126",
+          "total_requests": 0,
+          "avg_inference_time_ms": 0.0,
+          "last_heartbeat": "2026-10-14T07:43:02.780436",
+          "current_request_type": "audio_duplex",
+          "task_started_at": "2026-10-14T07:42:33.027792",
+          "capabilities": [
+            "chat",
+            "streaming",
+            "half_duplex_audio",
+            "audio_duplex",
+            "omni_duplex"
+          ],
+          "draining": false,
+          "model_info": {}
+        }
+      ]
+    }
+  }
+]

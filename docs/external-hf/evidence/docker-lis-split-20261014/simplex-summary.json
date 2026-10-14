@@ -1,0 +1,34 @@
+[
+  {
+    "case": "text_stream",
+    "request_to_done_s": 0.6730891773477197,
+    "text": "你好。",
+    "audio_chunks": 0,
+    "audio_bytes": 0,
+    "pass": true,
+    "seconds": 2.1433141231536865,
+    "events": [
+      "session.queue_done",
+      "session.created",
+      "response.output.delta",
+      "response.output.delta",
+      "response.done"
+    ]
+  },
+  {
+    "case": "audio_stream",
+    "request_to_done_s": 3.302056043408811,
+    "text": "你好。",
+    "audio_chunks": 1,
+    "audio_bytes": 84480,
+    "pass": true,
+    "seconds": 4.977121526375413,
+    "events": [
+      "session.queue_done",
+      "session.created",
+      "response.output.delta",
+      "response.output.delta",
+      "response.done"
+    ]
+  }
+]

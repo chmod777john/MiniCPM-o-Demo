@@ -1,0 +1,22 @@
+{
+  "pass": true,
+  "session_id": "sess_359350e3e1b6",
+  "start_epoch": 1791963754.5347106,
+  "elapsed": 31.922190953046083,
+  "end_epoch": 1791963786.456903,
+  "units_finalized": 26,
+  "queued_client_events": [
+    "session.queued",
+    "session.queue_update",
+    "session.queue_update",
+    "session.queue_update",
+    "session.queue_update",
+    "session.queue_update",
+    "session.queue_update",
+    "session.queue_update",
+    "session.queue_update",
+    "session.queue_update",
+    "session.queue_update"
+  ],
+  "worker_ticket": "q_4c0dee472126"
+}

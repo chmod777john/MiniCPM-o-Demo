@@ -1,0 +1,136 @@
+{
+  "audit_scope": "Root CPU reread of recorded v11 API events and PCM; no new GPU inference, speech listening, quality score, or hidden/logits alignment",
+  "fc_raw_event_counts": {
+    "session.queue_done": 1,
+    "session.created": 1,
+    "response.unit.started": 8,
+    "response.spoken.end": 8,
+    "response.non_spoken.end": 8,
+    "response.unit.committed": 8,
+    "response.spoken.delta": 9,
+    "response.tool_call.begin": 3,
+    "response.tool_call.delta": 21,
+    "response.tool_call.done": 3
+  },
+  "fc_event_counts_match_summary": true,
+  "pcm": [
+    {
+      "file": "speech_0002.f32le",
+      "samples": 21120,
+      "finite": true,
+      "nonzero": true,
+      "sha256": "66c1d42c288c03c8afd82b970d00563acbda0f47884e2db1fc391a8b05bd3742"
+    },
+    {
+      "file": "speech_0003.f32le",
+      "samples": 13440,
+      "finite": true,
+      "nonzero": true,
+      "sha256": "d0e048d1d9afe8e9e5e74a76639ea594407303809ae6f7a187af63c956b9f31c"
+    },
+    {
+      "file": "speech_0005.f32le",
+      "samples": 21120,
+      "finite": true,
+      "nonzero": true,
+      "sha256": "1471d23acc3cca176b0713476ddc9eb590c4517a1a25fa7e844f10dfc2eb5c96"
+    },
+    {
+      "file": "speech_0007.f32le",
+      "samples": 24000,
+      "finite": true,
+      "nonzero": true,
+      "sha256": "c469815cc51b4cd7b01c31c774e6ffce8b9a07d716453da74b59be7fb57e4aae"
+    },
+    {
+      "file": "speech_0009.f32le",
+      "samples": 24000,
+      "finite": true,
+      "nonzero": true,
+      "sha256": "8865cd7e447579268631fc126aed088b60ce5b2cac468288c57cbcf04094135f"
+    }
+  ],
+  "fc_summary": {
+    "units": 8,
+    "calls": 3,
+    "consumed": 2,
+    "errors": [],
+    "client_elapsed_min_s": 0.4984388342127204,
+    "client_elapsed_max_s": 1.46170446369797
+  },
+  "split-v11-simplex": {
+    "cases": 2,
+    "all_pass": true,
+    "speech_bytes": 84480
+  },
+  "split-v11-after-restart": {
+    "cases": 2,
+    "all_pass": true,
+    "speech_bytes": 84480
+  },
+  "ordinary": {
+    "cases": 2,
+    "all_pass": true,
+    "finalized": 4,
+    "kinds": [
+      [
+        "listen"
+      ],
+      [
+        "listen"
+      ]
+    ],
+    "scope": "two listen units each audio/video; does not exercise actual Basic window trimming"
+  },
+  "active_refresh": {
+    "pass": true,
+    "session_id": "sess_359350e3e1b6",
+    "start_epoch": 1791963754.5347106,
+    "elapsed": 31.922190953046083,
+    "end_epoch": 1791963786.456903,
+    "units_finalized": 26,
+    "queued_client_events": [
+      "session.queued",
+      "session.queue_update",
+      "session.queue_update",
+      "session.queue_update",
+      "session.queue_update",
+      "session.queue_update",
+      "session.queue_update",
+      "session.queue_update",
+      "session.queue_update",
+      "session.queue_update",
+      "session.queue_update"
+    ],
+    "worker_ticket": "q_4c0dee472126",
+    "samples": 26,
+    "all_same_active_ticket": true,
+    "queued_client_not_dispatched": true,
+    "actual_put_overlap": {
+      "source": "split-v11-host/split-v11/gateway-final.log",
+      "lines": [
+        "2026-10-14T07:42:40.841397815Z 2026-10-14 07:42:40,841 [INFO:    ] uvicorn.access: 172.28.0.2:58866 - \"PUT /internal/workers/worker-0 HTTP/1.1\" 200 OK",
+        "2026-10-14T07:43:00.866409042Z 2026-10-14 07:43:00,866 [INFO:    ] uvicorn.access: 172.28.0.2:48186 - \"PUT /internal/workers/worker-0 HTTP/1.1\" 200 OK"
+      ],
+      "count": 2
+    }
+  },
+  "lifecycle": {
+    "worker_identity_and_all_three_pids_unchanged": true,
+    "gateway_recovery_s": 9.154905080795288,
+    "platform_config_unchanged": true,
+    "recording_disabled": true,
+    "image_ids": {
+      "worker": "sha256:e2a1f41bd37d50343b3882a4fb7f62fe7aae45b1adf4e30166f257c83af3962b",
+      "gateway": "sha256:d7e3b5ed6619a78b9e0d9e327cf507ef3830681b4c9df692cd35c75d11c0e3dd"
+    },
+    "manifest_sha256": "486479af6f71d2d0646b37a4f707000e1a30313523e9ba02cd5247b5d1d02622",
+    "exit_code": {
+      "worker": 0,
+      "gateway": 0
+    },
+    "gpu_state": "index, memory.used [MiB]\n0, 3 MiB\n1, 3 MiB\n",
+    "compute_processes": "",
+    "source": "split-v11-host/split-v11"
+  }
+}

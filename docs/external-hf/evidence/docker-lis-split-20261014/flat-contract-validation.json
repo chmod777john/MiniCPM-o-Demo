@@ -1,0 +1,95 @@
+{
+  "pass": true,
+  "lis_source_commit": "08f73fd63a0da5c8fac12813079f6dddd937d7e2",
+  "contract": {
+    "min_workers": 1,
+    "max_workers": 1,
+    "gateway_public_port": 8006,
+    "gateway_registry_port": 8007,
+    "worker_port": 22400,
+    "backend_port": 22500,
+    "registration_collection_path": "/internal/workers",
+    "registration_path_template": "/internal/workers/{worker_id}",
+    "registration_refresh_mode": "periodic_idempotent",
+    "registration_refresh_interval_seconds": 20,
+    "registration_max_backoff_seconds": 20,
+    "gateway_liveness_path": "/health",
+    "worker_readiness_path": "/health",
+    "registration_status_service_role": "public",
+    "registration_status_port_name": "http",
+    "registration_status_path": "/status",
+    "registration_status_schema": "minicpm_o_gateway_status_v1",
+    "route_request_timeout_seconds": 1800
+  },
+  "resources": {
+    "gateway_cpu_cores": 2,
+    "gateway_memory_gb": 4,
+    "worker_cpu_cores": 16,
+    "worker_memory_gb": 192,
+    "gpu_types": [
+      "NVIDIA-RTX-PRO-5000-Blackwell"
+    ],
+    "gpu_count": 2
+  },
+  "serving_profile": {
+    "model_service_type": "minicpm_o_realtime_direct",
+    "runtime_backend": "kubernetes_resource_bundle",
+    "profile_ref": {
+      "id": "minicpm_o_realtime_direct",
+      "version": "1"
+    },
+    "publisher_runtime": {
+      "contract_version": 1,
+      "release_id": "o5-external-hf-20261014-split-v10",
+      "gateway_replicas": 1,
+      "gateway_strategy": "Recreate",
+      "gateway_transport": "http",
+      "gateway_public_port": 8006,
+      "gateway_registry_port": 8007,
+      "worker_port": 22400,
+      "backend_port": 22500,
+      "worker_backend": {
+        "bind_host": "0.0.0.0"
+      },
+      "min_workers": 1,
+      "max_workers": 1,
+      "worker_registration": {
+        "mode": "dynamic",
+        "collection_path": "/internal/workers",
+        "path": "/internal/workers/{worker_id}",
+        "expected_workers": 1,
+        "refresh_mode": "periodic_idempotent",
+        "refresh_interval_seconds": 20,
+        "max_backoff_seconds": 20
+      },
+      "lifecycle_contract": {
+        "gateway_liveness": {
+          "type": "http",
+          "path": "/health"
+        },
+        "worker_backend_readiness": {
+          "type": "worker_http",
+          "path": "/health"
+        },
+        "registration_status": {
+          "type": "http",
+          "service_role": "public",
+          "port_name": "http",
+          "path": "/status",
+          "schema": "minicpm_o_gateway_status_v1"
+        }
+      },
+      "gateway_config": {
+        "mount_path": "/app/config.json",
+        "recording": {
+          "enabled": false
+        }
+      },
+      "gateway_resources": {
+        "cpu_cores": 2,
+        "memory_gb": 4
+      },
+      "route_request_timeout": "1800s"
+    }
+  }
+}
