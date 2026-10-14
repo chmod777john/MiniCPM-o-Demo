@@ -39,6 +39,15 @@ assert.deepEqual(newCalls.map(x=>x[0]),['done']);
 assert.equal(current.sent.at(-1).type,'session.close');
 assert.equal(ctx.state.activeChat,null);
 
+// A queued socket has no backend session yet; cancel its transport only.
+let queuedCalls = [];
+const queuedHandle = ctx._openRealtimeChatWS({}, handlers(queuedCalls));
+const queued = Socket.instances.at(-1);
+queuedHandle.cancel();
+assert.equal(queued.readyState,3);
+assert.deepEqual(queued.sent,[]);
+assert.deepEqual(queuedCalls.map(x=>x[0]),['cancel']);
+
 // Execute the actual streaming and cancellation callbacks with a minimal page.
 let displayed='', meta=[], paused=0, marked=0;
 ctx.state={isGenerating:false,messages:[],requestId:'req'};
