@@ -143,3 +143,17 @@ FC音频/文字/工具结果已接通外部HF；普通双工与FC虽共享模型
 当前FC未接Basic或KV-surgery滑窗，也未实现图片/视频输入；不能把普通会话的窗口/视觉选项视为FC支持。
 Listen/speak沿用FC FSM，可调普通binary阈值未接入。完整只读审查与固定上游来源核对见
 `evidence/20261014-fc-feature-review/REPORT.md`。其中FA2启用状态是审查时快照；随后显式ENV透传已修复，v9启动报告确认开启。
+
+
+### LIS拆分部署状态
+
+2026-10-14核对的历史平台限制、源码版本与v9缺口记录在
+`evidence/docker-tp2-20261014/LIS_HISTORICAL_CONTRACT_READONLY.md`。
+该记录对应8月28日会话及本地LIS源码 `08f73fd`，不代表已核实当前线上模板。
+LIS派生模板不允许任意覆盖启动命令/环境变量，因此应交付固定角色的gateway/worker镜像、一个ModelWeight和匹配的2GPU×1worker模板。
+原始checkpoint与声码器置于同一MODEL_PATH根目录；无需导出safetensors。
+
+v9完整API实测为standalone同容器。后续拆分适配与验证在独立打包worktree推进：
+读取平台只读配置/CLI、backend监听0.0.0.0、动态注册及gateway重启恢复。
+注册本次选择历史契约允许的periodic_idempotent；不是所有旧模板都要求定时刷新，模板必须显式匹配镜像的策略。
+本地双容器通过后另记不可变镜像身份和验收范围，不覆盖v9记录；本轮暂不推送、注册或部署LIS。
