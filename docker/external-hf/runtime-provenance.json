@@ -1,0 +1,13 @@
+{
+  "source_host": "118.89.233.148",
+  "source_venv": "/data/weihongliang/o5-canonical-enhanced-20260925/.venv-py310-cu130",
+  "source_python": "3.10.21",
+  "container_python": "3.10.22",
+  "source_native_scope": "Pro5000 TP acceptance 2026-10-01; torch/native runtime snapshot, not model weights",
+  "runtime_archive_sha256": "6fd80ea8714a6f2e7a9f467bfd3c343b961a35cb846d7b7ddb3d94672ff99ec0",
+  "cuda13_compiler_archive_sha256": "12d6c6bacd7a24f2a82466e7c096b770d3775a7f49ff714a5a445fff6221f49f",
+  "torch_git": "08187d9e0fba026dc8217405802ab5381dc88d90",
+  "dense_artifact_binary_sha256": "ff1e0b1a95aadf4796a476c75386f13d38199481e022cf60726d9d3874eebf36",
+  "adjustments": ["minicpmo-utils 1.0.6 -> 1.0.7 --no-deps", "minicpm-o5-sdk 0.0.6 --no-deps"],
+  "package_native_gate": "2026-10-14 host34 Pro6000 SM120; CUDA primitives PASS; not Pro5000 model acceptance"
+}
