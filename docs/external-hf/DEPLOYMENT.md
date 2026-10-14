@@ -9,7 +9,7 @@
 |---|---|---|
 |HF|`/user/weihongliang/worktrees/minicpm-o-5-fix-3d-rope-o5fc-20261013-hf-chat-20261014`|`5cccbf7`：3D-RoPE + 固定源 FC 提取 + 完整历史单工|
 |accel|`/user/weihongliang/worktrees/hf-accel-no-fc-3d-rope-20261009-canvas-window-20261010-combined-batch-tts-20261010-exact-window-20261010-bulk-window-20261010-paired-rotation-20261010-direct-table-20261010-o5fc`|独立 attach/patch，含 graph；可不加载|
-|Demo|`/user/weihongliang/worktrees/o5-fc-dev-external-hf-20261013-hf-chat-20261014`|`47cb5315`：外部HF单工、普通双工和移动端桥接|
+|Demo|`/user/weihongliang/worktrees/o5-fc-dev-external-hf-20261013-hf-chat-20261014`|`08c22855`：外部HF单工、普通双工和移动端桥接|
 
 三者是独立 Git worktree。HF 的 FC 提取入口为 `fc/migration/extract.py`，
 `--check` 可重现源码与适配清单；HF 不承担 graph 或服务 warm 策略。

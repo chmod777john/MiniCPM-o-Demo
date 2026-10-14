@@ -1,0 +1,119 @@
+{
+  "frontend_commit": "08c22855",
+  "pages": [
+    {
+      "path": "/turnbased",
+      "status": 200
+    },
+    {
+      "path": "/static/shared/i18n.js",
+      "status": 200,
+      "bytes": 17038,
+      "sha256": "bea7df93fdc837224619c6f72481652ba0827f925178e3ee4cf2509e20c920a0"
+    },
+    {
+      "path": "/static/ref-audio-player.js",
+      "status": 200,
+      "bytes": 17343,
+      "sha256": "c83bc6889edf11f47fd137dcece82af68cecb7924406ec684631ac0cee215561"
+    },
+    {
+      "path": "/static/shared/preset-selector.js",
+      "status": 200,
+      "bytes": 11766,
+      "sha256": "4283fb7f5fd982d285b3fd38ab717b86c86fe373060df1a8fe82113c7c9cbdd2"
+    },
+    {
+      "path": "/static/system-content-editor.js",
+      "status": 200,
+      "bytes": 13107,
+      "sha256": "898c3592b30bf0044ac596aa9b1fab72580c1caa01fb44cbd1de1ddd2c27104b"
+    },
+    {
+      "path": "/static/user-content-editor.js",
+      "status": 200,
+      "bytes": 46536,
+      "sha256": "484d4a2243764c1d9a8ededf9c1bbbfad8ac971b716fea6c9cc5a1395e890d46"
+    },
+    {
+      "path": "/static/shared/client-identity.js",
+      "status": 200,
+      "bytes": 2425,
+      "sha256": "da446e677f8919c32576c3ca7e5a27ccad435653228977d41379ec4852ab1601"
+    },
+    {
+      "path": "/static/shared/save-share.js",
+      "status": 200,
+      "bytes": 14536,
+      "sha256": "d7f19cf3f5fd74affc4e50fb6293e2f16cff1e1d4834370a063eb4c0d8fb5408"
+    },
+    {
+      "path": "/mobile/",
+      "status": 200
+    },
+    {
+      "path": "/mobile/assets/index-DV4XD7rX.js",
+      "status": 200,
+      "bytes": 398704,
+      "sha256": "62f32ead73cd46c5d918f0f8339e06eb3629cecd6ae5d6b5aed67e8bde1303c5"
+    },
+    {
+      "path": "/mobile/assets/index-to4roNkp.css",
+      "status": 200,
+      "bytes": 40638,
+      "sha256": "b498d0d9c50255ec40f0dcc548488f73adb8c2e73d42d8eecfd602ec4277167c"
+    },
+    {
+      "path": "/mobile-omni/",
+      "status": 200
+    },
+    {
+      "path": "/static/mobile-omni/mobile-omni.css",
+      "status": 200,
+      "bytes": 10386,
+      "sha256": "45c4f0ad913342e68827e8df114da71f91e7868a1cf2ea07fc68ec9bb0e34851"
+    },
+    {
+      "path": "/static/mobile-omni/settings-widget.css",
+      "status": 200,
+      "bytes": 4663,
+      "sha256": "4582d083cc34b87faa2657293cd5bb2cf2c98f7760ec8c2eaf3f86f84f19f320"
+    },
+    {
+      "path": "/static/ref-audio-player.js",
+      "status": 200,
+      "bytes": 17343,
+      "sha256": "c83bc6889edf11f47fd137dcece82af68cecb7924406ec684631ac0cee215561"
+    },
+    {
+      "path": "/static/shared/preset-selector.js",
+      "status": 200,
+      "bytes": 11766,
+      "sha256": "4283fb7f5fd982d285b3fd38ab717b86c86fe373060df1a8fe82113c7c9cbdd2"
+    },
+    {
+      "path": "/static/shared/save-share.js",
+      "status": 200,
+      "bytes": 14536,
+      "sha256": "d7f19cf3f5fd74affc4e50fb6293e2f16cff1e1d4834370a063eb4c0d8fb5408"
+    },
+    {
+      "path": "/static/shared/client-identity.js",
+      "status": 200,
+      "bytes": 2425,
+      "sha256": "da446e677f8919c32576c3ca7e5a27ccad435653228977d41379ec4852ab1601"
+    },
+    {
+      "path": "/static/mobile-omni/settings-widget.js",
+      "status": 200,
+      "bytes": 248891,
+      "sha256": "493f34d32bc5e3fbf922fcc0498f80977c2971e874bf8ab216046684aa8fbec0"
+    },
+    {
+      "path": "/static/mobile-omni/mobile-bridge.js",
+      "status": 200,
+      "bytes": 21261,
+      "sha256": "0656c58250c802c7a63f8bcb17db5f49378ec8f9d120fdac36b4cf35a98bd6ee"
+    }
+  ]
+}
