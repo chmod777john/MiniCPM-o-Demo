@@ -124,3 +124,22 @@ Transformers5.13.0、FA2.8.3.post1、FLA0.5.1，并安装SDK0.0.6和minicpmo-uti
 它与上面的A100验收环境不同；不要混用两份环境的版本记录。镜像中的
 `source-manifest.json` / `release-input-manifest.json` 分别记录应用源码与包装构建输入，
 具体交付的image ID/digest和API验收范围另见交付清单。
+
+
+### 双卡镜像的当前验收入口（2026-10-14）
+
+v9镜像在34的两张RTX PRO6000上使用Pro5000 TP配置，已完成真实加速启动、单工文字/语音、普通音视频双工、FC工具调用及切回单工的API检查。
+复起命令、完整本地image ID、修复版本、配置报告及未覆盖范围见 `DOCKER_TP2_ACCEPTANCE.md`。
+`DOCKER_ACCEPTANCE.md`保留早先v6单卡native的历史证据；其已发布digest不能用来替代本次v9。
+新v9暂未发布Docker Hub，也未推送或注册LIS。
+
+本次镜像加速源码为 `66c4d07`，修复不同Torch版本的BF16 cuBLAS策略接口；独立源码目录为：
+`/user/weihongliang/worktrees/hf-accel-no-fc-3d-rope-20261009-canvas-window-20261010-combined-batch-tts-20261010-exact-window-20261010-bulk-window-20261010-paired-rotation-20261010-direct-table-20261010-o5fc-cu130-20261014`。
+该树文档/证据后继提交为 `4142412`；运行实现不变。上文A100历史验收仍绑定原始版本与环境。
+
+### FC能力边界
+
+FC音频/文字/工具结果已接通外部HF；普通双工与FC虽共享模型，仍有各自的unit调度。
+当前FC未接Basic或KV-surgery滑窗，也未实现图片/视频输入；不能把普通会话的窗口/视觉选项视为FC支持。
+Listen/speak沿用FC FSM，可调普通binary阈值未接入。完整只读审查与固定上游来源核对见
+`evidence/20261014-fc-feature-review/REPORT.md`。其中FA2启用状态是审查时快照；随后显式ENV透传已修复，v9启动报告确认开启。
