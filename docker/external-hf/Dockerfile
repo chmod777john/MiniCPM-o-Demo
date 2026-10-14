@@ -13,8 +13,7 @@ RUN --mount=type=bind,source=runtime,target=/runtime,readonly \
     tar -xzf /runtime/pro5000-python310-site.tar.gz -C /opt/o5/.venv && \
     mkdir -p /usr/local/cuda-13.0 && \
     tar -xzf /runtime/cuda13-compiler.tar.gz -C /usr/local/cuda-13.0 && \
-    /opt/o5/.venv/bin/python -m ensurepip && \
-    ln -s ../lib/python3.10/site-packages/ninja/data/bin/ninja /opt/o5/.venv/bin/ninja
+    /opt/o5/.venv/bin/python -m ensurepip
 # utils metadata includes old optional dependency pins; frozen runtime wins.
 RUN --mount=type=bind,source=wheels,target=/wheels,readonly \
     python -m pip install --no-deps /wheels/minicpmo_utils-1.0.7-py3-none-any.whl /wheels/minicpm_o5_sdk-0.0.6-py3-none-any.whl
@@ -25,6 +24,8 @@ RUN --mount=type=bind,source=materials,target=/materials,readonly \
     tar -xf /materials/demo.tar -C /opt/o5/demo && \
     cp -a /materials/mobile /opt/o5/demo/static/mobile && \
     cp /materials/source-manifest.json /opt/o5/source-manifest.json
+COPY tools/ninja /opt/o5/.venv/bin/ninja
+RUN chmod +x /opt/o5/.venv/bin/ninja
 COPY docker/external-hf/ /opt/o5/package/
 ENV PROJECT_DIR=/opt/o5/demo O5_CANONICAL_PATH=/opt/o5/hf \
     O5_ACCELERATION_PATH=/opt/o5/accel O5_ACCELERATION_HARDWARE=pro5000 \

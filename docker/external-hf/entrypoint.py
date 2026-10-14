@@ -28,9 +28,16 @@ signal.signal(signal.SIGTERM, stop)
 signal.signal(signal.SIGINT, stop)
 
 def launch(args):
+    if STOPPING:
+        raise SystemExit(0)
     print("[image] launch", " ".join(args), flush=True)
     p = subprocess.Popen(args, cwd=ROOT, start_new_session=True)
     CHILDREN.append(p)
+    if STOPPING:
+        if p.poll() is None:
+            os.killpg(p.pid, signal.SIGTERM)
+            p.wait(timeout=30)
+        raise SystemExit(0)
     return p
 
 def wait_health(url, timeout=1200):
@@ -46,6 +53,8 @@ def wait_health(url, timeout=1200):
         except Exception:
             pass
         time.sleep(2)
+    if STOPPING:
+        raise SystemExit(0)
     raise TimeoutError(url)
 
 try:

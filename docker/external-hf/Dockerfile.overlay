@@ -1,0 +1,5 @@
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE}
+COPY tools/ninja /opt/o5/package/ninja
+RUN rm -f /opt/o5/.venv/bin/ninja && cp /opt/o5/package/ninja /opt/o5/.venv/bin/ninja && chmod +x /opt/o5/.venv/bin/ninja
+COPY docker/external-hf/ /opt/o5/package/

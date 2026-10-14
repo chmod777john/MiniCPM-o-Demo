@@ -6,7 +6,7 @@ This image assembles three independent committed materials under `/opt/o5/{hf,ac
 
 `materials/hf.tar`, `materials/demo.tar`, `materials/accel-runtime.tar` are Git archives; `materials/mobile/` is the current Demo build:static output. `materials/source-manifest.json` records their commits. The acceleration archive includes src, pyproject.toml and README only, excluding benchmark evidence.
 
-`runtime/pro5000-python310-site.tar.gz` contains the verified Pro5000 project's site-packages and its qualified native dense causal artifact. `runtime/cuda13-compiler.tar.gz` contains nvcc, nvvm, CUDA13 headers and libcudart. It is intentional to restore this verified Python3.10/Torch2.14+cu130 environment: the older requirements-pro5000.txt described a discarded Python3.12/Torch2.9 candidate. Installed versions are captured in requirements-pro5000.lock. Source environment provenance and archive SHA256 belong in the delivery manifest.
+`runtime/pro5000-python310-site.tar.gz` contains the verified Pro5000 project's site-packages and its qualified native dense causal artifact. `tools/ninja` must be copied from the source venv/bin (the installed Python ninja package does not embed that executable). `runtime/cuda13-compiler.tar.gz` contains nvcc, nvvm, CUDA13 headers and libcudart. It is intentional to restore this verified Python3.10/Torch2.14+cu130 environment: the older requirements-pro5000.txt described a discarded Python3.12/Torch2.9 candidate. Installed versions are captured in requirements-pro5000.lock. Source environment provenance and archive SHA256 belong in the delivery manifest.
 
 SDK0.0.6 and minicpmo-utils1.0.7 wheels go in wheels/. They are installed without dependency resolution, preserving the tested runtime. minicpmo-utils optional metadata has older Torch/Transformers/librosa pins; API tests, not pip's old optional pins, qualify this exact combination.
 
@@ -44,3 +44,7 @@ The default worker role starts backend+worker and can register to GATEWAY_REGIST
 MODEL_PATH is parsed at runtime, matching the prior single ModelWeight mount convention. Acceleration and HF paths/defaults are baked into image ENV so custom platform env injection is unnecessary. Prior August platform limitations are historical evidence, not a current permission guarantee. Inspect current lisctl/template contract before registration; do not overwrite active production assets.
 
 Current task's `lisctl auth whoami` returned401; image API validation continues independently. No LIS deployment or Pro5000 TP2 acceptance is claimed until it actually runs.
+
+A LIS gateway asset must have its role fixed in the image when custom environment injection is unavailable. Build the thin `Dockerfile.gateway-role` with `WORKER_IMAGE=<qualified worker image>`; it sets `O5_ROLE=gateway`. Do not register the default worker-role image as a gateway without this layer or an explicit supported template override.
+
+`Dockerfile.overlay` is for updating packaging files and ninja atop a qualified immutable base image on disk-limited build hosts. Pin the base digest in the release manifest; source/runtime archives and the full Dockerfile remain the rebuild recipe.
