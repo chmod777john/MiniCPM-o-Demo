@@ -1,0 +1,6 @@
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE}
+# Numerical code and environment remain byte-identical to the accepted TP2 base.
+COPY docker/external-hf/ /opt/o5/package/
+COPY release-input-manifest.json /opt/o5/release-input-manifest.json
+ENV O5_ROLE=worker

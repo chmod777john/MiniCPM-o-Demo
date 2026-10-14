@@ -75,3 +75,42 @@ For the Pro5000 host, `docker` is a rootless Podman compatibility wrapper. Use `
 The qualified runtime snapshot contains versioned cuBLAS `.so.13` files. The image provides link-time `libcublas.so`/`libcublasLt.so` symlinks under CUDA_HOME/lib64 for acceleration C++ extension builds; both links target the unchanged runtime libraries. The native single smoke does not exercise this grouped-extension linker path.
 
 The local v9 image above passed TP2 API probes on two Pro6000 using the Pro5000 acceleration preset. It has not been pushed. The previously published v6 tag predates the TP2 compatibility repairs and is not the TP2 delivery image. See `docs/external-hf/DOCKER_TP2_ACCEPTANCE.md` for scope and restart commands.
+
+## Historical LIS split container contract
+
+`Dockerfile.split-overlay` changes packaging only on the accepted TP2 image;
+`Dockerfile.gateway-role` fixes its companion image to gateway. No runtime package
+or HF/accel source is replaced. `lis-contract.json` describes the selected connection
+contract (a fragment for template configuration, not a complete LIS resource).
+The worker image fixes `periodic_idempotent`, refresh 20s and max backoff 20s. The
+initial failed PUT retries after 1/2/4/8/16/20s; HTTP timeout is 5s. A compatible
+template must declare those same values. This choice supports gateway restart;
+`startup_retry_only` is a different historical contract, not this release.
+
+Gateway forwards LIS CLI arguments, including nondefault ports and `--http`.
+It reads `/app/config.json` without modifying it, preserving recording and all
+supplied fields in `/tmp/o5-entrypoint/config.json`. Missing data-dir defaults to
+`/app/data` when a platform config is supplied. The optional historical
+`/etc/lis/publisher-runtime/runtime.json` provides fallback gateway ports and is
+checked for registration-contract mismatch. Historical worker Pods do not mount
+that ConfigMap, so registration defaults are baked into the image.
+
+Worker reads the template's `MODEL_PATH`, `WORKER_ID`, `WORKER_ENDPOINT`,
+`WORKER_GPU_GROUP`, `WORKER_PORT`, `BACKEND_PORT`, and `GATEWAY_REGISTRY_URL`.
+The model root contains `model.pt` and `token2wav_causal_vocoder/`. Backend binds
+`0.0.0.0`; the colocated worker connects over `127.0.0.1`. Exactly one worker Pod
+needs two GPUs for the fixed TP2 preset. Gateway has no GPU requirement.
+
+Registration uses the existing gateway's idempotent PUT. The packaging supervisor
+checks children between bounded requests; it has no detached registrar thread or
+process. Model loading is independent of registry availability. Restarting the
+gateway can terminate active client sessions; registration recovery enables new
+sessions, not transparent replay of an interrupted conversation.
+
+CPU checks (no model imports):
+
+```sh
+python docker/external-hf/test_entrypoint.py
+python docker/external-hf/test_lis_contract.py
+python docker/external-hf/test_launcher_image.py
+```

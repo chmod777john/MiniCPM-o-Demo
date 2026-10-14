@@ -11,7 +11,7 @@ nodes = [n for n in ast.parse(source.read_text()).body if isinstance(n, ast.Func
 
 def namespace():
     ns = dict(STOPPING=False, CHILDREN=[], ROOT=Path('.'), signal=signal,
-              subprocess=subprocess, time=time)
+              subprocess=subprocess, time=time, Path=Path)
     exec(compile(ast.Module(nodes, type_ignores=[]), str(source), 'exec'), ns)
     return ns
 
