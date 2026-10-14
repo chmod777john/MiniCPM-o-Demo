@@ -5,3 +5,6 @@ RUN rm -f /opt/o5/.venv/bin/ninja && cp /opt/o5/package/ninja /opt/o5/.venv/bin/
 COPY docker/external-hf/ /opt/o5/package/
 
 COPY release-input-manifest.json /opt/o5/release-input-manifest.json
+
+RUN rm -rf /opt/o5/demo/static/mobile /opt/o5/demo/static/mobile-omni
+COPY static/ /opt/o5/demo/static/

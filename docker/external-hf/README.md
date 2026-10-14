@@ -53,3 +53,5 @@ A LIS gateway asset must have its role fixed in the image when custom environmen
 The current default reference audio is Demo's archived `assets/ref_audio/ref_minicpm_signature.wav`, resolved by `cfg.audio.ref_audio_path`. No ineffective `REF_AUDIO_PATH` environment override is set. Explicit API reference audio follows the request path.
 
 A final delivery manifest must supplement source archives with the runtime snapshot/native/ninja/checkpoint hashes, immutable base and final worker/gateway image IDs and registry digests. For a thin overlay, `release-input-manifest.json` records its exact package and inherited inputs; final image digests live in the external delivery manifest to avoid a self-referential digest.
+
+Both full and overlay builds replace the generated mobile/mobile-omni trees completely; copying into an old tree can retain obsolete content-hashed JavaScript. Overlay context must include freshly built `static/mobile` and `static/mobile-omni`, matching the input manifest hashes.
