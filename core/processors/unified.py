@@ -213,6 +213,7 @@ class ChatView(MiniCPMOProcessorMixin):
         self.ref_audio_path = ref_audio_path
         self._ref_audio_cache = None
         self._session_id = None
+        self._chat_inputs = None
     
     def prefill(
         self,
@@ -225,8 +226,17 @@ class ChatView(MiniCPMOProcessorMixin):
         enable_thinking: bool = False,
         max_inp_length: int = 8192,
     ) -> str:
-        """Prefill 所有消息到 KV cache（不含 generation prompt）"""
+        """外部 HF 暂存完整请求，生成时一次处理；旧内置模型沿用原接口。"""
         self._session_id = session_id
+        if getattr(self._model, "_external_hf_chat", False):
+            # The transport has a prepare/generate split; HF chat consumes the
+            # complete request once. Stage inputs only, without a second loop.
+            self._chat_inputs = dict(
+                msgs=msgs, omni_mode=omni_mode, max_slice_nums=max_slice_nums,
+                use_image_id=use_image_id, use_tts_template=use_tts_template,
+                enable_thinking=enable_thinking, max_inp_length=max_inp_length,
+            )
+            return ""
         prompt = self._model.non_streaming_prefill(
             session_id=session_id,
             msgs=msgs,
@@ -253,6 +263,19 @@ class ChatView(MiniCPMOProcessorMixin):
         length_penalty: float = 1.1,
     ):
         """基于已有 KV cache 做非流式 generate + 可选 TTS"""
+        if getattr(self._model, "_external_hf_chat", False):
+            if self._session_id != session_id or self._chat_inputs is None:
+                raise ValueError("chat requires a complete input request for this session")
+            inputs, self._chat_inputs = self._chat_inputs, None
+            inputs.update(use_tts_template=use_tts_template, enable_thinking=enable_thinking)
+            if tts_ref_audio is not None:
+                inputs["tts_ref_audio"] = tts_ref_audio
+            return self._model.chat(
+                **inputs, stream=False, max_new_tokens=max_new_tokens,
+                do_sample=do_sample, generate_audio=generate_audio,
+                tts_sampling_params=tts_sampling_params, output_audio_path=output_audio_path,
+                length_penalty=length_penalty, num_beams=1,
+            )
         result = self._model.non_streaming_generate(
             session_id=session_id,
             max_new_tokens=max_new_tokens,
@@ -281,16 +304,29 @@ class ChatView(MiniCPMOProcessorMixin):
         chunk_index = 0
         
         try:
-            iter_gen = self._model.streaming_generate(
-                session_id=session_id,
-                do_sample=do_sample,
-                generate_audio=generate_audio,
-                max_new_tokens=max_new_tokens,
-                use_tts_template=True,
-                length_penalty=length_penalty,
-            )
+            external = getattr(self._model, "_external_hf_chat", False)
+            if external:
+                if self._session_id != session_id or self._chat_inputs is None:
+                    raise ValueError("chat requires a complete input request for this session")
+                inputs, self._chat_inputs = self._chat_inputs, None
+                iter_gen = self._model.chat(
+                    **inputs, stream=True, do_sample=do_sample,
+                    generate_audio=generate_audio, max_new_tokens=max_new_tokens,
+                    length_penalty=length_penalty,
+                )
+            else:
+                iter_gen = self._model.streaming_generate(
+                    session_id=session_id,
+                    do_sample=do_sample,
+                    generate_audio=generate_audio,
+                    max_new_tokens=max_new_tokens,
+                    use_tts_template=True,
+                    length_penalty=length_penalty,
+                )
             
             for item in iter_gen:
+                if external and isinstance(item, str):
+                    item = (item, None)
                 if item is None:
                     continue
                 if not isinstance(item, (tuple, list)) or len(item) < 2:
@@ -325,6 +361,9 @@ class ChatView(MiniCPMOProcessorMixin):
         except Exception as e:
             logger.error(f"ChatView streaming_generate error: {e}", exc_info=True)
             raise
+        finally:
+            if "iter_gen" in locals() and hasattr(iter_gen, "close"):
+                iter_gen.close()
     
     @property
     def kv_cache_length(self) -> int:
@@ -416,7 +455,9 @@ class ChatView(MiniCPMOProcessorMixin):
         # 转换消息格式
         msgs = self._convert_messages_to_model_format(
             request.messages,
-            tts_config=tts_config,
+            # External HF receives exactly the caller's complete messages.
+            # Voice reference is separate; never inject a second prompt here.
+            tts_config=None if getattr(self._model, "_external_hf_chat", False) else tts_config,
         )
         
         # 解析 TTS ref audio（独立于 LLM ref audio）
@@ -443,7 +484,7 @@ class ChatView(MiniCPMOProcessorMixin):
             length_penalty = request.generation.length_penalty if hasattr(request, 'generation') and request.generation else 1.1
             result = self._model.chat(
                 msgs=msgs,
-                sampling=do_sample,
+                do_sample=do_sample,
                 max_new_tokens=max_new_tokens,
                 stream=False,
                 use_tts_template=use_tts_template,

@@ -62,6 +62,7 @@ def _plain_duplex_system_prompt(prefix):
 class MiniCPMO(BaseMiniCPMO):
     """Demo runtime facade over external HF model primitives."""
 
+    _external_hf_chat = True
     _tts_sampling_params_type = TTSSamplingParams
 
     def __init__(self, config):
@@ -206,61 +207,27 @@ class MiniCPMO(BaseMiniCPMO):
             tmp.close()
             audio_path_for_base = temp_audio_path
 
-        sentinel = object()
-        previous_tts_attr = self.__dict__.get("_generate_speech_non_streaming", sentinel)
-        should_override_tts_prompt = tts_ref_audio is not None
-
-        def _generate_speech_with_ref_audio(
-            _self,
-            outputs,
-            tts_bound,
-            tts_proj_layer,
-            audio_prompt,
-            spk_bound=None,
-            output_tts_inputs_embeds_path=None,
-            tts_sampling_params=TTSSamplingParams(),
-        ):
-            return BaseMiniCPMO._generate_speech_non_streaming(
-                _self,
-                outputs=outputs,
-                tts_bound=tts_bound,
-                tts_proj_layer=tts_proj_layer,
-                audio_prompt=tts_ref_audio,
-                spk_bound=spk_bound,
-                output_tts_inputs_embeds_path=output_tts_inputs_embeds_path,
-                tts_sampling_params=tts_sampling_params,
-            )
-
         try:
-            if should_override_tts_prompt:
-                self._generate_speech_non_streaming = types.MethodType(_generate_speech_with_ref_audio, self)
             result = super().chat(
-                *args,
-                generate_audio=generate_audio,
+                *args, generate_audio=generate_audio,
                 output_audio_path=audio_path_for_base,
-                return_prompt=return_prompt,
-                tts_sampling_params=tts_sampling_params,
-                **kwargs,
+                return_prompt=return_prompt, tts_ref_audio=tts_ref_audio,
+                tts_sampling_params=tts_sampling_params or TTSSamplingParams(), **kwargs,
             )
-        finally:
-            if should_override_tts_prompt:
-                if previous_tts_attr is sentinel:
-                    self.__dict__.pop("_generate_speech_non_streaming", None)
-                else:
-                    self._generate_speech_non_streaming = previous_tts_attr
+        except BaseException:
+            if temp_audio_path and os.path.exists(temp_audio_path):
+                os.unlink(temp_audio_path)
+            raise
 
         generated_waveform = None
-        if (
-            temp_audio_path is not None
-            and os.path.exists(temp_audio_path)
-            and os.path.getsize(temp_audio_path) > 0
-        ):
+        if temp_audio_path is not None:
             try:
-                generated_waveform, _ = sf.read(temp_audio_path, dtype="float32")
+                if os.path.getsize(temp_audio_path) > 0:
+                    generated_waveform, _ = sf.read(temp_audio_path, dtype="float32")
             finally:
                 try:
                     os.unlink(temp_audio_path)
-                except OSError:
+                except FileNotFoundError:
                     pass
 
         if generated_waveform is None:

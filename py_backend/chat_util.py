@@ -33,6 +33,7 @@ class WorkerChatRequest:
     messages: list
     streaming: bool
     max_new_tokens: int
+    do_sample: bool
     length_penalty: float
     max_slice_nums: Optional[int]
     generate_audio: bool
@@ -69,15 +70,22 @@ def parse_worker_chat_request_message(msg: Dict[str, Any]) -> WorkerChatRequest:
         max_slice_nums = int(image["max_slice_nums"])
 
     generate_audio = bool(tts.get("enabled", False))
+    if generate_audio and bool(payload.get("enable_thinking", False)):
+        raise ChatRequestError("Speech chat requires enable_thinking=false; thinking is currently text-only")
     tts_ref_audio = None
     ref_b64 = tts.get("ref_audio_data")
     if generate_audio and ref_b64:
         tts_ref_audio = np.frombuffer(base64.b64decode(ref_b64), dtype=np.float32)
 
+    if int(generation.get("max_new_tokens", 256)) < 1:
+        raise ChatRequestError("max_new_tokens must be positive")
+    if not payload.get("messages"):
+        raise ChatRequestError("messages must be nonempty")
     return WorkerChatRequest(
         messages=payload.get("messages", []),
         streaming=bool(payload.get("streaming", True)),
         max_new_tokens=int(generation.get("max_new_tokens", 256)),
+        do_sample=bool(generation.get("do_sample", True)),
         length_penalty=float(generation.get("length_penalty", 1.1)),
         max_slice_nums=max_slice_nums,
         generate_audio=generate_audio,

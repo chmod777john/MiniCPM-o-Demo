@@ -236,15 +236,16 @@ class PyTorchBackend:
         )
 
     def chat_init_tts(self, ref_audio: Optional[np.ndarray]) -> None:
-        if ref_audio is not None:
-            self.processor.model.init_token2wav_cache(prompt_speech_16k=ref_audio)
-            return
-
-        if self.ref_audio_path:
+        if ref_audio is None and self.ref_audio_path:
             import librosa
-
-            loaded_ref, _ = librosa.load(self.ref_audio_path, sr=16000, mono=True)
-            self.processor.model.init_token2wav_cache(prompt_speech_16k=loaded_ref)
+            ref_audio, _ = librosa.load(self.ref_audio_path, sr=16000, mono=True)
+        if getattr(self.processor.model, "_external_hf_chat", False):
+            view = self.processor.set_chat_mode()
+            if view._chat_inputs is None:
+                raise ValueError("Prepare chat inputs before setting its TTS reference")
+            view._chat_inputs["tts_ref_audio"] = ref_audio
+        elif ref_audio is not None:
+            self.processor.model.init_token2wav_cache(prompt_speech_16k=ref_audio)
 
     def chat_streaming_generate(
         self,
@@ -252,6 +253,7 @@ class PyTorchBackend:
         generate_audio: bool = True,
         max_new_tokens: int = 256,
         length_penalty: float = 1.1,
+        do_sample: bool = True,
     ) -> Iterator[StreamingChunk]:
         chat_view = self.processor.set_chat_mode()
         yield from chat_view.streaming_generate(
@@ -259,6 +261,7 @@ class PyTorchBackend:
             generate_audio=generate_audio,
             max_new_tokens=max_new_tokens,
             length_penalty=length_penalty,
+            do_sample=do_sample,
         )
 
     def chat_non_streaming_generate(
@@ -295,6 +298,7 @@ class PyTorchBackend:
         enable_thinking: bool = False,
         tts_ref_audio: Optional[np.ndarray] = None,
         length_penalty: float = 1.1,
+        do_sample: bool = True,
     ) -> Any:
         chat_view = self.processor.set_chat_mode()
         tts_config = TTSConfig(enabled=generate_audio, mode=TTSMode.AUDIO_ASSISTANT)
@@ -321,9 +325,12 @@ class PyTorchBackend:
                 enable_thinking=enable_thinking,
             ),
             max_new_tokens=max_new_tokens,
-            do_sample=True,
+            do_sample=do_sample,
             generate_audio=generate_audio,
         )
+
+        if not response.success:
+            raise RuntimeError(response.error or "HF chat failed")
 
         waveform = None
         if response.audio_data:

@@ -249,6 +249,10 @@ class BackendProtocolSession:
         self._finalize_done.set()
         self._finalize_task: Optional[asyncio.Task[None]] = None
         self._op_lock = asyncio.Lock()
+        from threading import Event
+        self._chat_cancel = Event()
+        self._chat_generation_done = asyncio.Event()
+        self._chat_generation_done.set()
         self._active_response_id: Optional[str] = None
         self._fc_runtime: Optional[FcDuplexSessionRuntime] = None
 
@@ -327,6 +331,9 @@ class BackendProtocolSession:
         if self.closed:
             return
         self.closed = True
+        if self.mode == "turn_based":
+            self._chat_cancel.set()
+            await self._chat_generation_done.wait()
         await self._drain_finalize()
 
         if self.mode == "full_duplex":
@@ -447,47 +454,63 @@ class BackendProtocolSession:
 
     async def _push_turn_based(self, payload: Dict[str, Any]) -> None:
         async with self._op_lock:
-            request = parse_worker_chat_request_message({"type": "chat.request", "payload": payload})
-            response_id = str(payload.get("response_id") or f"resp_{uuid.uuid4().hex[:12]}")
-            input_id = payload.get("input_id")
+            if self.closed:
+                return
+            self._chat_cancel.clear()
+            self._chat_generation_done.clear()
+            try:
+                request = parse_worker_chat_request_message({"type": "chat.request", "payload": payload})
+                response_id = str(payload.get("response_id") or f"resp_{uuid.uuid4().hex[:12]}")
+                input_id = payload.get("input_id")
 
-            messages = parse_raw_messages(request.messages)
+                messages = parse_raw_messages(request.messages)
 
-            if request.streaming:
-                model_msgs = convert_to_model_msgs(messages)
-                await asyncio.to_thread(
-                    self.backend.chat_prefill,
-                    session_id=self.session_id,
-                    msgs=model_msgs,
-                    omni_mode=request.omni_mode,
-                    max_slice_nums=request.max_slice_nums,
-                    use_tts_template=request.use_tts_template,
-                    enable_thinking=request.enable_thinking,
-                )
-                if request.generate_audio:
-                    await asyncio.to_thread(self.backend.chat_init_tts, request.tts_ref_audio)
-                await self._stream_turn_based(request, response_id=response_id, input_id=input_id)
-            else:
-                await self._non_stream_turn_based(
-                    request,
-                    messages=messages,
-                    response_id=response_id,
-                    input_id=input_id,
-                )
+                if request.streaming:
+                    model_msgs = convert_to_model_msgs(messages)
+                    await asyncio.to_thread(
+                        self.backend.chat_prefill,
+                        session_id=self.session_id,
+                        msgs=model_msgs,
+                        omni_mode=request.omni_mode,
+                        max_slice_nums=request.max_slice_nums,
+                        use_tts_template=request.use_tts_template,
+                        enable_thinking=request.enable_thinking,
+                    )
+                    if request.generate_audio:
+                        await asyncio.to_thread(self.backend.chat_init_tts, request.tts_ref_audio)
+                    await self._stream_turn_based(request, response_id=response_id, input_id=input_id)
+                else:
+                    await self._non_stream_turn_based(
+                        request,
+                        messages=messages,
+                        response_id=response_id,
+                        input_id=input_id,
+                    )
+
+            finally:
+                self._chat_generation_done.set()
 
     async def _stream_turn_based(self, request: Any, *, response_id: str, input_id: Optional[str]) -> None:
+        cancelled = self._chat_cancel
         queue: asyncio.Queue = asyncio.Queue()
         loop = asyncio.get_running_loop()
 
         def _run_generate() -> None:
             try:
-                for chunk in self.backend.chat_streaming_generate(
+                iterator = self.backend.chat_streaming_generate(
                     session_id=self.session_id,
                     generate_audio=request.generate_audio,
                     max_new_tokens=request.max_new_tokens,
                     length_penalty=request.length_penalty,
-                ):
-                    loop.call_soon_threadsafe(queue.put_nowait, ("chunk", chunk))
+                    do_sample=request.do_sample,
+                )
+                try:
+                    for chunk in iterator:
+                        if cancelled.is_set():
+                            break
+                        loop.call_soon_threadsafe(queue.put_nowait, ("chunk", chunk))
+                finally:
+                    iterator.close()
                 loop.call_soon_threadsafe(queue.put_nowait, ("done", None))
             except Exception as exc:
                 loop.call_soon_threadsafe(queue.put_nowait, ("error", exc))
@@ -497,6 +520,8 @@ class BackendProtocolSession:
         try:
             while True:
                 tag, payload = await queue.get()
+                if self.closed:
+                    return
                 if tag == "chunk":
                     if payload.text_delta:
                         full_text += payload.text_delta
@@ -530,8 +555,8 @@ class BackendProtocolSession:
                 if tag == "error":
                     raise payload
         finally:
-            with suppress(asyncio.TimeoutError):
-                await asyncio.wait_for(task, timeout=5.0)
+            cancelled.set()
+            await asyncio.shield(task)
 
     async def _non_stream_turn_based(
         self,
@@ -552,8 +577,11 @@ class BackendProtocolSession:
             enable_thinking=request.enable_thinking,
             tts_ref_audio=request.tts_ref_audio,
             length_penalty=request.length_penalty,
+            do_sample=request.do_sample,
         )
 
+        if self.closed:
+            return
         text = result
         waveform = None
         if isinstance(result, tuple):
