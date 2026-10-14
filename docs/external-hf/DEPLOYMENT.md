@@ -112,3 +112,15 @@ export O5_FRONTEND_SLIDING_WINDOW_MODES=off,basic,kv_surgery
 当前测试使用项目本地依赖和Node22.23.3。不要用系统Node16。
 
 单工输入默认8192上限；语音单工要求enable_thinking=false。详细选项、取消协议和验收限制见 `SIMPLEX.md`。
+
+## Docker 打包
+
+Docker构建、原始checkpoint挂载、独立gateway/worker角色和34机器功能验证方式见
+`docker/external-hf/README.md`。镜像仍从 `/opt/o5/hf`、`/opt/o5/accel`、
+`/opt/o5/demo` 三个目录加载，权重独立只读挂载，不需要导出权重包。
+
+镜像采用已留存的Pro5000项目运行环境快照：Python3.10、Torch2.14.0+cu130、
+Transformers5.13.0、FA2.8.3.post1、FLA0.5.1，并安装SDK0.0.6和minicpmo-utils1.0.7。
+它与上面的A100验收环境不同；不要混用两份环境的版本记录。镜像中的
+`source-manifest.json` / `release-input-manifest.json` 分别记录应用源码与包装构建输入，
+具体交付的image ID/digest和API验收范围另见交付清单。
