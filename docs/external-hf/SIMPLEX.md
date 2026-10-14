@@ -53,3 +53,5 @@ HF 文字流 iterator 负责 producer 线程，生成异常传给消费方；关
 - 桌面普通页面、移动两入口及构建后的JS/CSS HTTP200。没有进行真实手机权限、摄像头、麦克风和触摸交互验收。
 - 实际环境用最终 `environment.json` 为准：torch2.11.0+cu128、transformers5.13.0、FA2.8.3、FLA0.5.1、SDK0.0.6、minicpmo-utils1.0.7。
 - 最终原始证据在 `analysis-runs/20261014-hf-simplex/final/`，精简记录在本文相邻 `evidence/20261014-simplex/final/`。单工语音时长是整条回复的生成时长，与双工1秒unit验收是不同口径。
+
+独立只读审查记录见最终证据的 `REVIEW.md`，未发现阻断缺陷。之后HF补充提交 `5fea768` 只增CPU测试/文档，推理实现仍为 `5cccbf7`：安装版Transformers streamer配合模型double执行真实 `_decode_stream`，验证producer在输出前/后抛错、close/cancel/join及lazy-start均通过。这是CPU线程生命周期验证，不是GPU挂起/进程故障验收。验证job1218128已于完成后停止，公网原服务未替换。
