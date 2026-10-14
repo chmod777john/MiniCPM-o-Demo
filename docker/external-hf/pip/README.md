@@ -6,7 +6,7 @@
 
 - `public-wheel-inputs.json`：132 个来自 PyPI / PyTorch 官方索引的固定 wheel URL、版本和官方 SHA256。
 - `requirements-public.lock`：上述 wheel 的 `--require-hashes` 安装输入。
-- `source-inputs.json`：FA2、causal-conv1d 官方 sdist 和 NVIDIA CUDA 13.0.2 redistribution 中 nvcc/cudart/cccl/crt 的 URL 与 SHA。
+- `source-inputs.json`：FA2、causal-conv1d 官方 sdist 和 NVIDIA CUDA 13.0.2 redistribution 中 nvcc/cudart/cccl/crt/libnvvm 的 URL 与 SHA。
 - `flash-attn-cxx20.patch`：历史 Pro5000 构建相对官方 sdist 的两处构建标准调整；不改 kernel 算法。
 - 内部 `minicpmo-utils==1.0.7` 原始 wheel 来自 commit `11700a4382531fd7a54a48f6409f09f7ebc90ad5`；SDK `0.0.6` 原始 wheel 与 PyPI SHA 对齐。最终安装锁会在 native 构建完成后补齐。
 
@@ -33,3 +33,7 @@ python docker/external-hf/pip/download_locked.py --output /path/to/context
 ## 当前验证范围
 
 来源核对、公共依赖全新 venv hash安装、dense固定源码编译/平台wheel/pip安装/CPU加载已经完成。最终正常Docker镜像、FA2/causal新编译、GPU/API验收尚未完成。证据在 `/user/weihongliang/analysis-runs/20261014-docker-pip-install/`。不得以旧镜像验收记录替代本轮门。
+
+## Debian 离线输入
+
+固定 Python base 的原始 apt 索引确定248个包，`debian-package-inputs.json`锁定版本、官方URL、大小及签名Packages中SHA256。构建context的`apt-offline/`保存原始deb、签名InRelease和Packages；先用base自带Debian keyring验签，并验证每个包，再在`RUN --network=none`中通过`apt-get --no-download`安装。没有复制已安装系统库，也不需要目标节点外网。安装清单保存在镜像`/opt/o5/debian-installed.tsv`。

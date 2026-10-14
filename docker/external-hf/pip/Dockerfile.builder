@@ -1,5 +1,7 @@
 FROM python:3.10-slim-bookworm@sha256:5be5aaecb962a41567bc8041f1e9e3432cb085b037fe057f9a562630b2e4b370
-RUN apt-get update && apt-get install -y --no-install-recommends g++ make git patch ffmpeg libsndfile1 libgomp1 ca-certificates curl procps xz-utils && rm -rf /var/lib/apt/lists/*
+RUN --network=none --mount=type=bind,source=apt-offline,target=/apt-inputs,readonly \
+    --mount=type=bind,source=docker/external-hf/pip,target=/recipe,readonly \
+    sh /recipe/install_debian_offline.sh /apt-inputs
 # Official CUDA redistribution components, never restored from site-packages.
 RUN --mount=type=bind,source=sources,target=/inputs,readonly \
     mkdir -p /usr/local/cuda-13.0 && \

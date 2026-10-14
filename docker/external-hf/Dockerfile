@@ -1,8 +1,8 @@
 # Build context is assembled from frozen independent Git sources + hash-locked pip wheel inputs.
 FROM python:3.10-slim-bookworm@sha256:5be5aaecb962a41567bc8041f1e9e3432cb085b037fe057f9a562630b2e4b370
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    ffmpeg libsndfile1 libgomp1 curl ca-certificates g++ make git procps xz-utils \
-    && rm -rf /var/lib/apt/lists/*
+RUN --network=none --mount=type=bind,source=apt-offline,target=/apt-inputs,readonly \
+    --mount=type=bind,source=docker/external-hf/pip,target=/recipe,readonly \
+    sh /recipe/install_debian_offline.sh /apt-inputs
 ENV VIRTUAL_ENV=/opt/o5/.venv PATH=/opt/o5/.venv/bin:/usr/local/cuda-13.0/bin:$PATH \
     PYTHONUNBUFFERED=1 PYTHONNOUSERSITE=1 PYTHONDONTWRITEBYTECODE=1 \
     CUDA_HOME=/usr/local/cuda-13.0 CUDA_INC_PATH=/opt/o5/.venv/lib/python3.10/site-packages/nvidia/cu13/include LD_LIBRARY_PATH=/usr/local/cuda-13.0/lib64 \
