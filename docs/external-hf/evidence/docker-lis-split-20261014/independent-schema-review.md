@@ -160,3 +160,15 @@ root通知split已通过simplex2项，以及约32秒/26unit活跃普通音频tic
 - `cleanup.json`显示两容器均ExitCode0/OOMKilled=false、Running=false；GPU0/1各3MiB且无compute进程。reviewer仅检查owner留存结果，没有停止任何资源。
 
 在上述证据范围内未发现新阻断。当前本地split包装/注册恢复/API功能门已具备相互吻合的证据；仍不能替代LIS在线部署、镜像发布、真实Pro5000硬件、完整端到端数值或实时性能验收。交付清单生成后继续核对其引用的镜像与manifest，避免把旧版本ID写进最终说明。
+
+
+## 最终验收文档与复起助手复核
+
+已只读检查packager工作树新增的`docs/external-hf/DOCKER_LIS_SPLIT_ACCEPTANCE.md`和`docs/external-hf/tools/start_lis_split_host34.py`。未发现新的阻断，可以固定归档。
+
+- 文档两镜像ID、package commit、HF/accel/Demo组合、manifest、API计数、两个PUT时刻、9.155秒恢复、配置/内存数据均与上述实测对应。明确写了本地双Pro6000使用Pro5000预设、v11未push、LIS未部署、普通短probe均listen、无实际basic裁剪及新hidden/logits门、不保证活跃WebSocket透明续传、不宣称全unit实时，没有把部署门扩大为精度/实时/LIS在线验收。
+- 复起助手固定两镜像ID，读取已验commands，检查名字/network/端口冲突、两卡空闲及模型文件，拒绝已有同名容器或资源占用；不包含停止/删除其他任务的操作。它是host34原现场的复起工具，依赖原现场commands和绝对路径，不是可任意迁移目录的通用部署器；文档按这个范围使用。源码只读审查，reviewer未执行复起。
+- 新归档`release-input-manifest.json`与原v11文件逐字节一致；host commands、cleanup、root audit也与原始证据一致。`raw-evidence-sha256.json`列出的42个原始产物已重算，0 mismatch。
+- 已查归档`host-image-layers.json`：worker/gateway都完整保留v9全部base layers，末尾只多2个包/manifest层，与Dockerfile split overlay及文档说明相符。
+
+收尾：本review任务完成，无源码/容器/SSH/GPU副作用。packager可把本报告最新追加部分同步进`independent-schema-review.md`后提交最终文档与证据；不需要再为本review重跑测试。

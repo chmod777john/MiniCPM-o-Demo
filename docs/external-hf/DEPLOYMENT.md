@@ -153,7 +153,16 @@ Listen/speak沿用FC FSM，可调普通binary阈值未接入。完整只读审�
 LIS派生模板不允许任意覆盖启动命令/环境变量，因此应交付固定角色的gateway/worker镜像、一个ModelWeight和匹配的2GPU×1worker模板。
 原始checkpoint与声码器置于同一MODEL_PATH根目录；无需导出safetensors。
 
-v9完整API实测为standalone同容器。后续拆分适配与验证在独立打包worktree推进：
-读取平台只读配置/CLI、backend监听0.0.0.0、动态注册及gateway重启恢复。
-注册本次选择历史契约允许的periodic_idempotent；不是所有旧模板都要求定时刷新，模板必须显式匹配镜像的策略。
-本地双容器通过后另记不可变镜像身份和验收范围，不覆盖v9记录；本轮暂不推送、注册或部署LIS。
+v11已在34机器的两张RTX PRO6000上，以Pro5000 TP配置完成gateway/worker双容器API和生命周期验证。
+最终worker镜像ID为 `sha256:e2a1f41bd37d50343b3882a4fb7f62fe7aae45b1adf4e30166f257c83af3962b`；
+gateway为 `sha256:d7e3b5ed6619a78b9e0d9e327cf507ef3830681b4c9df692cd35c75d11c0e3dd`。
+两者仅保存在34本地，继承v9的HF/accel及固定运行环境；v9同容器验收作为独立历史记录保留。
+
+本轮覆盖只读平台配置、非默认CLI端口、registry初始不可达、周期注册、
+单工文字/语音、普通音视频各2unit、FC8unit，以及活跃26unit时保持ticket和排队状态。
+gateway停止后重启，9.15秒恢复worker可用，worker容器及模型后端进程不变；恢复后文字/语音API再次通过。
+该恢复支持重新发起会话，不承诺正在进行的会话透明续接。两容器正常退出，测试GPU、网络和隧道已释放。
+
+本次注册策略为历史契约允许的 `periodic_idempotent`，refresh20s/max_backoff20s，模板必须显式匹配。
+固定镜像身份、复起方式、配置与原始证据见 `DOCKER_LIS_SPLIT_ACCEPTANCE.md`。
+物理Pro5000的显存和性能、当前LIS线上模板及部署仍未验；本轮没有新增镜像推送、注册或部署LIS。
