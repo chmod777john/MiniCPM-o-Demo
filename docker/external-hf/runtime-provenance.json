@@ -8,6 +8,10 @@
   "cuda13_compiler_archive_sha256": "12d6c6bacd7a24f2a82466e7c096b770d3775a7f49ff714a5a445fff6221f49f",
   "torch_git": "08187d9e0fba026dc8217405802ab5381dc88d90",
   "dense_artifact_binary_sha256": "ff1e0b1a95aadf4796a476c75386f13d38199481e022cf60726d9d3874eebf36",
-  "adjustments": ["minicpmo-utils 1.0.6 -> 1.0.7 --no-deps", "minicpm-o5-sdk 0.0.6 --no-deps"],
-  "package_native_gate": "2026-10-14 host34 Pro6000 SM120; CUDA primitives PASS; not Pro5000 model acceptance"
+  "adjustments": [
+    "minicpmo-utils 1.0.6 -> 1.0.7 --no-deps",
+    "minicpm-o5-sdk 0.0.6 --no-deps"
+  ],
+  "package_native_gate": "2026-10-14 host34 Pro6000 SM120; CUDA primitives PASS; not Pro5000 model acceptance",
+  "ninja_executable_sha256": "08639e194fffa7f08b259fc4abfa4803aff66b64de52549cee42ec527d55cea6"
 }

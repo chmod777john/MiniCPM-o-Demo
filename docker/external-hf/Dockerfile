@@ -23,6 +23,7 @@ RUN --mount=type=bind,source=materials,target=/materials,readonly \
     tar -xf /materials/accel-runtime.tar -C /opt/o5/accel && \
     tar -xf /materials/demo.tar -C /opt/o5/demo && \
     cp -a /materials/mobile /opt/o5/demo/static/mobile && \
+    cp -a /materials/mobile-omni/. /opt/o5/demo/static/mobile-omni/ && \
     cp /materials/source-manifest.json /opt/o5/source-manifest.json
 COPY tools/ninja /opt/o5/.venv/bin/ninja
 RUN chmod +x /opt/o5/.venv/bin/ninja

@@ -8,6 +8,19 @@ ROLE = os.environ.get("O5_ROLE", "worker")
 CHILDREN = []
 STOPPING = False
 
+def signal_group(proc, signum):
+    try:
+        os.killpg(proc.pid, signum)
+    except ProcessLookupError:
+        pass  # Exited between poll and signal; still reap below.
+
+def reap(proc, timeout):
+    try:
+        proc.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        signal_group(proc, signal.SIGKILL)
+        proc.wait()
+
 def stop(signum=None, frame=None):
     global STOPPING
     if STOPPING:
@@ -15,14 +28,10 @@ def stop(signum=None, frame=None):
     STOPPING = True
     for proc in reversed(CHILDREN):
         if proc.poll() is None:
-            os.killpg(proc.pid, signal.SIGTERM)
+            signal_group(proc, signal.SIGTERM)
     deadline = time.monotonic() + 30
     for proc in reversed(CHILDREN):
-        try:
-            proc.wait(timeout=max(0.1, deadline-time.monotonic()))
-        except subprocess.TimeoutExpired:
-            os.killpg(proc.pid, signal.SIGKILL)
-            proc.wait()
+        reap(proc, max(0.1, deadline-time.monotonic()))
 
 signal.signal(signal.SIGTERM, stop)
 signal.signal(signal.SIGINT, stop)
@@ -35,8 +44,8 @@ def launch(args):
     CHILDREN.append(p)
     if STOPPING:
         if p.poll() is None:
-            os.killpg(p.pid, signal.SIGTERM)
-            p.wait(timeout=30)
+            signal_group(p, signal.SIGTERM)
+        reap(p, 30)
         raise SystemExit(0)
     return p
 
@@ -76,7 +85,6 @@ try:
             raise FileNotFoundError(f"MODEL_PATH needs model.pt and token2wav_causal_vocoder: {mount}")
         os.environ["O5_CHECKPOINT_PATH"]=str(ckpt)
         os.environ["O5_ASSETS_DIR"]=str(assets)
-        os.environ.setdefault("REF_AUDIO_PATH",os.environ["O5_CANONICAL_PATH"]+"/assets/system_ref_audio.wav")
         cfg["model"]["pt_path"]=str(ckpt)
     config=data/"config.json"
     config.write_text(json.dumps(cfg,indent=2))
