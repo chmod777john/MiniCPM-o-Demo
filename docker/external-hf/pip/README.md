@@ -1,4 +1,4 @@
-# 固定 wheel 安装（构建流程正在验收）
+# 固定 wheel 安装（CPU 构建验收完成，GPU/API 待验）
 
 此目录替代旧 `runtime/pro5000-python310-site.tar.gz` 环境快照。所有 Python 包必须在新 venv 中通过 pip 安装；禁止从已有 site-packages 重封 wheel。
 
@@ -8,7 +8,7 @@
 - `requirements-public.lock`：上述 wheel 的 `--require-hashes` 安装输入。
 - `source-inputs.json`：FA2、causal-conv1d 官方 sdist 和 NVIDIA CUDA 13.0.2 redistribution 中 nvcc/cudart/cccl/crt/libnvvm 的 URL 与 SHA。
 - `flash-attn-cxx20.patch`：历史 Pro5000 构建相对官方 sdist 的两处构建标准调整；不改 kernel 算法。
-- 内部 `minicpmo-utils==1.0.7` 原始 wheel 来自 commit `11700a4382531fd7a54a48f6409f09f7ebc90ad5`；SDK `0.0.6` 原始 wheel 与 PyPI SHA 对齐。最终安装锁会在 native 构建完成后补齐。
+- 内部 `minicpmo-utils==1.0.7` 原始 wheel 来自 commit `11700a4382531fd7a54a48f6409f09f7ebc90ad5`；SDK `0.0.6` 原始 wheel 与 PyPI SHA 对齐。新native源码构建完成，137包完整安装锁已在交付context中生成。
 
 下载到普通磁盘构建目录：
 
@@ -22,17 +22,17 @@ python docker/external-hf/pip/download_locked.py --output /path/to/context
 
 固定清单用 `pip --no-index --no-deps --require-hashes` 安装。`--no-deps` 用于锁定整组已验收依赖，不代表依赖一致性检查自动通过。
 
-134 个公共/SDK/utils wheel 按 Linux CPython3.10 检查（包括 torch 激活的 CUDA extras），已知唯一冲突：内部 utils 声明 `librosa==0.9.0`，验收环境为 `0.11.0`。保留现有版本并明确记录该例外。FA2/causal 加入后仍需重做完整 pip check、import 和 GPU/API 门。
+137 个实际安装包完成容器审计（包括 torch 激活的 CUDA extras）。`pip check` 真实返回1，保留两项明确元数据例外：utils声明librosa0.9.0但固定环境为0.11.0；原始decord wheel内部CPython tag与文件名不一致（详后文）。其他冲突均阻断。所有核心包导入与新native加载通过；GPU/API仍待独立验收。
 
 ## dense 自定义扩展
 
 固定 `dense_causal/build.py` 在原资格工具链 GCC13.2.1/CUDA13.0.88、Torch2.14cu130、固定Torch/CUTLASS headers 下重新编译。不能复制旧已安装 cache 作为本轮输入，不改资格检查。
 
-新编译产物由 `package_dense.py` 打成 `cp310-cp310-linux_x86_64` wheel，pip 将 data files 安装到 venv `var/cache/minicpm-o-accel/<key>`。wheel 包含新 binary、manifest、build.ninja、derived header、diff、来源哈希。新旧 SASS dump 已逐字节一致，仍需在目标镜像实际加载与执行。
+新编译产物由 `package_dense.py` 打成 `cp310-cp310-linux_x86_64` wheel，pip 将 data files 安装到 venv `var/cache/minicpm-o-accel/<key>`。wheel 包含新 binary、manifest、build.ninja、derived header、diff、来源哈希。新旧 SASS dump 已逐字节一致，并在目标镜像实际CPU加载通过；GPU执行仍待验。
 
 ## 当前验证范围
 
-来源核对、公共依赖全新 venv hash安装、dense固定源码编译/平台wheel/pip安装/CPU加载已经完成。最终正常Docker镜像、FA2/causal新编译、GPU/API验收尚未完成。证据在 `/user/weihongliang/analysis-runs/20261014-docker-pip-install/`。不得以旧镜像验收记录替代本轮门。
+来源核对、137包全新venv hash安装、dense/FA2/causal固定源码编译及目标容器CPU加载完成。37独立BuildKit已构建并导出worker/gateway OCI；14项容器CPU门、真实gateway HTTP静态页与退出流程通过。实际image内137包版本、三物料/打包/移动资产1444文件与输入完全一致。GPU算子及模型API尚未验收。证据在 `/user/weihongliang/analysis-runs/20261014-docker-pip-install/`。不得以旧镜像验收记录替代本轮门。
 
 ## Debian 离线输入
 
