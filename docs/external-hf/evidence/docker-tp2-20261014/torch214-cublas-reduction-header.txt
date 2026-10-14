@@ -1,0 +1,68 @@
+36-#include <unordered_map>
+37-
+38-namespace at {
+39-
+40-class Tensor;
+41-
+42-enum class TORCH_API Float32MatmulPrecision { HIGHEST, HIGH, MEDIUM };
+43-
+44:enum class CuBLASReductionOption : uint8_t {
+45:  AllowReducedPrecisionWithSplitK = 0,
+46-  DisallowReducedPrecisionAllowSplitK = 1,
+47-  DisallowReducedPrecisionDisallowSplitK = 2,
+48-};
+49-enum class TORCH_API Float32Backend { GENERIC, CUDA, MKLDNN };
+50-enum class TORCH_API Float32Op { ALL, CONV, RNN, MATMUL };
+51-// DEFAULT is an internal-only sentinel meaning "use legacy backend default
+52-// unless a parent setting overrides it". NONE means "explicitly set to
+53-// inherit/no-op".
+54-enum class TORCH_API Float32Precision { NONE, IEEE, TF32, BF16, DEFAULT };
+55-
+56-enum class TORCH_API CuDNNDepthwiseKernel { AUTO, CUDNN, NATIVE };
+57-
+--
+391-  bool allowTF32CuBLAS() const;
+392-  void setAllowTF32CuBLAS(bool /*b*/);
+393-  Float32MatmulPrecision float32MatmulPrecision() const;
+394-  Float32Precision float32Precision(Float32Backend backend, Float32Op op) const;
+395-  CuBLASReductionOption allowFP16ReductionCuBLAS() const;
+396-  void setAllowFP16ReductionCuBLAS(
+397-      bool allow_reduced_precision,
+398-      bool allow_splitk = true);
+399:  CuBLASReductionOption allowBF16ReductionCuBLAS() const;
+400-  void setAllowBF16ReductionCuBLAS(
+401-      bool allow_reduced_precision,
+402-      bool allow_splitk = true);
+403-  bool allowFP16AccumulationCuBLAS() const;
+404-  void setAllowFP16AccumulationCuBLAS(bool /*b*/);
+405-  bool rocmAllowGroupGemmCk() const;
+406-  bool preferCublasltGroupedGemm() const;
+407-  void setPreferCublasltGroupedGemm(bool /*b*/);
+408-
+409-  // Matmuls can use a so-called "persistent" kernel which launches one CUDA
+410-  // block for each SM on the GPU, and each block then iterates over multiple
+411-  // output tiles. This allows to use software pipelining to hide the begin/end
+--
+498-  bool immediate_miopen = false;
+499-  Float32MatmulPrecision float32_matmul_precision =
+500-      c10::utils::check_env("TORCH_ALLOW_TF32_CUBLAS_OVERRIDE") == true
+501-      ? at::Float32MatmulPrecision::HIGH
+502-      : at::Float32MatmulPrecision::HIGHEST;
+503-  int benchmark_limit_cudnn = 10;
+504-  bool allow_tf32_cudnn = true;
+505-  CuBLASReductionOption allow_fp16_reduction_cublas =
+506:      CuBLASReductionOption::AllowReducedPrecisionWithSplitK;
+507-  CuBLASReductionOption allow_bf16_reduction_cublas =
+508:      CuBLASReductionOption::AllowReducedPrecisionWithSplitK;
+509-  bool allow_fp16_accumulation_cublas = false;
+510-  bool prefer_cublaslt_grouped_gemm = false;
+511-  std::optional<int32_t> sm_carveout = std::nullopt;
+512-  bool enabled_mkldnn = true;
+513-  bool allow_tf32_onednn = false;
+514-  bool enabled_nnpack = true;
+515-  CuDNNDepthwiseKernel depthwise_kernel_cudnn = CuDNNDepthwiseKernel::AUTO;
+516-  at::LinalgBackend linalg_preferred_backend =
+517-      (c10::utils::check_env("TORCH_LINALG_PREFER_CUSOLVER") == true ||
+518-       c10::utils::check_env("TORCH_LINALG_PREFER_HIPSOLVER") == true) // alias
+519-      ? at::LinalgBackend::Cusolver
+520-      : at::LinalgBackend::Default;

@@ -1,0 +1,81 @@
+{
+  "fc_raw_event_counts": {
+    "session.queue_done": 1,
+    "session.created": 1,
+    "response.unit.started": 8,
+    "response.spoken.end": 8,
+    "response.non_spoken.end": 8,
+    "response.unit.committed": 8,
+    "response.spoken.delta": 9,
+    "response.tool_call.begin": 3,
+    "response.tool_call.delta": 21,
+    "response.tool_call.done": 3
+  },
+  "pcm": [
+    {
+      "file": "speech_0002.f32le",
+      "samples": 21120,
+      "finite": true,
+      "nonzero": true,
+      "sha256": "f6a413313c1d965670e4a1036a41613d69dbfdba840f2d6c9daa6ad76f081b89"
+    },
+    {
+      "file": "speech_0003.f32le",
+      "samples": 25920,
+      "finite": true,
+      "nonzero": true,
+      "sha256": "285e6daa912c0d7be040b7e48dfe113a97033773b14e7c589a7f42b44f028647"
+    },
+    {
+      "file": "speech_0005.f32le",
+      "samples": 21120,
+      "finite": true,
+      "nonzero": true,
+      "sha256": "0dc12d4b27795d3dfb173a3b0cdca1b23eafeaba00537f4f3219428eaa37edba"
+    },
+    {
+      "file": "speech_0007.f32le",
+      "samples": 24000,
+      "finite": true,
+      "nonzero": true,
+      "sha256": "5c4a3c7723951035263bb2570146107eff510401087b7998732b537a8476d643"
+    },
+    {
+      "file": "speech_0009.f32le",
+      "samples": 24000,
+      "finite": true,
+      "nonzero": true,
+      "sha256": "b512eb6479618e6b8842e6a3589e05dfd5ee592a1a441fdb302dfc1f5a981d85"
+    }
+  ],
+  "tp2-v9-simplex": {
+    "cases": 2,
+    "all_pass": true
+  },
+  "tp2-v9-after-fc": {
+    "cases": 2,
+    "all_pass": true
+  },
+  "ordinary": {
+    "all_pass": true,
+    "finalized": 4,
+    "kinds": [
+      [
+        "listen"
+      ],
+      [
+        "listen"
+      ]
+    ]
+  },
+  "fc_summary": {
+    "units": 8,
+    "calls": 3,
+    "consumed": 2,
+    "errors": [],
+    "client_elapsed_min_s": 0.8032306432723999,
+    "client_elapsed_max_s": 1.7624247884377837
+  },
+  "fc_event_counts_match_summary": true,
+  "audit_scope": "CPU reread of existing responses/PCM; not new GPU inference, hearing quality, or numerical model alignment"
+}

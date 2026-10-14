@@ -58,14 +58,14 @@ Both full and overlay builds replace the generated mobile/mobile-omni trees comp
 
 ## Pending TP2 acceptance
 
-`start_tp2.py` is a prepared launcher. It checks both explicitly selected GPUs for compute processes and memory occupancy before invoking the container. It never stops workloads. It requires an immutable image digest and sets standalone API role explicitly. This launcher is not a claim that the current image has passed TP2 API acceptance.
+`start_tp2.py` is a prepared launcher. It checks both explicitly selected GPUs for compute processes and memory occupancy before invoking the container. It never stops workloads. It requires a complete local image ID or immutable image digest and sets standalone API role explicitly. This launcher is not a claim that the current image has passed TP2 API acceptance.
 
 For Docker on a host with two owner-authorized free GPUs:
 
 ```sh
 python3 docker/external-hf/start_tp2.py --engine docker --sudo \
   --devices 0,1 --model-dir /path/to/model --logs-dir /path/to/logs \
-  --image device0/minicpm-o-worker-backend@sha256:a7eddb53f66672160f6e71912b3b0893838806fc1968d3bf11a5efbb2b6e9647
+  --image sha256:93aa6ee9df9abc96669d09235bcbd499be6a369c4a4fa63ec3507e3402afaaf2
 ```
 
 For the Pro5000 host, `docker` is a rootless Podman compatibility wrapper. Use `--engine podman` without `--sudo`, and set `CONTAINERS_CONF` to the task-local configuration pointing at generated NVIDIA CDI metadata. No global runtime configuration changes are required by this package. Device injection and actual GPU startup remain pending until two GPUs are free.
@@ -73,3 +73,5 @@ For the Pro5000 host, `docker` is a rootless Podman compatibility wrapper. Use `
 `Dockerfile.app-overlay` refreshes explicit committed application paths atop the immutable accepted image. The release manifest must enumerate the inherited application source, patch source/paths and actual file hashes; never relabel old native API evidence as a run of the new application layer.
 
 The qualified runtime snapshot contains versioned cuBLAS `.so.13` files. The image provides link-time `libcublas.so`/`libcublasLt.so` symlinks under CUDA_HOME/lib64 for acceleration C++ extension builds; both links target the unchanged runtime libraries. The native single smoke does not exercise this grouped-extension linker path.
+
+The local v9 image above passed TP2 API probes on two Pro6000 using the Pro5000 acceleration preset. It has not been pushed. The previously published v6 tag predates the TP2 compatibility repairs and is not the TP2 delivery image. See `docs/external-hf/DOCKER_TP2_ACCEPTANCE.md` for scope and restart commands.

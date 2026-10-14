@@ -1,0 +1,32 @@
+CUBLAS_REDUCTION_CPU_PASS: legacy bool, enum allowed/disallowed, split-K/unknown rejection
+W1014 06:33:01.750000 1 torch/utils/cpp_extension.py:183] No CUDA runtime is found, using CUDA_HOME='/usr/local/cuda-13.0'
+[1/2] c++ -MMD -MF direct_blas_grouped.o.d -DTORCH_EXTENSION_NAME=canonical_direct_blas_grouped -DTORCH_API_INCLUDE_EXTENSION_H -isystem /opt/o5/.venv/lib/python3.10/site-packages/torch/include -isystem /opt/o5/.venv/lib/python3.10/site-packages/torch/include/torch/csrc/api/include -isystem /usr/local/cuda-13.0/include -isystem /usr/local/include/python3.10 -fPIC -std=c++20 -O2 -c /opt/o5/accel/src/minicpm_o_accel/llm/ops/direct_blas_grouped.cpp -o direct_blas_grouped.o 
+[2/2] c++ direct_blas_grouped.o -shared -lcublas -L/opt/o5/.venv/lib/python3.10/site-packages/torch/lib -lc10 -lc10_cuda -ltorch_cpu -ltorch_cuda -ltorch -ltorch_python -L/usr/local/cuda-13.0/lib64 -lcudart -o canonical_direct_blas_grouped.so
+FAILED: [code=1] canonical_direct_blas_grouped.so 
+c++ direct_blas_grouped.o -shared -lcublas -L/opt/o5/.venv/lib/python3.10/site-packages/torch/lib -lc10 -lc10_cuda -ltorch_cpu -ltorch_cuda -ltorch -ltorch_python -L/usr/local/cuda-13.0/lib64 -lcudart -o canonical_direct_blas_grouped.so
+/usr/bin/ld: cannot find -lcublas: No such file or directory
+collect2: error: ld returned 1 exit status
+ninja: build stopped: subcommand failed.
+Traceback (most recent call last):
+  File "/opt/o5/.venv/lib/python3.10/site-packages/torch/utils/cpp_extension.py", line 2906, in _run_ninja_build
+    subprocess.run(
+  File "/usr/local/lib/python3.10/subprocess.py", line 526, in run
+    raise CalledProcessError(retcode, process.args,
+subprocess.CalledProcessError: Command '['ninja', '-v', '-j', '2']' returned non-zero exit status 1.
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/evidence/grouped_compile_gate.py", line 9, in <module>
+    result = load()
+  File "/opt/o5/accel/src/minicpm_o_accel/llm/ops/direct_blas_grouped.py", line 12, in extension
+    return load(name='canonical_direct_blas_grouped',sources=[str(root/'direct_blas_grouped.cpp')],
+  File "/opt/o5/.venv/lib/python3.10/site-packages/torch/utils/cpp_extension.py", line 1937, in load
+    return _jit_compile(
+  File "/opt/o5/.venv/lib/python3.10/site-packages/torch/utils/cpp_extension.py", line 2398, in _jit_compile
+    _write_ninja_file_and_build_library(
+  File "/opt/o5/.venv/lib/python3.10/site-packages/torch/utils/cpp_extension.py", line 2555, in _write_ninja_file_and_build_library
+    _run_ninja_build(
+  File "/opt/o5/.venv/lib/python3.10/site-packages/torch/utils/cpp_extension.py", line 2923, in _run_ninja_build
+    raise RuntimeError(message) from e
+RuntimeError: Error building extension 'canonical_direct_blas_grouped'

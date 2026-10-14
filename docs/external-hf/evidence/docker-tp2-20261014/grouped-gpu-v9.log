@@ -1,0 +1,23 @@
+ORIGINAL_BF16_POLICY True
+ninja: no work to do.
+{"device": "cuda:0", "policy": true, "extension": "direct", "exact": true, "max_abs": 0.0}
+ninja: no work to do.
+{"device": "cuda:0", "policy": true, "extension": "streamed", "exact": true, "max_abs": 0.0}
+ninja: no work to do.
+{"device": "cuda:0", "policy": true, "extension": "parallel", "exact": true, "max_abs": 0.0}
+{"device": "cuda:0", "policy": false, "extension": "direct", "exact": true, "max_abs": 0.0}
+{"device": "cuda:0", "policy": false, "extension": "streamed", "exact": true, "max_abs": 0.0}
+{"device": "cuda:0", "policy": false, "extension": "parallel", "exact": true, "max_abs": 0.0}
+SPLITK_FALSE_REJECTED cuda:0 direct
+SPLITK_FALSE_REJECTED cuda:0 streamed
+SPLITK_FALSE_REJECTED cuda:0 parallel
+{"device": "cuda:1", "policy": true, "extension": "direct", "exact": true, "max_abs": 0.0}
+{"device": "cuda:1", "policy": true, "extension": "streamed", "exact": true, "max_abs": 0.0}
+{"device": "cuda:1", "policy": true, "extension": "parallel", "exact": true, "max_abs": 0.0}
+{"device": "cuda:1", "policy": false, "extension": "direct", "exact": true, "max_abs": 0.0}
+{"device": "cuda:1", "policy": false, "extension": "streamed", "exact": true, "max_abs": 0.0}
+{"device": "cuda:1", "policy": false, "extension": "parallel", "exact": true, "max_abs": 0.0}
+SPLITK_FALSE_REJECTED cuda:1 direct
+SPLITK_FALSE_REJECTED cuda:1 streamed
+SPLITK_FALSE_REJECTED cuda:1 parallel
+GROUPED_GPU_POLICY_PAIRED_PASS [{"device": "cuda:0", "policy": true, "extension": "direct", "exact": true, "max_abs": 0.0}, {"device": "cuda:0", "policy": true, "extension": "streamed", "exact": true, "max_abs": 0.0}, {"device": "cuda:0", "policy": true, "extension": "parallel", "exact": true, "max_abs": 0.0}, {"device": "cuda:0", "policy": false, "extension": "direct", "exact": true, "max_abs": 0.0}, {"device": "cuda:0", "policy": false, "extension": "streamed", "exact": true, "max_abs": 0.0}, {"device": "cuda:0", "policy": false, "extension": "parallel", "exact": true, "max_abs": 0.0}, {"device": "cuda:1", "policy": true, "extension": "direct", "exact": true, "max_abs": 0.0}, {"device": "cuda:1", "policy": true, "extension": "streamed", "exact": true, "max_abs": 0.0}, {"device": "cuda:1", "policy": true, "extension": "parallel", "exact": true, "max_abs": 0.0}, {"device": "cuda:1", "policy": false, "extension": "direct", "exact": true, "max_abs": 0.0}, {"device": "cuda:1", "policy": false, "extension": "streamed", "exact": true, "max_abs": 0.0}, {"device": "cuda:1", "policy": false, "extension": "parallel", "exact": true, "max_abs": 0.0}]

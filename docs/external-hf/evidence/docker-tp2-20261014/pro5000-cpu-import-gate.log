@@ -1,0 +1,15 @@
+5f9dd70dc37d532be3e559103344141df5c04c8bef8e82c83bcb3add8bc8840a
+{"versions": {"torch": "2.14.0+cu130", "transformers": "5.13.0", "triton": "3.8.0", "flash-attn": "2.8.3.post1", "flash-linear-attention": "0.5.1", "causal-conv1d": "1.7.0", "minicpmo-utils": "1.0.7", "minicpm-o5-sdk": "0.0.6"}, "python": "3.10.22 (main, Oct  6 2026, 02:06:23) [GCC 12.2.0]"}
+IMPORT torch OK /opt/o5/.venv/lib/python3.10/site-packages/torch/__init__.py
+IMPORT torchvision OK /opt/o5/.venv/lib/python3.10/site-packages/torchvision/__init__.py
+IMPORT torchaudio OK /opt/o5/.venv/lib/python3.10/site-packages/torchaudio/__init__.py
+IMPORT flash_attn OK /opt/o5/.venv/lib/python3.10/site-packages/flash_attn/__init__.py
+IMPORT causal_conv1d OK /opt/o5/.venv/lib/python3.10/site-packages/causal_conv1d/__init__.py
+Current Python version 3.10 is below the recommended 3.11 version. It is recommended to upgrade to Python 3.11 or higher for the best experience.
+/opt/o5/.venv/lib/python3.10/site-packages/fla/utils/_device.py:100: UserWarning: Triton is not supported on current platform, roll back to CPU.
+  _cpu_device_warning()
+IMPORT fla OK /opt/o5/.venv/lib/python3.10/site-packages/fla/__init__.py
+IMPORT stepaudio2.token2wav OK /opt/o5/.venv/lib/python3.10/site-packages/stepaudio2/token2wav.py
+IMPORT core.external_o5 OK /opt/o5/demo/core/external_o5.py
+PRO5000_TP_CONFIG AccelerationConfig(hardware='pro5000', mode='tp', devices=('cuda:0', 'cuda:1'), llm_graph=True, tts_graph=True, t2w_graph=True, merge_unit_feed=True, compact_logits=True, long_context_head_split=True, t2w_max_graphs=8, retained_kv_append=True, canvas_window=True, canvas_window_exact_chain=True, tts_fa2_whole_decode=True) {"CANONICAL_EXPERT_STREAMS": "4", "CANONICAL_GROUPED_KERNEL": "direct", "CANONICAL_PORTABLE_EXACT_NORM": "0", "CANONICAL_PORTABLE_FUSED_NORM": "split", "CANONICAL_PORTABLE_PRECISION": "1", "CANONICAL_PREFILL_ATTENTION_GRAPH": "full", "CANONICAL_REUSE_EXPERT_OFFSETS": "1", "CANONICAL_ROPE_FUSED": "1", "CANONICAL_UNIT_PREFILL_BATCH": "1", "CANONICAL_UNIT_TAIL": "1", "CANONICAL_USE_CPP_GROUPED": "1", "O5_COMPOSED_PARALLEL_GRAPH": "1", "O5_RESTORE_CPU_STAGING": "1", "OPT_DECODE_MM_STREAMS": "4", "OPT_SHARED_EXPERT_STREAM": "1", "OPT_NORM": "1", "OPT_HEAD": "1", "OPT_HEAD_KEEP": "32", "OPT_SINGLE_TAIL": "0", "HARDWARE": "pro5000", "NATIVE_GROUPED_PARALLEL": "1", "GROUPED_ORDERED_CUSTOM": "0", "PRESERVE_DECODE_NORM": "0", "TTS_DECODE_GRAPH": "1", "LLM_GRAPH_WARMUP": "1", "LLM_PREFILL_WARMUP_LENGTHS": "14,2,30,50,94,127", "CANONICAL_PREFILL_MAX_GRAPHS": "2", "OPT_TP_CONCURRENT_PREFILL": "1", "OPT_TP_SELECTED_PREFILL": "1", "OPT_DENSE_CAUSAL": "1", "OPT_RETAINED_KV_APPEND": "1"}
+CPU_IMPORT_AND_CONFIG_ONLY_NO_GPU_MODEL_PASS

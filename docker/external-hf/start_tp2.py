@@ -3,12 +3,22 @@ import argparse
 import csv
 import json
 import os
+import re
 from pathlib import Path
 import subprocess
 
 
 def output(*cmd):
     return subprocess.check_output(cmd, text=True).strip()
+
+
+def immutable_image_id(value):
+    """Return a local ID, or None for an immutable repository digest."""
+    if re.fullmatch(r"sha256:[0-9a-f]{64}", value):
+        return value
+    if re.fullmatch(r"[^\s@]+@sha256:[0-9a-f]{64}", value):
+        return None
+    raise ValueError("Use a complete local sha256 ID or repository@sha256 digest")
 
 
 def main():
@@ -18,15 +28,21 @@ def main():
     p.add_argument('--devices', required=True, help='Two host GPU indices, e.g. 0,1')
     p.add_argument('--model-dir', type=Path, required=True)
     p.add_argument('--logs-dir', type=Path, required=True)
-    p.add_argument('--image', required=True, help='Immutable repository@sha256:...')
+    p.add_argument('--image', required=True, help='Complete local sha256 ID or repository@sha256 digest')
     p.add_argument('--name', default='o5-external-hf-tp2-20261014')
     p.add_argument('--port', type=int, default=18016)
     a = p.parse_args()
     ids = a.devices.split(',')
     if len(ids) != 2 or len(set(ids)) != 2 or not all(x.isdigit() for x in ids):
         p.error('Select exactly two distinct host GPU indices')
-    if '@sha256:' not in a.image:
-        p.error('Use the immutable image digest from delivery-manifest.json')
+    try:
+        expected_id = immutable_image_id(a.image)
+    except ValueError as exc:
+        p.error(str(exc))
+    cli = (['sudo', '-n'] if a.sudo else []) + [a.engine]
+    actual_id = output(*cli, 'image', 'inspect', a.image, '--format', '{{.Id}}')
+    if expected_id and actual_id.removeprefix('sha256:') != expected_id.removeprefix('sha256:'):
+        raise SystemExit('Local image identity does not match requested full ID')
     devices = {}
     for row in csv.reader(output('nvidia-smi', '--query-gpu=index,uuid,name,memory.used',
                                  '--format=csv,noheader,nounits').splitlines()):
@@ -42,7 +58,6 @@ def main():
     model = a.model_dir.resolve()
     if not (model / 'model.pt').is_file() or not (model / 'token2wav_causal_vocoder/flow.pt').is_file():
         raise SystemExit('model-dir must contain raw model.pt and token2wav_causal_vocoder/flow.pt')
-    cli = (['sudo', '-n'] if a.sudo else []) + [a.engine]
     names = output(*cli, 'ps', '-a', '--format', '{{.Names}}').splitlines()
     if a.name in names:
         raise SystemExit(f'Container already exists: {a.name}')

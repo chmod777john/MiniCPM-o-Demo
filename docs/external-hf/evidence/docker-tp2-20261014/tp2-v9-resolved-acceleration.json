@@ -1,0 +1,55 @@
+{
+  "acceleration": "/opt/o5/accel",
+  "tp": 2,
+  "acceleration_info": {
+    "package": "minicpm_o_accel",
+    "hardware": "pro5000",
+    "mode": "tp",
+    "devices": [
+      "cuda:0",
+      "cuda:1"
+    ],
+    "llm_graph": true,
+    "tts_graph": true,
+    "t2w_graph": true,
+    "merge_unit_feed": true,
+    "compact_logits": true,
+    "long_context_head_split": true,
+    "t2w_max_graphs": 8,
+    "retained_kv_append": true,
+    "canvas_window": true,
+    "canvas_window_exact_chain": true,
+    "tts_fa2_whole_decode": true,
+    "runtime_hooks": [
+      "tp_selected_prefill",
+      "split_norm",
+      "parallel_concurrent_prefill",
+      "retained_kv_append"
+    ],
+    "tts_decode_graph": true,
+    "tts_private_startup": {
+      "ms": 1303.9901154115796,
+      "allocated_delta_bytes": 504267776,
+      "peak_allocated_bytes": 76976994816,
+      "captures": 16,
+      "rng_exact": true
+    },
+    "llm_warmup": {
+      "seconds": 8.03837304096669,
+      "input_lengths": [
+        16,
+        14,
+        2,
+        30,
+        50,
+        94,
+        127,
+        1,
+        1
+      ],
+      "cache_length": 335
+    },
+    "attention_policy": "scoped cuDNN SDPA exclusion"
+  },
+  "mode": "tp"
+}

@@ -1,0 +1,116 @@
+{
+  "schema": 1,
+  "application_sources": {
+    "hf": {
+      "path": "/user/weihongliang/worktrees/minicpm-o-5-fix-3d-rope-o5fc-20261013-hf-chat-20261014",
+      "sha": "5cccbf73e8ca7bc01b0377eff299891e9dd45248"
+    },
+    "accel": {
+      "path": "/user/weihongliang/worktrees/hf-accel-no-fc-3d-rope-20261009-canvas-window-20261010-combined-batch-tts-20261010-exact-window-20261010-bulk-window-20261010-paired-rotation-20261010-direct-table-20261010-o5fc",
+      "sha": "6e33931cdf7e1fcff2f896d706bb73b949fc4a39"
+    },
+    "demo": {
+      "path": "/user/weihongliang/worktrees/o5-fc-dev-external-hf-20261013-hf-chat-20261014-docker-lis-20261014",
+      "sha": "08c22855e618e8b979d1b11a496ee9551146fd18"
+    }
+  },
+  "packaging": {
+    "commit": "2c07b81c6119f4aea1fff21493ed65d2f9f33cf4",
+    "tree_sha256": "df1b0a169dac684c9b3a671dc16940574a42e58658015bfed87188faae508b42",
+    "files": {
+      "Dockerfile": "537cc69a8ec0d41039c1d63d1c183c6888ce021faceba22b19e8dfdf49056f23",
+      "Dockerfile.app-overlay": "2a631e9cf25efe7702ac4075c15ff1c165abbd609a321be8a5e1ab74c439e135",
+      "Dockerfile.gateway-role": "388e877dd839d231466a2508b1eacd8aac5f198e8c504cac02017ae6c61b6cf6",
+      "Dockerfile.overlay": "2978ccd10dc43cc31eb493a84db817d6c4a52fa87ddbf960f1e52cba81752aad",
+      "README.md": "437862fb8a31c716aa3a14f9f5f3674fbedc30c062cfda585eef14bd23cfb97f",
+      "assemble_sources.py": "e327cae2fd420b666ef55efbae98cb6b38e54e68fb09a2baea7027f45d15f6b4",
+      "entrypoint.py": "8b264954bdd4668bf9f11f1915dc2c990df9a2e60b4f3ca9b9060d65ae2d48bd",
+      "import_probe.py": "6f055ad35fc6697379aa9609ac3a830e1fe2352a1264c671e302389a353bee9d",
+      "requirements-pro5000.lock": "7db2088e3cd52c6bb8a4bb1f31ca9bbbd026cacc1a3bb074bb4992cac5dc56f1",
+      "runtime-provenance.json": "8fa0b440cd3568435467a1b46eecaf11836ae29a68c3d20db20fa76fb8342c0e",
+      "start_tp2.py": "17a23975594a77e485d3ef8a1f3edf452ca97ac3bbb1526f2dc47fbc964c8afa",
+      "test_entrypoint.py": "16e25fed6f00779cadc464c328fb42e33820e10a04618cc67b10bd8fde6700ce"
+    }
+  },
+  "mobile_build": {
+    "input_commit": "08c22855e618e8b979d1b11a496ee9551146fd18",
+    "rebuilt_at_packaging_commit": "eefb04f499208f2c19b22996d555633db2451bf2",
+    "input_paths_identical_to_application_commit": true,
+    "command": "npm run build:static",
+    "cwd": "frontend/mobile",
+    "node": "22.23.3",
+    "npm": "10.9.9",
+    "vite": "8.3.4",
+    "outputs": {
+      "mobile": {
+        "tree_sha256": "75d0f5db6c2227358c4c364e8c4a5c7c7c9e01818234fb817dc564a82c456d33",
+        "files": {
+          "assets/index-DV4XD7rX.js": "62f32ead73cd46c5d918f0f8339e06eb3629cecd6ae5d6b5aed67e8bde1303c5",
+          "assets/index-to4roNkp.css": "b498d0d9c50255ec40f0dcc548488f73adb8c2e73d42d8eecfd602ec4277167c",
+          "index.html": "a06961bfd5fa2b1c2a072455ea5d44bc86ed461e3c9ceb16f2fe3ae9ab553bde"
+        }
+      },
+      "mobile-omni": {
+        "tree_sha256": "6091fae64f8942a3911b9e3fc26e6c15fa39ad7706af7bf95c519642c140bc2e",
+        "files": {
+          "index.html": "07f07f4d857ee5b3b212c1466f56f2a15de13bd57340a53eca2650176b53a316",
+          "mobile-bridge.js": "0656c58250c802c7a63f8bcb17db5f49378ec8f9d120fdac36b4cf35a98bd6ee",
+          "mobile-omni.css": "45c4f0ad913342e68827e8df114da71f91e7868a1cf2ea07fc68ec9bb0e34851",
+          "settings-widget.css": "4582d083cc34b87faa2657293cd5bb2cf2c98f7760ec8c2eaf3f86f84f19f320",
+          "settings-widget.js": "493f34d32bc5e3fbf922fcc0498f80977c2971e874bf8ab216046684aa8fbec0"
+        }
+      }
+    }
+  },
+  "runtime": {
+    "source_host": "118.89.233.148",
+    "source_venv": "/data/weihongliang/o5-canonical-enhanced-20260925/.venv-py310-cu130",
+    "source_python": "3.10.21",
+    "container_python": "3.10.22",
+    "source_native_scope": "Pro5000 TP acceptance 2026-10-01; torch/native runtime snapshot, not model weights",
+    "runtime_archive_sha256": "6fd80ea8714a6f2e7a9f467bfd3c343b961a35cb846d7b7ddb3d94672ff99ec0",
+    "cuda13_compiler_archive_sha256": "12d6c6bacd7a24f2a82466e7c096b770d3775a7f49ff714a5a445fff6221f49f",
+    "torch_git": "08187d9e0fba026dc8217405802ab5381dc88d90",
+    "dense_artifact_binary_sha256": "ff1e0b1a95aadf4796a476c75386f13d38199481e022cf60726d9d3874eebf36",
+    "adjustments": [
+      "minicpmo-utils 1.0.6 -> 1.0.7 --no-deps",
+      "minicpm-o5-sdk 0.0.6 --no-deps"
+    ],
+    "package_native_gate": "2026-10-14 host34 Pro6000 SM120; CUDA primitives PASS; not Pro5000 model acceptance",
+    "ninja_executable_sha256": "08639e194fffa7f08b259fc4abfa4803aff66b64de52549cee42ec527d55cea6"
+  },
+  "base_image": {
+    "local_id": "sha256:5f9dd70dc37d532be3e559103344141df5c04c8bef8e82c83bcb3add8bc8840a",
+    "registry_digest": "device0/minicpm-o-worker-backend@sha256:a7eddb53f66672160f6e71912b3b0893838806fc1968d3bf11a5efbb2b6e9647",
+    "tag": "o5-external-hf:20261014-v6"
+  },
+  "model": {
+    "source": "/user/chenjinpeng/Checkpoints/job_1054182/checkpoints/iter_0001275/job_1054182_iter_0001275.pt",
+    "bytes": 74606011097,
+    "sha256": "0789c953677dc8ea71b6085543e1a946ae64bddecd2f6b911ac6380376ef01ff",
+    "embedded_in_image": false
+  },
+  "scope": "Pro5000 TP2 preset on two Pro6000; acceptance results external, never inherit native as TP2 evidence.",
+  "application_refresh": {
+    "source_commit": "2c07b81c6119f4aea1fff21493ed65d2f9f33cf4",
+    "paths": {
+      "core/deploy/modes.py": "777a460abb7d186bc1c51e3039c2ba240bc648d322f5552d3fb99e2f5cfe71e6",
+      "tests/test_external_acceleration_options.py": "88d3f07d090e62c0d1e50490222a80fa68be0c182080f83c39ab2af167571823"
+    },
+    "inherited_demo_commit": "08c22855e618e8b979d1b11a496ee9551146fd18",
+    "semantics": "ENV bridge + resolved attach report and CPU tests only"
+  },
+  "acceleration_refresh": {
+    "source_commit": "66c4d070e67b8fd091fa1549499c12cb7c99873b",
+    "paths": {
+      "pyproject.toml": "1dbc66b7ed9f7c57c9f1466f54c01658b0be6a4a2f5ada90869bc5599a309c0f",
+      "src/minicpm_o_accel/llm/ops/batched_blas_grouped.cpp": "55447cff9ec39b397e66fa00771e067935385a25cbff2855f55fdd1644bf9265",
+      "src/minicpm_o_accel/llm/ops/cublas_reduction_compat.h": "20f628cb35c26a9552de6ed0da159c48b1c118d80d37ffeddfc6a3be39c7b8db",
+      "src/minicpm_o_accel/llm/ops/direct_blas_grouped.cpp": "7a956e76c9581e8c879c28f356ecdc142462975c3573a4155ca7f0b60f8e608f",
+      "src/minicpm_o_accel/llm/ops/parallel_streamed_blas_grouped.cpp": "5db64dad5ea7d617d51db1f2964ecf05d4b557578975d8f263293ee620714680",
+      "src/minicpm_o_accel/llm/ops/streamed_blas_grouped.cpp": "97cd517af379f9b1de5310c75075d4047fd69d3d8d8fe89c19922923cda24fd8",
+      "tests/test_cublas_reduction_compat.py": "af68bb4c8c3d028ee0a08afe6e1c38e7b06648fe18de6d0f14a5b37d05e3ba5b"
+    },
+    "inherited_accel_commit": "6e33931cdf7e1fcff2f896d706bb73b949fc4a39"
+  }
+}

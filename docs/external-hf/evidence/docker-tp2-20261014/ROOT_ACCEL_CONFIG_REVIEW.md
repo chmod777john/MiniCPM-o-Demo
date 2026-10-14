@@ -1,0 +1,11 @@
+# 镜像双卡加速参数接线核对
+
+root 2026-10-14，只读调用链发现。
+
+当前已发布镜像Demo应用08c22855，core/deploy/modes.py:_enable_engine external路径只将llm_graph、tts_graph、t2w_graph、compact_logits、merge_unit_feed五个环境变量写入AccelerationConfig；未读取O5_TTS_FA2_WHOLE_DECODE和O5_CANVAS_WINDOW_EXACT_CHAIN。镜像Dockerfile和A100启动示例虽设了两个ENV=1，但全core/modeling facade/py_backend查无消费代码。accel源也不读这两个ENV，配置默认tts_fa2_whole_decode=False/canvas_window_exact_chain=False。因此不能声称已发布镜像双卡已启用这两项；此前single_eager不attach，不受影响。
+
+此问题是Demo->accel配置桥接缺口，模型数学实现不应移到Demo/HF。最小修正为将这两项可选bool显式传入AccelerationConfig，保留unset为False的现有默认，只有明确env=1才开启；已有cfg.acceleration_config应优先。补CPU测试确认映射/优先级；实际双卡API仍待空闲资源。root负责修正core/deploy/modes.py与相关CPU测试，打包agent不要并发编辑。修正后要刷新应用tar及镜像层/manifest，不能用旧已验SHA改写成新验收。
+
+## 修复与门
+
+root提交21d4410a，core/deploy/modes.py新增两项env映射，cfg显式值仍优先，unset仍为False。CPU测试执行真实_env_flag/_enable_engine函数，覆盖默认、1/0/false/no/off、cfg优先、不修改输入cfg、TP/EP/single、未安装accel，共全部通过。HF和accel未改。已将commit和GPU1已释放情况通知packager；新应用镜像TP2实际验证待其完成。旧v6/API范围保留不改。
