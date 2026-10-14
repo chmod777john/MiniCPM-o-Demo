@@ -55,3 +55,17 @@ The current default reference audio is Demo's archived `assets/ref_audio/ref_min
 A final delivery manifest must supplement source archives with the runtime snapshot/native/ninja/checkpoint hashes, immutable base and final worker/gateway image IDs and registry digests. For a thin overlay, `release-input-manifest.json` records its exact package and inherited inputs; final image digests live in the external delivery manifest to avoid a self-referential digest.
 
 Both full and overlay builds replace the generated mobile/mobile-omni trees completely; copying into an old tree can retain obsolete content-hashed JavaScript. Overlay context must include freshly built `static/mobile` and `static/mobile-omni`, matching the input manifest hashes.
+
+## Pending TP2 acceptance
+
+`start_tp2.py` is a prepared launcher. It checks both explicitly selected GPUs for compute processes and memory occupancy before invoking the container. It never stops workloads. It requires an immutable image digest and sets standalone API role explicitly. This launcher is not a claim that the current image has passed TP2 API acceptance.
+
+For Docker on a host with two owner-authorized free GPUs:
+
+```sh
+python3 docker/external-hf/start_tp2.py --engine docker --sudo \
+  --devices 0,1 --model-dir /path/to/model --logs-dir /path/to/logs \
+  --image device0/minicpm-o-worker-backend@sha256:a7eddb53f66672160f6e71912b3b0893838806fc1968d3bf11a5efbb2b6e9647
+```
+
+For the Pro5000 host, `docker` is a rootless Podman compatibility wrapper. Use `--engine podman` without `--sudo`, and set `CONTAINERS_CONF` to the task-local configuration pointing at generated NVIDIA CDI metadata. No global runtime configuration changes are required by this package. Device injection and actual GPU startup remain pending until two GPUs are free.
