@@ -1,0 +1,62 @@
+{
+  "source_commit": "732b075841f837d67d9f512835cbf1aec174911e",
+  "source_module": "modeling/o5/modeling_minicpmo_unified.py",
+  "source_module_sha256": "e010626c762bed03ae1284349a789aa3695f5f1b4576bd2b2e37ba521e3d5699",
+  "matches_manifest_hash": true,
+  "methods": [
+    {
+      "method": "__init__",
+      "source_start": 640,
+      "source_end": 708,
+      "current_start": 149,
+      "current_end": 216,
+      "identical_ast": false,
+      "source_window_calls": []
+    },
+    {
+      "method": "prepare",
+      "source_start": 1237,
+      "source_end": 1279,
+      "current_start": 695,
+      "current_end": 736,
+      "identical_ast": false,
+      "source_window_calls": []
+    },
+    {
+      "method": "streaming_prefill",
+      "source_start": 1281,
+      "source_end": 1313,
+      "current_start": 738,
+      "current_end": 770,
+      "identical_ast": true,
+      "source_window_calls": []
+    },
+    {
+      "method": "streaming_spoken_generate",
+      "source_start": 1315,
+      "source_end": 1407,
+      "current_start": 772,
+      "current_end": 864,
+      "identical_ast": true,
+      "source_window_calls": []
+    },
+    {
+      "method": "finalize_unit",
+      "source_start": 1517,
+      "source_end": 1532,
+      "current_start": 974,
+      "current_end": 989,
+      "identical_ast": true,
+      "source_window_calls": []
+    },
+    {
+      "method": "_tts_condition",
+      "source_start": 1131,
+      "source_end": 1149,
+      "current_start": 585,
+      "current_end": 603,
+      "identical_ast": true,
+      "source_window_calls": []
+    }
+  ]
+}
