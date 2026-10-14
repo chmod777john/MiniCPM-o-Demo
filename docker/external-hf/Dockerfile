@@ -14,6 +14,9 @@ RUN --mount=type=bind,source=runtime,target=/runtime,readonly \
     mkdir -p /usr/local/cuda-13.0 && \
     tar -xzf /runtime/cuda13-compiler.tar.gz -C /usr/local/cuda-13.0 && \
     /opt/o5/.venv/bin/python -m ensurepip
+# The runtime snapshot has versioned cuBLAS; native extensions link with -lcublas.
+RUN ln -sf /opt/o5/.venv/lib/python3.10/site-packages/nvidia/cu13/lib/libcublas.so.13 /usr/local/cuda-13.0/lib64/libcublas.so && \
+    ln -sf /opt/o5/.venv/lib/python3.10/site-packages/nvidia/cu13/lib/libcublasLt.so.13 /usr/local/cuda-13.0/lib64/libcublasLt.so
 # utils metadata includes old optional dependency pins; frozen runtime wins.
 RUN --mount=type=bind,source=wheels,target=/wheels,readonly \
     python -m pip install --no-deps /wheels/minicpmo_utils-1.0.7-py3-none-any.whl /wheels/minicpm_o5_sdk-0.0.6-py3-none-any.whl
