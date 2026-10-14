@@ -1,0 +1,11 @@
+{
+  "verified_copy_rows": 137,
+  "last_chunk": 138,
+  "bytes_copied_current_log": 73532269273,
+  "sum_transfer_seconds": 3973.8031212380156,
+  "mean_mib_s": 17.647033457178743,
+  "note": "137 newly copied chunks plus 2 previously verified resumed chunks = 139 total. Transfer timing excludes final full-file SHA and atomic rename.",
+  "total_verified_chunks": 139,
+  "reused_verified_chunks": 2,
+  "newly_copied_chunks": 137
+}

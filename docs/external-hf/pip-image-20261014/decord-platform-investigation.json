@@ -1,0 +1,6 @@
+{
+  "filename": "decord-0.6.0-py3-none-manylinux2010_x86_64.whl",
+  "sha256": "51997f20be8958e23b7c4061ba45d0efcd86bffd5fe81c695d0befee0d442976",
+  "wheel_metadata": "Wheel-Version: 1.0\nGenerator: bdist_wheel (0.36.2)\nRoot-Is-Purelib: false\nTag: cp36-cp36m-manylinux2010_x86_64\n\n",
+  "findings": "official filename py3-none-manylinux2010 but WHEEL internal cp36-cp36m; recent pip check checks inner WHEEL; unchanged upstream metadata mismatch; target image functional decode pending"
+}

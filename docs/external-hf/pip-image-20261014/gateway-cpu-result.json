@@ -1,0 +1,36 @@
+{
+  "scope": "real gateway CPU process and HTTP/static assets only; no model worker or GPU",
+  "ports": [
+    59507,
+    58425
+  ],
+  "responses": {
+    "public_health": {
+      "status": 200,
+      "bytes": 61,
+      "final_url": "http://127.0.0.1:59507/health"
+    },
+    "internal_health": {
+      "status": 200,
+      "bytes": 61,
+      "final_url": "http://127.0.0.1:58425/health"
+    },
+    "mobile": {
+      "status": 200,
+      "bytes": 411,
+      "final_url": "http://127.0.0.1:59507/mobile/"
+    },
+    "mobile_omni": {
+      "status": 200,
+      "bytes": 32493,
+      "final_url": "http://127.0.0.1:59507/mobile-omni/"
+    },
+    "omni": {
+      "status": 200,
+      "bytes": 31854,
+      "final_url": "http://127.0.0.1:59507/omni"
+    }
+  },
+  "shutdown_returncode": 0,
+  "passed": true
+}

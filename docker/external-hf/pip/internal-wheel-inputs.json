@@ -1,0 +1,20 @@
+[
+  {
+    "name": "minicpm-o5-sdk",
+    "version": "0.0.6",
+    "filename": "minicpm_o5_sdk-0.0.6-py3-none-any.whl",
+    "sha256": "b26a5b6a5b5fe8562ed0664692976c2b3984a8ce16d54d476b85f6e3ebaf7a78",
+    "bytes": 8875671,
+    "source": "PyPI source wheel, historical download via Nanjing mirror; matches official PyPI SHA",
+    "original_local_path": "/user/weihongliang/environments/o5-3drope-fc-20261013/wheels/minicpm_o5_sdk-0.0.6-py3-none-any.whl"
+  },
+  {
+    "name": "minicpmo-utils",
+    "version": "1.0.7",
+    "filename": "minicpmo_utils-1.0.7-py3-none-any.whl",
+    "sha256": "aa11a783f1d15f81d5c4f3d50a8c656e882644e61043632b7b1360abaf59503d",
+    "bytes": 336393,
+    "source": "Internal source commit 11700a4382531fd7a54a48f6409f09f7ebc90ad5",
+    "original_local_path": "/user/weihongliang/environments/o5-3drope-fc-20261013/wheels/minicpmo_utils-1.0.7-py3-none-any.whl"
+  }
+]

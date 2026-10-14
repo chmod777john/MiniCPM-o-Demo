@@ -1,0 +1,12 @@
+{
+  "distribution": "decord==0.6.0",
+  "kind": "upstream wheel internal platform tag",
+  "wheel_filename": "decord-0.6.0-py3-none-manylinux2010_x86_64.whl",
+  "wheel_sha256": "51997f20be8958e23b7c4061ba45d0efcd86bffd5fe81c695d0befee0d442976",
+  "internal_wheel_sha256": "d24f09731316657ed32488ba245812cbb5047342b148776a371264e69966d856",
+  "native_sha256": "98b260c5812106648ba299279916fbe98439893e346d4efdcf5cde66ba8973da",
+  "actual_tag": "cp36-cp36m-manylinux2010_x86_64",
+  "filename_tag": "py3-none-manylinux2010_x86_64",
+  "runtime": "ctypes C ABI, not CPython extension",
+  "gate": "cpu_validate.py requires decoding video and exact ffmpeg RGB equality"
+}

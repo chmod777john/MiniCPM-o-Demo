@@ -1,0 +1,44 @@
+[
+  {
+    "filename": "flash_attn-2.8.3.post1.tar.gz",
+    "url": "https://files.pythonhosted.org/packages/01/7a/92a46e7cd6bbb4d7b2855a457c3b855df54a97af5656d98fc92e58e61065/flash_attn-2.8.3.post1.tar.gz",
+    "sha256": "55d5103ed846da8b56e0797acf4bde07dee4b1c7e8907fcfc6699c203030c348",
+    "bytes": 8451657
+  },
+  {
+    "filename": "causal_conv1d-1.7.0.tar.gz",
+    "url": "https://files.pythonhosted.org/packages/f4/d1/eba27735f31bd5527d39a3c7f693e6ded7b844cab275db719a15ad37b6cd/causal_conv1d-1.7.0.tar.gz",
+    "sha256": "3202758494eaa7b597ce1c282dfa188889506bfcb92cad3c407d26736bfcd32b",
+    "bytes": 30328
+  },
+  {
+    "filename": "cuda_nvcc-linux-x86_64-13.0.88-archive.tar.xz",
+    "url": "https://developer.download.nvidia.com/compute/cuda/redist/cuda_nvcc/linux-x86_64/cuda_nvcc-linux-x86_64-13.0.88-archive.tar.xz",
+    "sha256": "48e35be3cfbf4b4fbc16828eaec8a7048ee789403049dc409f7b643d6259cf7a",
+    "bytes": 26657716
+  },
+  {
+    "filename": "cuda_cudart-linux-x86_64-13.0.96-archive.tar.xz",
+    "url": "https://developer.download.nvidia.com/compute/cuda/redist/cuda_cudart/linux-x86_64/cuda_cudart-linux-x86_64-13.0.96-archive.tar.xz",
+    "sha256": "25b8071951baba827be1580b841d363464f6ee6c39f48d33a81646f90cc95ed1",
+    "bytes": 1487960
+  },
+  {
+    "filename": "cuda_cccl-linux-x86_64-13.0.85-archive.tar.xz",
+    "url": "https://developer.download.nvidia.com/compute/cuda/redist/cuda_cccl/linux-x86_64/cuda_cccl-linux-x86_64-13.0.85-archive.tar.xz",
+    "sha256": "ed845eae8c1767706b6ee91e40c608a03f6f633551a849b63f7346d32d73ee60",
+    "bytes": 991284
+  },
+  {
+    "filename": "cuda_crt-linux-x86_64-13.0.88-archive.tar.xz",
+    "url": "https://developer.download.nvidia.com/compute/cuda/redist/cuda_crt/linux-x86_64/cuda_crt-linux-x86_64-13.0.88-archive.tar.xz",
+    "sha256": "5a3279a049ffc1cdb951c44cb95206acfdde9e9ae5e87825fc18d7e4a6878bb0",
+    "bytes": 79800
+  },
+  {
+    "filename": "libnvvm-linux-x86_64-13.0.88-archive.tar.xz",
+    "url": "https://developer.download.nvidia.com/compute/cuda/redist/libnvvm/linux-x86_64/libnvvm-linux-x86_64-13.0.88-archive.tar.xz",
+    "sha256": "17ef1665b63670887eeba7d908da5669fa8c66bb73b5b4c1367f49929c086353",
+    "bytes": 43645408
+  }
+]

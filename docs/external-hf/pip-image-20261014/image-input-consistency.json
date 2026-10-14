@@ -1,0 +1,16 @@
+{
+  "versions_exact": true,
+  "distribution_count": 137,
+  "source_expected_files": 1444,
+  "source_actual_files": 1444,
+  "missing": [],
+  "changed": [],
+  "extra": [],
+  "source_commits": {
+    "hf": "5fea76841a268720e83ce68bd14f8c064ad72bde",
+    "accel": "337ac3e84b69dde135efaad7f4113bc244fe7bd4",
+    "demo": "79177c666a0bbafe5b0ed360bde836254d5cd09c"
+  },
+  "packaging_commit": "79177c666a0bbafe5b0ed360bde836254d5cd09c",
+  "passed": true
+}
