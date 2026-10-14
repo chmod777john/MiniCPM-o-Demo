@@ -3,5 +3,8 @@ FROM ${BASE_IMAGE}
 # application-refresh.tar is a Git archive of the explicit paths in release manifest.
 RUN --mount=type=bind,source=application-refresh.tar,target=/application-refresh.tar,readonly \
     tar -xf /application-refresh.tar -C /opt/o5/demo
+# acceleration-refresh.tar contains the explicit isolated compatibility fix.
+RUN --mount=type=bind,source=acceleration-refresh.tar,target=/acceleration-refresh.tar,readonly \
+    tar -xf /acceleration-refresh.tar -C /opt/o5/accel
 COPY docker/external-hf/ /opt/o5/package/
 COPY release-input-manifest.json /opt/o5/release-input-manifest.json
