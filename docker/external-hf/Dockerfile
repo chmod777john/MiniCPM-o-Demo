@@ -47,5 +47,6 @@ ENV PROJECT_DIR=/opt/o5/demo O5_CANONICAL_PATH=/opt/o5/hf \
     MODEL_PATH=/models/o5 O5_ROLE=worker GATEWAY_PORT=8006 GATEWAY_INTERNAL_PORT=8007 \
     BACKEND_PORT=22500 WORKER_PORT=22400
 WORKDIR /opt/o5/demo
+RUN python /opt/o5/package/pip/cpu_validate.py
 EXPOSE 8006 8007 22400 22500
 ENTRYPOINT ["/opt/o5/.venv/bin/python", "/opt/o5/package/entrypoint.py"]

@@ -49,7 +49,8 @@ def main():
     manifest = {'schema': 1, 'installation': 'pip --no-index --no-deps --require-hashes in a new venv',
                 'wheels': records, 'source_inputs': json.loads((here/'source-inputs.json').read_text()),
                 'dependency_exceptions': [{'distribution': 'minicpmo-utils==1.0.7',
-                    'declared': 'librosa==0.9.0', 'actual': 'librosa==0.11.0'}]}
+                    'declared': 'librosa==0.9.0', 'actual': 'librosa==0.11.0'},
+                    json.loads((here/'decord-metadata-exception.json').read_text())]}
     (args.context / 'installation-manifest.json').write_text(json.dumps(manifest, indent=2)+'\n')
     print(json.dumps({'wheels': len(records), 'context': str(args.context)}, indent=2))
 

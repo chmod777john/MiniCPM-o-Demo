@@ -37,3 +37,9 @@ python docker/external-hf/pip/download_locked.py --output /path/to/context
 ## Debian 离线输入
 
 固定 Python base 的原始 apt 索引确定248个包，`debian-package-inputs.json`锁定版本、官方URL、大小及签名Packages中SHA256。构建context的`apt-offline/`保存原始deb、签名InRelease和Packages；先用base自带Debian keyring验签，并验证每个包，再在`RUN --network=none`中通过`apt-get --no-download`安装。没有复制已安装系统库，也不需要目标节点外网。安装清单保存在镜像`/opt/o5/debian-installed.tsv`。
+
+### 实际安装发现的第二个元数据例外
+
+官方 `decord-0.6.0-py3-none-manylinux2010_x86_64.whl` 内部 WHEEL 标记为 cp36-cp36m，与文件名不符。保留官方原wheel，不编辑安装元数据；固定原wheel、内部WHEEL和libdecord.so的SHA。新pip check因此报平台标签警告，审计明确允许这一条及utils/librosa一条，其他任何错误均阻断。镜像CPU门额外要求真实decord ctypes视频解码与ffmpeg RGB逐像素完全相等；native没有CPython PyInit入口。`pip check`仍是exit1，不能写成全部无冲突。
+
+最终Docker构建内执行CPU导入/新native真实加载、外部HF加载、decord视频、入口生命周期与LIS配置契约门。未调用GPU、不加载模型权重；GPU精度和真实模型API仍独立待验。
