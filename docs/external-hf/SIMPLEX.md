@@ -35,8 +35,8 @@ HF 文字流 iterator 负责 producer 线程，生成异常传给消费方；关
 ## 已验收（2026-10-14）
 
 - 双 A100 TP、allmerge `iter_300.pt`，project venv `o5-3drope-fc-20261013/.venv`，accel `6e33931`。
-- Job 1217986：12 项真实 Gateway → Worker → backend → HF API 请求全部通过：文字流/非流、语音流/非流、完整历史、HD图片、音频输入、视频输入+语音流/非流、长语音、1-token上限、文字 thinking。
-- 文本/语音取消后立即再请求通过；取消到 closed 实测约 0.040s / 0.321s（这两个样本，不是通用上界）。
+- 最终已提交版本 HF `5cccbf7` / Demo `47cb5315`，Job **1218128**（1217986 为之前验证）：12 项真实 Gateway → Worker → backend → HF API 请求全部通过：文字流/非流、语音流/非流、完整历史、HD图片、音频输入、视频输入+语音流/非流、长语音、1-token上限、文字 thinking。
+- 文本/语音取消后立即再请求通过；取消到 closed 实测约 0.052s / 0.311s（这两个样本，不是通用上界）。
 - 单工 → 普通双工 2 units → 单工文字和语音回归通过；双工两个 unit 均为 listen，不代表 speaking 性能验收。
 - 50组 CPU cap/EOS/hidden/四轴位置边界；HF参数筛选；Demo完整历史/选项/PCM/一次性请求契约通过。
 - `tests/test_external_hf_chat_contract.py` 是 CPU 检查；HF 仓库 `tests/test_chat_{options,stream_boundaries}.py` 是另外两项。
@@ -44,3 +44,12 @@ HF 文字流 iterator 负责 producer 线程，生成异常传给消费方；关
 
 原始事件/音频/日志、运行入口：`/user/weihongliang/analysis-runs/20261014-hf-simplex/`。
 精简验收数据：`docs/external-hf/evidence/20261014-simplex/`。
+
+## 最终集成复测
+
+- 移动端 helper 生成的 `mode=audio` / `mode=video` session.init 经真实 API，各完成2个 unit并收到 `response.metrics(unit_finalized=true)`；Basic8000/6000、binary0.3、TTS开关、视频slice2经session_config确认生效。这4个unit均listen，不代表语音生成性能或实际裁剪。
+- speech+thinking、max_new_tokens=0 明确报错；各自关闭会话后立即正常新请求成功。
+- 客户端直接断开WebSocket也能回收并成功运行下一请求，但本次文本/语音样例从断开到下一请求完成约3.386/8.668秒；正常session.close握手更及时。这是连接回收等待，不是模型单次decode耗时。
+- 桌面普通页面、移动两入口及构建后的JS/CSS HTTP200。没有进行真实手机权限、摄像头、麦克风和触摸交互验收。
+- 实际环境用最终 `environment.json` 为准：torch2.11.0+cu128、transformers5.13.0、FA2.8.3、FLA0.5.1、SDK0.0.6、minicpmo-utils1.0.7。
+- 最终原始证据在 `analysis-runs/20261014-hf-simplex/final/`，精简记录在本文相邻 `evidence/20261014-simplex/final/`。单工语音时长是整条回复的生成时长，与双工1秒unit验收是不同口径。

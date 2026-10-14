@@ -1,0 +1,134 @@
+[
+  {
+    "case": "speech_thinking_rejected",
+    "pass": true,
+    "terminal": {
+      "type": "session.closed",
+      "session_id": "sess_b010322b8f53",
+      "reason": "backend_error",
+      "diagnostic": {
+        "message": "Speech chat requires enable_thinking=false; thinking is currently text-only"
+      },
+      "server_send_ts": 1791954466.3934758
+    }
+  },
+  {
+    "case": "after_speech_thinking_rejected",
+    "request_to_done_s": 0.4200500315055251,
+    "text": "数字2是自然数，位于1和3之间。在数学中，",
+    "audio_chunks": 0,
+    "audio_bytes": 0,
+    "pass": true,
+    "seconds": 0.4623113954439759,
+    "events": [
+      "session.queue_done",
+      "session.created",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.done"
+    ]
+  },
+  {
+    "case": "zero_cap_rejected",
+    "pass": true,
+    "terminal": {
+      "type": "session.closed",
+      "session_id": "sess_438ebf50328d",
+      "reason": "backend_error",
+      "diagnostic": {
+        "message": "max_new_tokens must be positive"
+      },
+      "server_send_ts": 1791954467.1382568
+    }
+  },
+  {
+    "case": "after_zero_cap_rejected",
+    "request_to_done_s": 0.4001526143401861,
+    "text": "数字2是自然数，位于1和3之间。在数学中，",
+    "audio_chunks": 0,
+    "audio_bytes": 0,
+    "pass": true,
+    "seconds": 0.44395280070602894,
+    "events": [
+      "session.queue_done",
+      "session.created",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.done"
+    ]
+  },
+  {
+    "case": "after_raw_disconnect_False",
+    "request_to_done_s": 0.41328905057162046,
+    "text": "数字2是自然数，位于1和3之间。在数学中，",
+    "audio_chunks": 0,
+    "audio_bytes": 0,
+    "pass": true,
+    "seconds": 3.384882331825793,
+    "events": [
+      "session.queued",
+      "session.queue_done",
+      "session.created",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.done"
+    ],
+    "disconnect_through_next_done_s": 3.386300316080451
+  },
+  {
+    "case": "after_raw_disconnect_True",
+    "request_to_done_s": 0.4206518307328224,
+    "text": "数字2是自然数，位于1和3之间。在数学中，",
+    "audio_chunks": 0,
+    "audio_bytes": 0,
+    "pass": true,
+    "seconds": 8.66626200824976,
+    "events": [
+      "session.queued",
+      "session.queue_update",
+      "session.queue_update",
+      "session.queue_done",
+      "session.created",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.done"
+    ],
+    "disconnect_through_next_done_s": 8.667598884552717
+  }
+]

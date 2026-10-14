@@ -25,3 +25,9 @@
 不包含真实手机麦克风/摄像头、浏览器交互或GPU实测；推理API端对端由root在HF单工主任务统一验收。没有修改HF/accel/后端或运行中的服务。
 
 `static/mobile/` 按仓库惯例忽略，合入/部署后需运行build:static。`static/mobile-omni/index.html`和widget产物随代码提交。
+
+## Root集成验证
+
+原提交 `c0259866` 合入为 `47cb5315`，后端桥接 `1b761e12`，HF `5cccbf7`。合入后重新执行 build:static 和15项CPU契约均通过。
+
+双A100 TP job1218128 对helper实际生成的音频/视频payload各跑2个unit，均收到unit_finalized；session_config确认Basic8000/6000、binary0.3、视频slice2。单工12项API、取消/错误后的新会话也通过。实际手机浏览器仍未验，API及CPU契约不能替代设备交互验收。精简结果在 `evidence/20261014-simplex/final/`。

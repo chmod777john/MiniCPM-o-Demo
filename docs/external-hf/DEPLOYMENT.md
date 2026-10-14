@@ -7,9 +7,9 @@
 
 |物料|路径|基线/作用|
 |---|---|---|
-|HF|`/user/weihongliang/worktrees/minicpm-o-5-fix-3d-rope-o5fc-20261013`|`minicpm-o-5-fix-3d-rope@e43c73a` + 固定源 FC 提取|
+|HF|`/user/weihongliang/worktrees/minicpm-o-5-fix-3d-rope-o5fc-20261013-hf-chat-20261014`|`5cccbf7`：3D-RoPE + 固定源 FC 提取 + 完整历史单工|
 |accel|`/user/weihongliang/worktrees/hf-accel-no-fc-3d-rope-20261009-canvas-window-20261010-combined-batch-tts-20261010-exact-window-20261010-bulk-window-20261010-paired-rotation-20261010-direct-table-20261010-o5fc`|独立 attach/patch，含 graph；可不加载|
-|Demo|`/user/weihongliang/worktrees/o5-fc-dev-external-hf-20261013`|保留 o5-fc-dev 现有 API/页面|
+|Demo|`/user/weihongliang/worktrees/o5-fc-dev-external-hf-20261013-hf-chat-20261014`|`47cb5315`：外部HF单工、普通双工和移动端桥接|
 
 三者是独立 Git worktree。HF 的 FC 提取入口为 `fc/migration/extract.py`，
 `--check` 可重现源码与适配清单；HF 不承担 graph 或服务 warm 策略。
@@ -24,9 +24,9 @@
 ## 双卡 A100 启动示例
 
 ```bash
-export PROJECT_DIR=/user/weihongliang/worktrees/o5-fc-dev-external-hf-20261013
+export PROJECT_DIR=/user/weihongliang/worktrees/o5-fc-dev-external-hf-20261013-hf-chat-20261014
 export VENV_DIR=/user/weihongliang/environments/o5-3drope-fc-20261013/.venv
-export O5_CANONICAL_PATH=/user/weihongliang/worktrees/minicpm-o-5-fix-3d-rope-o5fc-20261013
+export O5_CANONICAL_PATH=/user/weihongliang/worktrees/minicpm-o-5-fix-3d-rope-o5fc-20261013-hf-chat-20261014
 export O5_CHECKPOINT_PATH=/backup/user/chenmoye/checkpoints/minicpm-5o-moe/0930_final_merge/0930_omni_baseline_mergeAll_agent_128k_176gpu/iter_300.pt
 export O5_ACCELERATION_PATH=/user/weihongliang/worktrees/hf-accel-no-fc-3d-rope-20261009-canvas-window-20261010-combined-batch-tts-20261010-exact-window-20261010-bulk-window-20261010-paired-rotation-20261010-direct-table-20261010-o5fc
 export O5_ASSETS_DIR=/user/shangchuxiang/code/MiniCPM-o-4_6/local_assets/token2wav_causal_vocoder
@@ -36,9 +36,9 @@ export DUPLEX_SLOT_PROTOCOL=1
 export O5_LLM_GRAPH=1 O5_TTS_GRAPH=1 O5_VOCODER_GRAPH=1
 export CANONICAL_UNIT_PREFILL_BATCH=1 O5_COMPACT_LOGITS=1
 export O5_TTS_FA2_WHOLE_DECODE=1 O5_CANVAS_WINDOW_EXACT_CHAIN=1
-export BACKEND_HOST=127.0.0.1 BACKEND_PORT=23510
-export WORKER_HOST=127.0.0.1 WORKER_PORT=23410
-export GATEWAY_HOST=0.0.0.0 GATEWAY_PORT=18129 GATEWAY_INTERNAL_PORT=18130 GATEWAY_HTTPS=0
+export BACKEND_HOST=127.0.0.1 BACKEND_PORT=23514
+export WORKER_HOST=127.0.0.1 WORKER_PORT=23414
+export GATEWAY_HOST=0.0.0.0 GATEWAY_PORT=18141 GATEWAY_INTERNAL_PORT=18142 GATEWAY_HTTPS=0
 export ENABLE_FRP=0 PYTHONNOUSERSITE=1 OMP_NUM_THREADS=4
 export LOG_DIR=/path/to/isolated/run/logs
 export O5_DEMO_CONFIG_PATH=/path/to/isolated/run/config.json
@@ -49,9 +49,9 @@ bash "$PROJECT_DIR/scripts/start_o5_tp2_cctl_service.sh"
 
 config.json 至少配置 model.model_path、model.pt_path、model.deployment_mode="tp2"、
 model.compile=false 和独立 service.data_dir。完整已运行脚本参考
-`/user/weihongliang/analysis-runs/20261013-o5-three-materials/api-options/job_entry.sh`
-及同目录 config.json；参考 job **1210050**，agent-dev 双卡。
-该任务用于验收，已停止；不是持续公开服务。CUDA compat 与 allocator 设置以该
+`/user/weihongliang/analysis-runs/20261014-hf-simplex/job_entry.sh`
+及同目录 config.json；最终参考 job **1218128**，agent-dev 双A100。
+该任务用于隔离验收；运行状态请通过cctl查询，不能将Pod地址当作持久公网服务。CUDA compat 与 allocator 设置以该
 脚本和对应集群环境为准。不要另加 torchrun 两进程，accel TP 在单进程内管理双卡。
 
 FC checkpoint 可替换为：
@@ -96,5 +96,17 @@ export O5_FRONTEND_SLIDING_WINDOW_MODES=off,basic,kv_surgery
 `FC_API_SESSION_MAX_DURATION_S` 显式配置时长。断线恢复限同一 gateway 进程，
 30 秒/16 MiB，细节和边界见 ORDINARY_OPTIONS.md。
 
-**本节新增页面/API/恢复功能尚未做运行验收或部署。** 前文参考 job 1210050 是此次
-页面迁移之前的三物料验收，不代表新增功能已验证。
+本分支最新单工/移动API验收见 `SIMPLEX.md`、`MOBILE_NOFC_ALIGNMENT.md`；
+原始三物料普通/FC精度及API范围见 `ACCEPTANCE.md`。当前短unit集成测试不替代长对话性能验收。
+
+## 单工与移动端
+
+- `/turnbased`：桌面单工；流式/非流式、文字/音频都由外部HF的 `chat` 实现。
+- `/mobile/`：React移动单工与音频双工入口。
+- `/mobile-omni/`：移动视频双工，复用桌面Omni运行时。
+
+部署前用项目声明的Node/Bun在 `frontend/mobile` 下安装本地依赖并运行 `npm run build:static`。
+它生成被Git忽略的 `static/mobile/`，同时更新Omni壳和widget；只checkout不会自动生成移动聊天页。
+当前测试使用项目本地依赖和Node22.23.3。不要用系统Node16。
+
+单工输入默认8192上限；语音单工要求enable_thinking=false。详细选项、取消协议和验收限制见 `SIMPLEX.md`。

@@ -64,8 +64,24 @@ q=parse_worker_chat_request_message({"type":"chat.request", "payload":{
 assert not q.do_sample and not q.streaming and q.max_new_tokens==7
 assert q.length_penalty==1.4 and q.max_slice_nums==2 and q.generate_audio
 assert q.omni_mode and q.use_tts_template
-for payload in ({}, {"messages":[{}],"generation":{"max_new_tokens":0}}):
+for payload in ({}, {"messages":[{}],"generation":{"max_new_tokens":0}},
+                {"messages":[{}],"tts":{"enabled":True},"enable_thinking":True}):
     try: parse_worker_chat_request_message({"type":"chat.request","payload":payload})
     except ChatRequestError: pass
     else: raise AssertionError("invalid chat request accepted")
 print("HF chat bridge: complete history, options, text/audio conversion, one-shot lifecycle PASS")
+
+class CompleteModel:
+    _external_hf_chat = True
+    def __init__(self): self.calls=[]
+    def chat(self, **kwargs):
+        self.calls.append(kwargs)
+        return "nonstream result"
+m=CompleteModel();v=ChatView(m)
+history=[{"role":"user","content":"完整历史"}]
+v.prefill("complete",history,use_tts_template=False)
+assert v.generate("complete",generate_audio=False,do_sample=False,max_new_tokens=7)=="nonstream result"
+assert len(m.calls)==1 and m.calls[0]["msgs"] is history
+assert m.calls[0]["stream"] is False and m.calls[0]["do_sample"] is False
+assert v._chat_inputs is None
+print("HF nonstream view bridge and invalid speech/thinking request rejection PASS")

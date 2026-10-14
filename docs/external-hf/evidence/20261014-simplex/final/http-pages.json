@@ -1,0 +1,88 @@
+[
+  {
+    "path": "/health",
+    "status": 200,
+    "bytes": 61,
+    "url": "http://10.156.16.169:18141/health"
+  },
+  {
+    "path": "/mobile/",
+    "status": 200,
+    "bytes": 411,
+    "url": "http://10.156.16.169:18141/mobile/"
+  },
+  {
+    "path": "/mobile/assets/index-OwkkWPmd.js",
+    "status": 200,
+    "bytes": 398108
+  },
+  {
+    "path": "/mobile/assets/index-to4roNkp.css",
+    "status": 200,
+    "bytes": 40638
+  },
+  {
+    "path": "/mobile-omni/",
+    "status": 200,
+    "bytes": 32474,
+    "url": "http://10.156.16.169:18141/mobile-omni/"
+  },
+  {
+    "path": "/static/mobile-omni/mobile-omni.css",
+    "status": 200,
+    "bytes": 10386
+  },
+  {
+    "path": "/static/mobile-omni/settings-widget.css",
+    "status": 200,
+    "bytes": 4663
+  },
+  {
+    "path": "/static/ref-audio-player.js",
+    "status": 200,
+    "bytes": 17343
+  },
+  {
+    "path": "/static/shared/preset-selector.js",
+    "status": 200,
+    "bytes": 11766
+  },
+  {
+    "path": "/static/shared/save-share.js",
+    "status": 200,
+    "bytes": 14536
+  },
+  {
+    "path": "/static/shared/client-identity.js",
+    "status": 200,
+    "bytes": 2425
+  },
+  {
+    "path": "/static/mobile-omni/settings-widget.js",
+    "status": 200,
+    "bytes": 248891
+  },
+  {
+    "path": "/static/mobile-omni/mobile-bridge.js",
+    "status": 200,
+    "bytes": 21261
+  },
+  {
+    "path": "/omni",
+    "status": 200,
+    "bytes": 31836,
+    "url": "http://10.156.16.169:18141/omni"
+  },
+  {
+    "path": "/audio_duplex",
+    "status": 200,
+    "bytes": 20508,
+    "url": "http://10.156.16.169:18141/audio_duplex"
+  },
+  {
+    "path": "/api/frontend_defaults",
+    "status": 200,
+    "bytes": 78,
+    "url": "http://10.156.16.169:18141/api/frontend_defaults"
+  }
+]

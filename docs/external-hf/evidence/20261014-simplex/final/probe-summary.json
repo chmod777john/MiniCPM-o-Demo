@@ -1,0 +1,247 @@
+[
+  {
+    "case": "text_nonstream",
+    "request_to_done_s": 0.4968201518058777,
+    "text": "你好！有什么可以帮助你的吗？",
+    "audio_chunks": 0,
+    "audio_bytes": 0,
+    "pass": true,
+    "seconds": 0.6924783457070589,
+    "events": [
+      "session.queue_done",
+      "session.created",
+      "response.done"
+    ]
+  },
+  {
+    "case": "text_stream",
+    "request_to_done_s": 0.2659774702042341,
+    "text": "你好！有什么可以帮助你的吗？",
+    "audio_chunks": 0,
+    "audio_bytes": 0,
+    "pass": true,
+    "seconds": 0.30801780987530947,
+    "events": [
+      "session.queue_done",
+      "session.created",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.done"
+    ]
+  },
+  {
+    "case": "audio_nonstream",
+    "request_to_done_s": 2.6480748681351542,
+    "text": "你好！有什么可以帮助你的吗？",
+    "audio_chunks": 1,
+    "audio_bytes": 192000,
+    "pass": true,
+    "seconds": 2.694880929775536,
+    "events": [
+      "session.queue_done",
+      "session.created",
+      "response.output.delta",
+      "response.done"
+    ]
+  },
+  {
+    "case": "audio_stream",
+    "request_to_done_s": 2.634499929845333,
+    "text": "你好！有什么可以帮助你的吗？",
+    "audio_chunks": 3,
+    "audio_bytes": 261120,
+    "pass": true,
+    "seconds": 2.6820084685459733,
+    "events": [
+      "session.queue_done",
+      "session.created",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.done"
+    ]
+  },
+  {
+    "case": "history_stream",
+    "request_to_done_s": 0.22349773161113262,
+    "text": "红苹果",
+    "audio_chunks": 0,
+    "audio_bytes": 0,
+    "pass": true,
+    "seconds": 0.26603247970342636,
+    "events": [
+      "session.queue_done",
+      "session.created",
+      "response.output.delta",
+      "response.output.delta",
+      "response.done"
+    ]
+  },
+  {
+    "case": "image_hd_stream",
+    "request_to_done_s": 0.2074698032811284,
+    "text": "红色",
+    "audio_chunks": 0,
+    "audio_bytes": 0,
+    "pass": true,
+    "seconds": 0.249501490034163,
+    "events": [
+      "session.queue_done",
+      "session.created",
+      "response.output.delta",
+      "response.done"
+    ]
+  },
+  {
+    "case": "input_audio_stream",
+    "request_to_done_s": 0.6984303127974272,
+    "text": "人声",
+    "audio_chunks": 0,
+    "audio_bytes": 0,
+    "pass": true,
+    "seconds": 0.741151669062674,
+    "events": [
+      "session.queue_done",
+      "session.created",
+      "response.output.delta",
+      "response.output.delta",
+      "response.done"
+    ]
+  },
+  {
+    "case": "audio_stream_cap1",
+    "request_to_done_s": 1.3613854134455323,
+    "text": "1",
+    "audio_chunks": 1,
+    "audio_bytes": 103680,
+    "pass": true,
+    "seconds": 1.4089502282440662,
+    "events": [
+      "session.queue_done",
+      "session.created",
+      "response.output.delta",
+      "response.output.delta",
+      "response.done"
+    ]
+  },
+  {
+    "case": "video_audio_stream",
+    "request_to_done_s": 2.360510351136327,
+    "text": "画面是纯红色。",
+    "audio_chunks": 2,
+    "audio_bytes": 172800,
+    "pass": true,
+    "seconds": 2.4088734267279506,
+    "events": [
+      "session.queue_done",
+      "session.created",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.done"
+    ]
+  },
+  {
+    "case": "speech_long_stream",
+    "request_to_done_s": 7.48061897046864,
+    "text": "北京是中国的首都，一座拥有三千多年建城史的古都。这里既有故宫、长城等宏伟的历史遗迹，又汇聚了中关村等现代科技高地，完美融合了千年文脉与时代活力，是令人向往的魅力之都。",
+    "audio_chunks": 17,
+    "audio_bytes": 1620480,
+    "pass": true,
+    "seconds": 7.547634796239436,
+    "events": [
+      "session.queue_done",
+      "session.created",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.done"
+    ]
+  },
+  {
+    "case": "thinking_text_stream",
+    "request_to_done_s": 0.9279006039723754,
+    "text": "首先，用户的问题是：“1加1是多少？简短回答。”这是一个非常简单的数学问题。用户要求简短回答，所以我应该直接给出答案，不需要额外的解释。\n\n1加1等于2。这是基本的算术知识。\n\n因此",
+    "audio_chunks": 0,
+    "audio_bytes": 0,
+    "pass": true,
+    "seconds": 0.9704348407685757,
+    "events": [
+      "session.queue_done",
+      "session.created",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.done"
+    ]
+  },
+  {
+    "case": "video_audio_nonstream",
+    "request_to_done_s": 1.811545287258923,
+    "text": "纯红色。",
+    "audio_chunks": 1,
+    "audio_bytes": 192000,
+    "pass": true,
+    "seconds": 1.8581749806180596,
+    "events": [
+      "session.queue_done",
+      "session.created",
+      "response.output.delta",
+      "response.done"
+    ]
+  }
+]
