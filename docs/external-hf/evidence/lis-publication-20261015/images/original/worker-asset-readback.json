@@ -1,0 +1,19 @@
+{
+  "id": "5bf9a66a-f9b9-40e0-a8f6-ef3c77c95f11",
+  "name": "o5-external-hf-worker",
+  "version": "pip-20261014",
+  "swr_url": "modelbest-kt8zv1.swr-pro.myhuaweicloud.com/lis-dev-images/o5-external-hf-worker@sha256:c0463e5ea82eba878b8d111460fc7f2350ec61c6d76eac54749346909a4659eb",
+  "resolved_digest": "sha256:c0463e5ea82eba878b8d111460fc7f2350ec61c6d76eac54749346909a4659eb",
+  "engine_type": "omni_duplex",
+  "component_role": "worker",
+  "publisher_release_id": "o5-external-hf-pip-20261014",
+  "supported_architectures": [
+    "minicpm-o5"
+  ],
+  "size_bytes": 4148759610,
+  "release_stage": "dev",
+  "created_by": "weihongliang",
+  "created_at": "2026-10-15T09:39:16.609416Z",
+  "retention_days": 180,
+  "scan_status": "Pending"
+}

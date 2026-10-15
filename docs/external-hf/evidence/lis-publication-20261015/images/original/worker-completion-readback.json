@@ -1,0 +1,13 @@
+{
+  "id": "eb000755-37de-463b-9bcd-25377791794e",
+  "name": "o5-external-hf-worker",
+  "version": "pip-20261014",
+  "status": "Completed",
+  "target_ref": "modelbest-kt8zv1.swr-pro.myhuaweicloud.com/lis-dev-images/o5-external-hf-worker:pip-20261014",
+  "target_uri": "modelbest-kt8zv1.swr-pro.myhuaweicloud.com/lis-dev-images/o5-external-hf-worker@sha256:c0463e5ea82eba878b8d111460fc7f2350ec61c6d76eac54749346909a4659eb",
+  "resolved_digest": "sha256:c0463e5ea82eba878b8d111460fc7f2350ec61c6d76eac54749346909a4659eb",
+  "size_bytes": 4148759610,
+  "progress_phase": "completed",
+  "progress_percent": 100,
+  "error_message": null
+}

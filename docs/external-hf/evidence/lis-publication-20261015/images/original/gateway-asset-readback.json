@@ -1,0 +1,19 @@
+{
+  "id": "aeedb241-c4a9-4cb8-bc7d-07982d6d66fa",
+  "name": "o5-external-hf-gateway",
+  "version": "pip-20261014",
+  "swr_url": "modelbest-kt8zv1.swr-pro.myhuaweicloud.com/lis-dev-images/o5-external-hf-gateway@sha256:6f88f803f5ecbfa68ab1068eb5aface102c5d11fa243df7607aabd4e27a5783a",
+  "resolved_digest": "sha256:6f88f803f5ecbfa68ab1068eb5aface102c5d11fa243df7607aabd4e27a5783a",
+  "engine_type": "omni_duplex",
+  "component_role": "gateway",
+  "publisher_release_id": "o5-external-hf-pip-20261014",
+  "supported_architectures": [
+    "minicpm-o5"
+  ],
+  "size_bytes": 4148759745,
+  "release_stage": "dev",
+  "created_by": "weihongliang",
+  "created_at": "2026-10-15T09:39:34.476434Z",
+  "retention_days": 180,
+  "scan_status": "Pending"
+}

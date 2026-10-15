@@ -1,0 +1,28 @@
+{
+  "files": [
+    "LIS_PUBLICATION.md",
+    "PUBLISH_MANIFEST.json",
+    "ORIGINAL_ACCEPTANCE_REFERENCE.json",
+    "ROOT_IMAGE_PUBLICATION_READBACK.json",
+    "SCOPE_CORRECTION.md",
+    "MODEL_MULTIPART_NOTE.md",
+    "vocoder-upload-sha-check.json",
+    "images/ORIGINAL_PUBLICATION_REPORT.md",
+    "images/publication-summary-original.json",
+    "images/formal-cancellation-proof.json",
+    "images/tool-provenance.json",
+    "images/original/worker-asset-readback.json",
+    "images/original/worker-completion-readback.json",
+    "images/original/worker-final-registry-identity.json",
+    "images/original/worker-final-registry-manifest.json",
+    "images/original/worker-oci-manifest.json",
+    "images/original/gateway-asset-readback.json",
+    "images/original/gateway-completion-readback.json",
+    "images/original/gateway-final-registry-identity.json",
+    "images/original/gateway-final-registry-manifest.json",
+    "images/original/gateway-oci-manifest.json",
+    "images/original/ORIGINAL_ACCEPTANCE.json",
+    "images/original/credential-cleanup.json"
+  ],
+  "scope": "Original image publication; model upload still in progress. No private or new-image validation files."
+}

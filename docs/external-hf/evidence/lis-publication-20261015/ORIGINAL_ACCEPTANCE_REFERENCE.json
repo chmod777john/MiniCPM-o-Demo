@@ -1,0 +1,57 @@
+{
+  "source_evidence_root": "/user/weihongliang/analysis-runs/20261014-docker-pip-install",
+  "image_build_commit": "79177c666a0bbafe5b0ed360bde836254d5cd09c",
+  "sources": {
+    "hf": "5fea76841a268720e83ce68bd14f8c064ad72bde",
+    "accel": "337ac3e84b69dde135efaad7f4113bc244fe7bd4",
+    "demo": "79177c666a0bbafe5b0ed360bde836254d5cd09c"
+  },
+  "images": {
+    "worker": {
+      "manifest_digest": "sha256:c35318d4cc66ffc9d15a6d21cf69f8c5d46526ebd7ff1b1144f8a2604aa3f8f6",
+      "config_digest": "sha256:b094e9eea2ad246129947c9f940df7881328c2ee5a47305d87742d6453ff7c7b",
+      "archive": "analysis-runs/20261014-docker-pip-install/o5-external-hf-pip-20261014.oci.tar",
+      "sha256": "cb1ffe46cd2f2d4a6723327522f2ada3f32f7675a647741ee74870ecf4d0da04",
+      "bytes": 4148780544,
+      "layer_count": 17
+    },
+    "gateway": {
+      "manifest_digest": "sha256:143bdde56a917513253998c8ccfa032fc84ffcb72e7c38b1da95bbbcd7a5e3cd",
+      "config_digest": "sha256:48d6767f7b03f8beee76e2fcfebaa48999eb7372eed7c05d0f51c4025c7532bf",
+      "archive": "analysis-runs/20261014-docker-pip-install/o5-external-hf-gateway-pip-20261014.oci.tar",
+      "sha256": "bf6488cb23abb0a786ee416ab996624214dd4d26e27a9255554d5c3ebf372eda",
+      "bytes": 4148781056,
+      "layer_count": 17
+    }
+  },
+  "gpu_api_accepted": true,
+  "gpu_api_acceptance_scope": {
+    "hardware": "2 x RTX PRO5000 72GB Blackwell",
+    "image_build_commit": "79177c666a0bbafe5b0ed360bde836254d5cd09c",
+    "native_exact_outputs": 17,
+    "simplex_requests": 12,
+    "ordinary_initial_units": 4,
+    "ordinary_speech_units": 24,
+    "fc_fixture_units": 8,
+    "after_modes_simplex_requests": 2,
+    "scope_limits": [
+      "no new full-model hidden paired precision",
+      "no new 64k/128k or all-hardcase sweep",
+      "fixture tool results, not external tool execution",
+      "not LIS deployment"
+    ]
+  },
+  "gpu_evidence": {
+    "passed": true,
+    "archive": "/user/weihongliang/analysis-runs/20261014-docker-pip-install/pro37-gpu-api-evidence.tar",
+    "bytes": 39557120,
+    "sha256": "4297806c560934d8603f858272a8229f685630cea9401cbdf3f9be213f1c0b38"
+  },
+  "runtime_scope": "Original 20261014 images only; no new GPU/API run for publication.",
+  "checkpoint": {
+    "source": "/user/chenjinpeng/Checkpoints/job_1054182/checkpoints/iter_0001275/job_1054182_iter_0001275.pt",
+    "bytes": 74606011097,
+    "sha256": "0789c953677dc8ea71b6085543e1a946ae64bddecd2f6b911ac6380376ef01ff",
+    "complete": true
+  }
+}

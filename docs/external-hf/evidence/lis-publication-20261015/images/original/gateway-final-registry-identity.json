@@ -1,0 +1,13 @@
+{
+  "role": "gateway",
+  "oci_manifest_digest": "sha256:143bdde56a917513253998c8ccfa032fc84ffcb72e7c38b1da95bbbcd7a5e3cd",
+  "registry_digest": "sha256:6f88f803f5ecbfa68ab1068eb5aface102c5d11fa243df7607aabd4e27a5783a",
+  "registry_media_type": "application/vnd.docker.distribution.manifest.v2+json",
+  "config_digest": "sha256:48d6767f7b03f8beee76e2fcfebaa48999eb7372eed7c05d0f51c4025c7532bf",
+  "config_bytes_identical": true,
+  "layer_count": 17,
+  "layer_bytes_and_order_identical": true,
+  "compressed_size_bytes": 4148759745,
+  "manifest_bytes": 3652,
+  "only_manifest_metadata_conversion": true
+}

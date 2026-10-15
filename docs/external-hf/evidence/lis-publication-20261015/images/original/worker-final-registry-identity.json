@@ -1,0 +1,13 @@
+{
+  "role": "worker",
+  "oci_manifest_digest": "sha256:c35318d4cc66ffc9d15a6d21cf69f8c5d46526ebd7ff1b1144f8a2604aa3f8f6",
+  "registry_digest": "sha256:c0463e5ea82eba878b8d111460fc7f2350ec61c6d76eac54749346909a4659eb",
+  "registry_media_type": "application/vnd.docker.distribution.manifest.v2+json",
+  "config_digest": "sha256:b094e9eea2ad246129947c9f940df7881328c2ee5a47305d87742d6453ff7c7b",
+  "config_bytes_identical": true,
+  "layer_count": 17,
+  "layer_bytes_and_order_identical": true,
+  "compressed_size_bytes": 4148759610,
+  "manifest_bytes": 3652,
+  "only_manifest_metadata_conversion": true
+}
