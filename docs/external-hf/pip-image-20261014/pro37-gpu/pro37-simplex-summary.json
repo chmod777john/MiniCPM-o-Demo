@@ -1,0 +1,238 @@
+[
+  {
+    "case": "text_nonstream",
+    "request_to_done_s": 0.3260493960697204,
+    "text": "你好。",
+    "audio_chunks": 0,
+    "audio_bytes": 0,
+    "pass": true,
+    "seconds": 0.4094291268847883,
+    "events": [
+      "session.queue_done",
+      "session.created",
+      "response.done"
+    ]
+  },
+  {
+    "case": "text_stream",
+    "request_to_done_s": 0.17093774513341486,
+    "text": "你好。",
+    "audio_chunks": 0,
+    "audio_bytes": 0,
+    "pass": true,
+    "seconds": 0.19279673416167498,
+    "events": [
+      "session.queue_done",
+      "session.created",
+      "response.output.delta",
+      "response.output.delta",
+      "response.done"
+    ]
+  },
+  {
+    "case": "audio_nonstream",
+    "request_to_done_s": 2.1594401290640235,
+    "text": "你好。",
+    "audio_chunks": 1,
+    "audio_bytes": 199680,
+    "pass": true,
+    "seconds": 2.1839504910167307,
+    "events": [
+      "session.queue_done",
+      "session.created",
+      "response.output.delta",
+      "response.done"
+    ]
+  },
+  {
+    "case": "audio_stream",
+    "request_to_done_s": 1.0278331411536783,
+    "text": "你好。",
+    "audio_chunks": 1,
+    "audio_bytes": 76800,
+    "pass": true,
+    "seconds": 1.051831450080499,
+    "events": [
+      "session.queue_done",
+      "session.created",
+      "response.output.delta",
+      "response.output.delta",
+      "response.done"
+    ]
+  },
+  {
+    "case": "history_stream",
+    "request_to_done_s": 0.21945643099024892,
+    "text": "红苹果",
+    "audio_chunks": 0,
+    "audio_bytes": 0,
+    "pass": true,
+    "seconds": 0.24184842710383236,
+    "events": [
+      "session.queue_done",
+      "session.created",
+      "response.output.delta",
+      "response.output.delta",
+      "response.done"
+    ]
+  },
+  {
+    "case": "image_hd_stream",
+    "request_to_done_s": 0.22194681712426245,
+    "text": "红色",
+    "audio_chunks": 0,
+    "audio_bytes": 0,
+    "pass": true,
+    "seconds": 0.24417399102821946,
+    "events": [
+      "session.queue_done",
+      "session.created",
+      "response.output.delta",
+      "response.done"
+    ]
+  },
+  {
+    "case": "input_audio_stream",
+    "request_to_done_s": 0.4799952709581703,
+    "text": "人声",
+    "audio_chunks": 0,
+    "audio_bytes": 0,
+    "pass": true,
+    "seconds": 0.5026737458538264,
+    "events": [
+      "session.queue_done",
+      "session.created",
+      "response.output.delta",
+      "response.output.delta",
+      "response.done"
+    ]
+  },
+  {
+    "case": "audio_stream_cap1",
+    "request_to_done_s": 0.8947128530126065,
+    "text": "1",
+    "audio_chunks": 1,
+    "audio_bytes": 49920,
+    "pass": true,
+    "seconds": 0.9176640859805048,
+    "events": [
+      "session.queue_done",
+      "session.created",
+      "response.output.delta",
+      "response.output.delta",
+      "response.done"
+    ]
+  },
+  {
+    "case": "video_audio_stream",
+    "request_to_done_s": 12.425761149963364,
+    "text": "画面是纯红色的。",
+    "audio_chunks": 2,
+    "audio_bytes": 142080,
+    "pass": true,
+    "seconds": 12.450478750048205,
+    "events": [
+      "session.queue_done",
+      "session.created",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.done"
+    ]
+  },
+  {
+    "case": "speech_long_stream",
+    "request_to_done_s": 4.89979473920539,
+    "text": "北京，中国首都，拥有三千多年建城史。这里古韵悠长，故宫、长城见证历史；现代繁华，CBD 彰显活力。作为国际交往中心，北京正以开放姿态迎接世界。",
+    "audio_chunks": 15,
+    "audio_bytes": 1405440,
+    "pass": true,
+    "seconds": 4.92870065709576,
+    "events": [
+      "session.queue_done",
+      "session.created",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.done"
+    ]
+  },
+  {
+    "case": "thinking_text_stream",
+    "request_to_done_s": 0.8677507629618049,
+    "text": "首先，用户的问题是：“1加1是多少？”这是一个非常简单的数学问题。用户要求“简短回答”，所以我应该直接给出答案，不需要额外的解释。\n\n1加1等于2。这是基本的算术知识。\n\n因此，我的",
+    "audio_chunks": 0,
+    "audio_bytes": 0,
+    "pass": true,
+    "seconds": 0.8903664709068835,
+    "events": [
+      "session.queue_done",
+      "session.created",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.output.delta",
+      "response.done"
+    ]
+  },
+  {
+    "case": "video_audio_nonstream",
+    "request_to_done_s": 1.5374263029079884,
+    "text": "纯红色。",
+    "audio_chunks": 1,
+    "audio_bytes": 203520,
+    "pass": true,
+    "seconds": 1.56165841803886,
+    "events": [
+      "session.queue_done",
+      "session.created",
+      "response.output.delta",
+      "response.done"
+    ]
+  }
+]

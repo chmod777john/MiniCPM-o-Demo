@@ -1,0 +1,184 @@
+{
+  "apiVersion": "v1",
+  "kind": "Pod",
+  "metadata": {
+    "name": "o5-pip-validation-20261014",
+    "namespace": "eval",
+    "labels": {
+      "owner": "weihongliang",
+      "task": "o5-pip-gpu-20261014",
+      "app": "o5-pip-validation"
+    }
+  },
+  "spec": {
+    "nodeSelector": {
+      "kubernetes.io/hostname": "10.20.1.37"
+    },
+    "tolerations": [
+      {
+        "key": "lis.modelbest.co/reserved-for",
+        "operator": "Equal",
+        "value": "kaiqi-eval",
+        "effect": "NoSchedule"
+      }
+    ],
+    "restartPolicy": "Never",
+    "automountServiceAccountToken": false,
+    "terminationGracePeriodSeconds": 45,
+    "containers": [
+      {
+        "name": "worker",
+        "image": "127.0.0.1:18537/worker@sha256:c35318d4cc66ffc9d15a6d21cf69f8c5d46526ebd7ff1b1144f8a2604aa3f8f6",
+        "imagePullPolicy": "IfNotPresent",
+        "command": [
+          "sh",
+          "-ec",
+          "echo \"Fixed build79177c66 Pro5000 TP2 validation; waiting for native gate and API start.\"; while test ! -f /validation/start-api-approved; do sleep 2; done; exec /opt/o5/.venv/bin/python /opt/o5/package/entrypoint.py"
+        ],
+        "env": [
+          {
+            "name": "MODEL_PATH",
+            "value": "/models/o5"
+          },
+          {
+            "name": "GATEWAY_REGISTRY_URL",
+            "value": "http://127.0.0.1:8007/internal/workers"
+          },
+          {
+            "name": "WORKER_ID",
+            "value": "o5-pip-validation-20261014"
+          },
+          {
+            "name": "WORKER_GPU_GROUP",
+            "value": "pro37-tp2"
+          },
+          {
+            "name": "POD_IP",
+            "valueFrom": {
+              "fieldRef": {
+                "fieldPath": "status.podIP"
+              }
+            }
+          },
+          {
+            "name": "TRITON_CACHE_DIR",
+            "value": "/validation/cache/triton"
+          },
+          {
+            "name": "TORCHINDUCTOR_CACHE_DIR",
+            "value": "/validation/cache/inductor"
+          },
+          {
+            "name": "WORKER_ENDPOINT",
+            "value": "127.0.0.1:22400"
+          }
+        ],
+        "resources": {
+          "requests": {
+            "cpu": "8",
+            "memory": "96Gi",
+            "nvidia.com/gpu": 2
+          },
+          "limits": {
+            "cpu": "24",
+            "memory": "192Gi",
+            "nvidia.com/gpu": 2
+          }
+        },
+        "securityContext": {
+          "allowPrivilegeEscalation": false,
+          "capabilities": {
+            "drop": [
+              "ALL"
+            ]
+          }
+        },
+        "volumeMounts": [
+          {
+            "name": "model",
+            "mountPath": "/models/o5",
+            "readOnly": true
+          },
+          {
+            "name": "validation",
+            "mountPath": "/validation"
+          },
+          {
+            "name": "shm",
+            "mountPath": "/dev/shm"
+          }
+        ]
+      },
+      {
+        "name": "gateway",
+        "image": "127.0.0.1:18537/gateway@sha256:143bdde56a917513253998c8ccfa032fc84ffcb72e7c38b1da95bbbcd7a5e3cd",
+        "imagePullPolicy": "IfNotPresent",
+        "args": [
+          "--host",
+          "0.0.0.0",
+          "--port",
+          "8006",
+          "--internal-port",
+          "8007",
+          "--http"
+        ],
+        "env": [
+          {
+            "name": "NVIDIA_VISIBLE_DEVICES",
+            "value": "void"
+          }
+        ],
+        "resources": {
+          "requests": {
+            "cpu": "1",
+            "memory": "1Gi"
+          },
+          "limits": {
+            "cpu": "4",
+            "memory": "8Gi"
+          }
+        },
+        "securityContext": {
+          "allowPrivilegeEscalation": false,
+          "capabilities": {
+            "drop": [
+              "ALL"
+            ]
+          }
+        },
+        "readinessProbe": {
+          "httpGet": {
+            "path": "/health",
+            "port": 8006
+          },
+          "initialDelaySeconds": 5,
+          "periodSeconds": 5,
+          "timeoutSeconds": 3
+        }
+      }
+    ],
+    "volumes": [
+      {
+        "name": "model",
+        "hostPath": {
+          "path": "/data/weihongliang/o5-pip-image-20261014/model",
+          "type": "Directory"
+        }
+      },
+      {
+        "name": "validation",
+        "hostPath": {
+          "path": "/data/weihongliang/o5-pip-image-20261014/gpu-validation",
+          "type": "Directory"
+        }
+      },
+      {
+        "name": "shm",
+        "emptyDir": {
+          "medium": "Memory",
+          "sizeLimit": "16Gi"
+        }
+      }
+    ]
+  }
+}

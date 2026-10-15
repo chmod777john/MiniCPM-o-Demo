@@ -1,0 +1,11 @@
+{
+  "inputs_sha256": "5046dcad8f17f5f930f75e858aad8d7aae5456cc0a739971df16be62b42360d5",
+  "native_sha256": {
+    "minicpm_dense_pro5000_4343f6e6870e01693462ff40": "eee9fc7ea6eabc3f3708de930a8f907fdba59c8d78efa18ad5f590c5ee74cb3e",
+    "flash_attn_2_cuda": "7b0ef15d5ff43a26c12c134912a13ea3e9af5f3aac894763c29d7dff8829a8b2",
+    "causal_conv1d_cuda": "d4c0dcc3d1e9441f905daffe637973398ab5d395ec8162a00dea4445fdf601f4"
+  },
+  "gpu": "NVIDIA RTX PRO 5000 72GB Blackwell",
+  "torch": "2.14.0+cu130"
+}
+NATIVE_OUTPUTS_SAVED 17

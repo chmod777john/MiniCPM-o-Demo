@@ -1,0 +1,7 @@
+index, uuid, name, memory.total [MiB], memory.used [MiB], utilization.gpu [%]
+0, GPU-4fc46ebc-e92e-783c-fa68-679c25a6edc8, NVIDIA RTX PRO 5000 72GB Blackwell, 73415 MiB, 0 MiB, 0 %
+1, GPU-d90ecb86-990d-9fea-cf92-2b1934b0958b, NVIDIA RTX PRO 5000 72GB Blackwell, 73415 MiB, 0 MiB, 0 %
+pid, process_name, used_gpu_memory [MiB]
+2.14.0+cu130 2
+['NVIDIA RTX PRO 5000 72GB Blackwell', 'NVIDIA RTX PRO 5000 72GB Blackwell']
+/models/o5/model.pt 74606011097
