@@ -91,11 +91,28 @@ MODEL_PATH/
 
 ## 4. 服务启动与请求调度
 
-验收前先完成native算子独立进程对比，随后通过标记文件释放等待中的worker，让它执行镜像原入口：
+### 启动方式的准确边界
+
+Gateway：Pod没有覆盖`command`，只设置`args`，由容器运行时直接使用镜像内的ENTRYPOINT。
+
+Worker：Pod显式覆盖了`command`，由Kubernetes启动一个等待脚本；native算子独立进程对比通过、写入`/validation/start-api-approved`后，该脚本用`exec`调用与镜像ENTRYPOINT完全相同的程序。省略提示日志后，实际命令是：
 
 ```sh
-/opt/o5/.venv/bin/python /opt/o5/package/entrypoint.py
+sh -ec '
+  while test ! -f /validation/start-api-approved; do sleep 2; done
+  exec /opt/o5/.venv/bin/python /opt/o5/package/entrypoint.py
+'
 ```
+
+Worker与Gateway镜像记录的ENTRYPOINT都是：
+
+```json
+["/opt/o5/.venv/bin/python", "/opt/o5/package/entrypoint.py"]
+```
+
+所以该轮不是进入一个已运行容器后，靠交互shell另起Backend/Worker来充当镜像启动验收；服务由Pod启动进程链调用原entrypoint并管理。容器内执行过的是native检查、探针客户端及标记文件操作。
+
+**但这也不是worker完全不覆盖command、只凭镜像默认ENTRYPOINT/CMD自动启动的实测。** 本轮已经覆盖原entrypoint的配置加载、模型加载、子进程启动、注册与正常关闭；对默认入口的直接启动，只核实了镜像元数据与实际exec目标相同，不能把它说成已独立实测。Gateway则实际使用了默认ENTRYPOINT。
 
 入口按原包装逻辑依次启动Backend和Worker，日志记录的子命令为：
 
