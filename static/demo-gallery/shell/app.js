@@ -284,7 +284,6 @@ el.startMicLive.addEventListener('click', async () => {
   }
   setMicLiveState('starting');
   clearViews();
-  resetMicPeak();
   try {
     audioPlayer.init();
     audioPlayerReady = true;
@@ -295,8 +294,11 @@ el.startMicLive.addEventListener('click', async () => {
     liveClient = await createRealtimeSession(sessionInitPayload);
     micProvider = createMicProvider(liveClient);
     await micProvider.start();
+    // 开麦计时从麦克风真正开始送音频算起：建会话（排队 + 模型加载系统提示）可能要十几秒，
+    // 那段时间的声音不会送给模型，不能算进「开麦后多久没说话」。
+    resetMicPeak();
     setMicLiveState('live');
-    setStatus(scene.liveStatus);
+    setStatus(`🎙 可以说话了 · ${scene.liveStatus}`);
   } catch (err) {
     setStatus(`Mic live error: ${err.message}`);
     stopMicLive('error');
@@ -398,7 +400,9 @@ async function createRealtimeSession(payload) {
     resolveCreated = resolve;
     rejectCreated = reject;
   });
+  let queuePosition = null;
   const client = await createConnectedClient((event) => {
+    if (event.type === 'session.queued' || event.type === 'session.queue_update') queuePosition = event.position ?? queuePosition;
     if (event.type === 'session.created') resolveCreated(event);
     if (event.type === 'session.closed' || event.type === 'error') {
       rejectCreated(new Error(
@@ -410,7 +414,22 @@ async function createRealtimeSession(payload) {
   const timeout = new Promise((_, reject) => {
     setTimeout(() => reject(new Error('session.init timed out')), 120000);
   });
-  await Promise.race([created, timeout]);
+  // 等 session.created 期间（排队 + 模型加载系统提示，长 system 实测十几秒）麦克风还没开，
+  // 必须明确告诉用户还不能说话，否则用户点完就开口，这段话模型听不到。
+  const startedAt = Date.now();
+  const showWaiting = () => {
+    const waited = `已等 ${Math.round((Date.now() - startedAt) / 1000)}s`;
+    setStatus(client.queued
+      ? `⏳ 正在建立会话（模型加载系统提示）· ${waited} · 还不能说话，出现「可以说话了」再开口`
+      : `⏳ 等待空闲 Worker${queuePosition ? `（排第 ${queuePosition} 位）` : ''} · ${waited} · 还不能说话`);
+  };
+  showWaiting();
+  const ticker = setInterval(showWaiting, 250);       // 排队结束后尽快切到「正在建立会话」
+  try {
+    await Promise.race([created, timeout]);
+  } finally {
+    clearInterval(ticker);
+  }
   return client;
 }
 
