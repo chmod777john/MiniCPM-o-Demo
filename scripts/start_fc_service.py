@@ -63,13 +63,13 @@ def main() -> None:
         if profile.backbone_dir is None:
             raise RuntimeError("O5 TP2 Profile 缺少 backbone_dir")
         environment["BACKBONE_DIR"] = profile.backbone_dir
-        # 实时服务每个 Unit 都有几十 token 的小 prefill；有界 prefill 默认会把它们也切到逐专家循环的
-        # eager MoE（~470ms/Unit），超出 1 秒/Unit 的实时预算、语音一卡一卡。TP2 专家已切半，256 token
-        # 以下用 batched_mm 的瞬时显存有限，开场长 system prefill 仍走 eager。显式设置的值优先；
-        # 离线评测副本池不走这里，不受影响。见 modeling/o5/bounded_prefill.py。
+        # TP2 实时服务的 prefill 一律不切逐专家循环的 eager MoE（离线单卡评测才需要它省显存）：
+        # - 每个 Unit 几十 token 的小 prefill（< O5_PREFILL_EAGER_MIN_TOKENS）保持 batched_mm，
+        #   否则 ~470ms/Unit、超出 1 秒/Unit 的实时预算，语音一卡一卡（2026-10-09）；
+        # - 开场长 system prefill（≥ 阈值）切到 O5_PREFILL_EXPERTS_IMPLEMENTATION=batched_mm 即不切，按 512 token 分块，
+        #   瞬时显存每块 ~8 GiB；2×A100 实测 5021 token 建会话 22.1→7.7 秒，峰值显存 44→56 GiB，输出逐 Unit 一致（2026-10-16）。
+        # 显式设置的值优先；离线评测副本池不走这里，不受影响。见 modeling/o5/bounded_prefill.py。
         environment.setdefault("O5_PREFILL_EAGER_MIN_TOKENS", "256")
-        # 开场长 system prefill 也不切 eager：TP2 下 batched_mm 按 512 token 分块，瞬时显存每块 ~8 GiB，
-        # 建会话快约 2.8 倍（2×A100 实测 5021 token 22.1→7.7 秒，峰值显存 44→56 GiB，输出逐 Unit 一致）。
         environment.setdefault("O5_PREFILL_EXPERTS_IMPLEMENTATION", "batched_mm")
         entry = project_dir / "scripts" / "start_o5_tp2_cctl_service.sh"
     else:
