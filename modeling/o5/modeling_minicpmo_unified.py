@@ -54,6 +54,18 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _tts_condition_legacy() -> bool:
+    """是否回到 2026-10-16 之前的 TTS condition 口径(漏 spoken_turn_eos 与轮末 text_eos)。
+
+    返回:
+        ``O5_TTS_CONDITION_LEGACY=1`` 时为 True;默认 False,即与训练对齐的口径。
+
+    只为在同一个 Worker 上对同一段 token/hidden 做轮末音频 A/B 留的开关,正式部署不要设。
+    """
+
+    return os.environ.get("O5_TTS_CONDITION_LEGACY", "0") == "1"
+
+
 class ProcessorMode(Enum):
     CHAT = "chat"
     STREAMING = "streaming"
@@ -1128,25 +1140,45 @@ class FcDuplexCapability:
         )
         self.cleanup()
 
-    def _tts_condition(self, results):
+    def _tts_condition(self, results, end_of_turn: bool = False):
+        """拼一个 output unit 的 TTS condition。
+
+        参数:
+            results: 本 unit 收进 condition 的 ``(token_id, hidden, turn_eos)``;
+                收哪些 token 见 ``streaming_spoken_generate``。
+            end_of_turn: 本 unit 是否是这一轮话的最后一个 unit(LLM 出了
+                ``<|spoken_turn_eos|>``)。
+
+        返回:
+            ``[1, L, hidden]`` 的 condition embedding。
+
+        形态与训练侧 ``interleaved_forward`` 对齐(Megatron-LM-huawei
+        ``components/tts_backbone/minicpm_tts_bicodec/modeling_minicpmtts.py:1341-1354``):
+        每个 unit 都以 ``audio_bos`` 收尾,**只有一轮话的最后一个 unit** 在 ``audio_bos``
+        之前多一个独立的 ``text_eos``(「本轮文字已全部给完」)。普通双工流式路径
+        ``modeling/o5/utils.py:874`` 是同一形态。
+        """
+
         tts = self.model.tts
-        if not results:
-            bos = tts.emb_text(torch.tensor(
-                [tts.audio_bos_token_id], device=tts.emb_text.weight.device, dtype=torch.long
-            ))
-            return bos.unsqueeze(0)
-        tokens = torch.tensor([x[0] for x in results], device=tts.emb_text.weight.device)
-        hidden = torch.cat([x[1].squeeze(0) for x in results], dim=0)
-        hidden = tts.projector_semantic(hidden)
-        if getattr(tts.config, "normalize_projected_hidden", False):
-            hidden = self.model._normalize_projected(hidden, tts.projector_semantic_norm)
-        else:
-            hidden = F.normalize(hidden, p=2, dim=-1)
-        merged = tts.emb_text(tokens) + hidden
-        bos = tts.emb_text(torch.tensor(
-            [tts.audio_bos_token_id], device=tts.emb_text.weight.device, dtype=torch.long
-        ))
-        return torch.cat([merged, bos], dim=0).unsqueeze(0)
+        device = tts.emb_text.weight.device
+
+        def _emb(token_id: int) -> torch.Tensor:
+            return tts.emb_text(torch.tensor([token_id], device=device, dtype=torch.long))
+
+        parts = []
+        if results:
+            tokens = torch.tensor([x[0] for x in results], device=device)
+            hidden = torch.cat([x[1].squeeze(0) for x in results], dim=0)
+            hidden = tts.projector_semantic(hidden)
+            if getattr(tts.config, "normalize_projected_hidden", False):
+                hidden = self.model._normalize_projected(hidden, tts.projector_semantic_norm)
+            else:
+                hidden = F.normalize(hidden, p=2, dim=-1)
+            parts.append(tts.emb_text(tokens) + hidden)
+        if end_of_turn and not _tts_condition_legacy():
+            parts.append(_emb(tts.config.text_eos_token_id))
+        parts.append(_emb(tts.audio_bos_token_id))
+        return torch.cat(parts, dim=0).unsqueeze(0)
 
     def _spoken_audio(self, results, end_of_turn: bool) -> dict:
         empty = {
@@ -1164,7 +1196,7 @@ class FcDuplexCapability:
                 prompt_wav_path=self.tts_prompt_audio_path
             )
         prep = time.time()
-        condition = self._tts_condition(results)
+        condition = self._tts_condition(results, end_of_turn)
         prep_cost = time.time() - prep
         tts_start = time.time()
         new_tokens, old_kv = self.model.tts.generate_chunk(
@@ -1335,6 +1367,7 @@ class FcDuplexCapability:
         is_listen = is_speaking = turn_eos = terminated = is_pad = False
         reason = term_id = None
         tts_pad_id = self.sid(self.K.TTS_PAD)
+        spoken_turn_eos_id = self.sid(self.K.SPOKEN_TURN_EOS)
         terms = {
             self.sid(self.K.SPOKEN_SLOT_EOS): "spoken_slot_eos",
             self.sid(self.K.SPOKEN_TURN_EOS): "spoken_turn_eos",
@@ -1361,12 +1394,20 @@ class FcDuplexCapability:
             if not self.is_special(tid):
                 text_ids.append(tid)
             logits, hidden = self.decoder.feed(self.decoder.embed_token(tid), return_logits=True)
-            # pad 格是**要出声**的（turn 中间那一秒的真实波形）：训练侧
-            # minicpm-o `multimodal_common/dataset/o5_agent_duplex/tts.py` 的
-            # condition_special_ids = {spoken_turn_eos, tts_pad} 把 pad 显式留在 TTS condition 里。
-            # 只按 `is_speaking and not is_special` 收的话 pad 永远进不来，于是 pad 格一秒音频都不出，
-            # 与训练不一致。
-            if (is_speaking and not self.is_special(tid)) or tid == tts_pad_id:
+            # 训练侧 minicpm-o `multimodal_common/dataset/o5_agent_duplex/tts.py` 的
+            # condition_special_ids = {spoken_turn_eos, tts_pad}：TTS condition = 正文 payload
+            # + 这两个 special，不含 speak / spoken_slot_eos / slot wrapper。这里按同一口径收：
+            # - pad 格是**要出声**的（turn 中间那一秒的真实波形），只按
+            #   `is_speaking and not is_special` 收的话 pad 永远进不来，pad 格一秒音频都不出；
+            # - spoken_turn_eos 已经 feed 进 LLM、hidden 也拿到了。训练时它是本轮最后一个
+            #   condition token（「这轮话到此结束」+ 该位置上 LLM 汇出的上下文），漏掉它，
+            #   轮末那块音频就没有训练时的收尾条件；terminal-only 的 `speak → spoken_turn_eos`
+            #   更会让 condition 退化成只剩一个 audio_bos。
+            if (
+                (is_speaking and not self.is_special(tid))
+                or tid == tts_pad_id
+                or (tid == spoken_turn_eos_id and not _tts_condition_legacy())
+            ):
                 tts_results.append((tid, hidden, turn_eos))
             if tid in terms:
                 terminated, reason, term_id = True, terms[tid], tid
