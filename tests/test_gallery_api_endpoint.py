@@ -80,18 +80,36 @@ console.log(JSON.stringify({{ found, noBase, merged }}));
     assert got["merged"][2]["available"] is None
 
 
-def test_discovery_bases_default_to_configured_api_services(monkeypatch) -> None:
+def test_default_api_service(monkeypatch) -> None:
     from demo_gallery.runtime import gallery_runtime
 
-    monkeypatch.setenv("DEMO_API_ENDPOINTS", json.dumps([{"name": "a", "url": "https://h:1/e/a"},
-                                                         {"name": "b", "url": "https://h:1/e/b"}]))
+    monkeypatch.setenv("DEMO_API_ENDPOINTS", json.dumps([{"name": "a", "url": "https://h:1/e/a"}]))
+    monkeypatch.delenv("DEMO_API_SERVICE", raising=False)
     monkeypatch.setenv("DEMO_DEFAULT_API", "https://g:2/e/c")
-    monkeypatch.delenv("DEMO_API_DISCOVERY", raising=False)
-    assert gallery_runtime()["api_discovery"] == ["https://h:1", "https://g:2"]
-    monkeypatch.setenv("DEMO_API_DISCOVERY", "https://x:3/, https://x:3  ftp://y")
-    assert gallery_runtime()["api_discovery"] == ["https://x:3"]
-    monkeypatch.setenv("DEMO_API_DISCOVERY", "")                     # 显式关闭
-    assert gallery_runtime()["api_discovery"] == []
+    assert gallery_runtime()["default_api_service"] == "https://g:2"
+    monkeypatch.delenv("DEMO_DEFAULT_API")
+    assert gallery_runtime()["default_api_service"] == "https://h:1"
+    monkeypatch.setenv("DEMO_API_SERVICE", "https://x:3/")
+    assert gallery_runtime()["default_api_service"] == "https://x:3"
+
+
+@needs_node
+def test_api_service_address_is_parsed() -> None:
+    got = run_node(f"""
+const m = await import({json.dumps(repo_module_url('static/demo-gallery/core/api-endpoint.js'))});
+const out = {{}};
+for (const raw of ['https://h:7029', 'https://h:7029/', 'https://h:7029/overview', 'https://h:7029/e/m1',
+                   'wss://h:7029/e/m1/v1/realtime?mode=audio', 'https://h:7029/e/m1/v1/info']) out[raw] = m.parseApiService(raw);
+let bad = [];
+for (const raw of ['', 'h:7029']) {{ try {{ m.parseApiService(raw); }} catch (e) {{ bad.push(raw); }} }}
+console.log(JSON.stringify({{ out, bad }}));
+""")
+    plain = {"service": "https://h:7029", "endpoint": None}
+    with_ep = {"service": "https://h:7029", "endpoint": "https://h:7029/e/m1"}
+    assert got["out"] == {"https://h:7029": plain, "https://h:7029/": plain, "https://h:7029/overview": plain,
+                          "https://h:7029/e/m1": with_ep, "wss://h:7029/e/m1/v1/realtime?mode=audio": with_ep,
+                          "https://h:7029/e/m1/v1/info": with_ep}
+    assert got["bad"] == ["", "h:7029"]
 
 
 def _wav(path: Path, *, sr: int = 16000, channels: int = 1, fmt: str = "WAV") -> bytes:

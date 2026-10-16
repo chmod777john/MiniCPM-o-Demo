@@ -6,8 +6,8 @@
 #   DEMO_PORT                本机 HTTPS 端口（再由 frpc 暴露到公网），默认 10032
 #   DEMO_API_ENDPOINTS       页面可选的 API 端点 JSON：[{"name":"f9t4","url":"https://<host>:<port>/e/f9t4"}]
 #   DEMO_DEFAULT_API         首次打开时选中的端点（缺省取列表第一个）
-#   DEMO_API_DISCOVERY       自动发现端点的 API 服务地址（https://<host>:<port>，逗号分隔）；页面读其 /overview/api/state
-#                            把全部端点列进下拉框。缺省取上面两项里出现过的服务地址；设为空串关闭
+#   DEMO_API_SERVICE         首次打开时的 API 服务地址（https://<host>:<port>，页面上可改）；页面读其 /overview/api/state
+#                            把全部端点（一个端点 = 一个模型）列进下拉框。缺省取 DEMO_DEFAULT_API 所在的服务
 #   DEMO_DEFAULT_PRESET      首次打开时的 preset id
 #   DEMO_AUDIO_ROOTS         允许读取参考音频的目录（: 分隔）；不设则不读任何音频
 #   DEMO_BOARD_CASE_FOLDER   board 默认 system 取自的训练数据目录

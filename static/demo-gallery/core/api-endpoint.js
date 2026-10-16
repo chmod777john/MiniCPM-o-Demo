@@ -22,6 +22,21 @@ export function normalizeEndpoint(raw) {
 }
 
 /**
+ * 规范化 API 服务地址（https://host:port）。也接受粘贴的端点 / realtime / info / overview 地址：
+ * 取出服务地址，若带端点名一并返回规范化的端点地址。
+ * @returns {{service: string, endpoint: string|null}}
+ */
+export function parseApiService(raw) {
+  let text = String(raw || '').trim();
+  if (!text) throw new Error('请填写 API 地址（https://<host>:<port>）');
+  if (!/^(https?|wss?):\/\//.test(text)) throw new Error('API 地址要以 https:// 开头');
+  text = text.replace(/[?#].*$/, '').replace(/^ws(s?):\/\//, 'http$1://').replace(/\/+$/, '');
+  const match = text.match(/^(.*?)\/e\/([^/]+)/);
+  if (match) return { service: match[1], endpoint: normalizeEndpoint(`${match[1]}/e/${match[2]}`).base };
+  return { service: text.replace(/\/(overview|control|api-docs)(\/.*)?$/, '').replace(/\/v1(\/.*)?$/, ''), endpoint: null };
+}
+
+/**
  * 把 API 服务公开状态（<服务地址>/overview/api/state）转成端点选项。
  * @param {object} state overview 状态：{public_base, endpoints: [{name, model, available, queue_length, workers}]}
  * @param {string} serviceBase 发现用的服务地址；状态里没有 public_base 时用它拼端点地址。

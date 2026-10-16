@@ -11,7 +11,8 @@ import { MIC_SPEECH_DB, openingSilenceWarning } from '../core/mic-policy.js';
 import { MODEL_IDENTITY_HINTS, MODEL_IDENTITY_ROWS } from '../core/model-identity.js';
 import { escapeHtml, textFromSteps } from '../core/ui-utils.js';
 import {
-  endpointsFromOverview, mergeEndpointOptions, normalizeEndpoint, summarizeEndpointInfo, summarizeSessionConfig,
+  endpointsFromOverview, mergeEndpointOptions, normalizeEndpoint, parseApiService, summarizeEndpointInfo,
+  summarizeSessionConfig,
 } from '../core/api-endpoint.js';
 
 // 后端注入的当前 demo 元信息（入口模块 URL / API 前缀 / 标题）。
@@ -65,6 +66,7 @@ let quickSettings = new Map();
 let apiEndpoint = null;
 let endpointInfo = null;
 const API_ENDPOINT_KEY = 'demo_gallery_api_endpoint';
+const API_SERVICE_KEY = 'demo_gallery_api_service';
 // 音频路径 → v4 base64 音频对象（由 Demo 服务读本机文件）；同一页面内复用。
 const audioCache = new Map();
 let micLiveState = 'idle';
@@ -112,9 +114,10 @@ const el = {
   aiSpeech: document.getElementById('aiSpeech'),
   nsStream: document.getElementById('nonSpokenStream'),
   kvMode: document.getElementById('kvMode'),
-  apiEndpoint: document.getElementById('apiEndpoint'),
+  apiService: document.getElementById('apiService'),
+  applyApiService: document.getElementById('applyApiService'),
+  apiServiceStatus: document.getElementById('apiServiceStatus'),
   apiEndpointSelect: document.getElementById('apiEndpointSelect'),
-  applyApiEndpoint: document.getElementById('applyApiEndpoint'),
   apiEndpointStatus: document.getElementById('apiEndpointStatus'),
   kvCkpt: document.getElementById('kvCkpt'),
   kvTools: document.getElementById('kvTools'),
@@ -539,67 +542,97 @@ async function loadFcBoardDefaults() {
 
 // ---------------------------------------------------------------- API 端点
 
-// 下拉框 = 自动发现的端点（各 API 服务的公开状态 /overview/api/state）+ Demo 配置里写死的端点。
-// 控制面板上新建 / 删除端点后，页面下次刷新列表（打开时、之后每 30 秒）就能看到，Demo 不用改配置。
+// 连哪个模型分两步：① API 服务地址（页面上可改），从它的公开状态 <服务>/overview/api/state 拿到全部端点；
+// ② 在下拉框里选端点 —— 一个端点就是一个模型，会话实际连的就是它。列表打开时拉一次，之后每 30 秒刷新，
+// 控制面板上新建 / 删除端点后 Demo 不用改配置。
 
 const ENDPOINT_REFRESH_MS = 30000;
 let configuredEndpoints = [];
-let discoveryBases = [];
+let apiService = '';
 let endpointOptions = [];
-let lastEndpointStatus = null;     // 最近一次查当前端点 /v1/info 的 HTTP 状态
+let endpointListError = '';
 
-function setupApiEndpoints(defaults) {
+async function setupApiEndpoints(defaults) {
   configuredEndpoints = Array.isArray(defaults.api_endpoints) ? defaults.api_endpoints : [];
-  discoveryBases = Array.isArray(defaults.api_discovery) ? defaults.api_discovery : [];
-  endpointOptions = mergeEndpointOptions([], configuredEndpoints);
-  renderEndpointOptions();
-  const saved = globalThis.localStorage?.getItem(API_ENDPOINT_KEY);
-  const fallback = defaults.default_api_endpoint || configuredEndpoints[0]?.url || '';
-  const initial = saved || fallback;
-  if (el.apiEndpoint) el.apiEndpoint.value = initial;
-  const selected = initial
-    ? selectApiEndpoint(initial).then(async (status) => {
-      // 浏览器记住的端点已被删除（404）：回到 Demo 服务配置的默认端点，免得一直连一个不存在的地址。
-      if (status === 404 && saved && fallback && normalizeEndpoint(fallback).base !== normalizeEndpoint(saved).base) {
-        await selectApiEndpoint(fallback);
-      }
-    })
-    : Promise.resolve(renderEndpoint('请选择或填写 API 端点地址（https://<host>:<port>/e/<端点名>）'));
-  Promise.all([selected, discoverEndpoints()]).then(pickDiscoveredIfCurrentGone);
-  if (discoveryBases.length) setInterval(discoverEndpoints, ENDPOINT_REFRESH_MS);
+  const savedEndpoint = globalThis.localStorage?.getItem(API_ENDPOINT_KEY) || '';
+  const savedService = globalThis.localStorage?.getItem(API_SERVICE_KEY) || '';
+  const preferred = savedEndpoint || defaults.default_api_endpoint || '';
+  const service = savedService || preferred || defaults.default_api_service || '';
+  if (!service) {
+    renderEndpointOptions();
+    renderEndpoint('先填 API 地址（https://<host>:<port>）');
+    return;
+  }
+  await useApiService(service, preferred);
+  setInterval(() => { if (apiService) refreshEndpointList(); }, ENDPOINT_REFRESH_MS);
 }
 
-/** 读各 API 服务的公开状态，刷新下拉框。查不到的服务（网络 / 自签证书未信任）跳过，不影响写死的端点。 */
-async function discoverEndpoints() {
-  const results = await Promise.all(discoveryBases.map(async (base) => {
-    try {
-      const response = await fetch(`${base}/overview/api/state`, { cache: 'no-store' });
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      return endpointsFromOverview(await response.json(), base);
-    } catch (err) {
-      console.warn(`[gallery] 自动发现端点失败：${base}`, err);
-      return [];
-    }
-  }));
-  endpointOptions = mergeEndpointOptions(results.flat(), configuredEndpoints);
-  renderEndpointOptions();
+/** 换 API 服务：拉它的端点列表并选一个（优先 preferred，否则第一个有可用 Worker 的）。也接受直接粘贴的端点地址。 */
+async function useApiService(raw, preferred = '') {
+  let parsed;
+  try {
+    parsed = parseApiService(raw);
+  } catch (err) {
+    endpointListError = err.message;
+    renderEndpointOptions();
+    return;
+  }
+  apiService = parsed.service;
+  globalThis.localStorage?.setItem(API_SERVICE_KEY, apiService);
+  if (el.apiService) el.apiService.value = apiService;
+  const listed = await refreshEndpointList();
+  const want = parsed.endpoint || preferred;
+  let wantBase = '';
+  try { wantBase = want ? normalizeEndpoint(want).base : ''; } catch { /* 不合法的记忆值直接忽略 */ }
+  const inService = wantBase && wantBase.startsWith(`${apiService}/e/`);
+  let choice = inService && endpointOptions.some((o) => o.url === wantBase) ? wantBase : '';
+  if (!choice && !listed && inService) choice = wantBase;      // 列表拿不到：照旧连记住的端点
+  if (!choice) choice = (endpointOptions.find((o) => o.available > 0) || endpointOptions[0])?.url || '';
+  if (choice) {
+    await selectApiEndpoint(choice);
+  } else {
+    apiEndpoint = null;
+    endpointInfo = null;
+    el.kvMode.textContent = '—';
+    renderEndpointOptions();
+    renderEndpoint(listed ? '这个 API 下还没有端点（在控制面板上新建）' : '');
+  }
 }
 
-/** 当前端点不存在（没有任何可连的端点、或记住的和默认的都已删除）时，自动换到第一个有可用 Worker 的端点。 */
-function pickDiscoveredIfCurrentGone() {
-  if (apiEndpoint && lastEndpointStatus !== 404) return;
-  const next = endpointOptions.find((o) => o.available > 0) || endpointOptions.find((o) => o.available !== null);
-  if (next) selectApiEndpoint(next.url);
+/** 拉当前 API 服务的端点列表；返回是否拉到。拉不到时只剩 Demo 配置里同一服务下的端点。 */
+async function refreshEndpointList() {
+  const configured = configuredEndpoints.filter((c) => {
+    try { return normalizeEndpoint(c.url).base.startsWith(`${apiService}/e/`); } catch { return false; }
+  });
+  let discovered = [];
+  let ok = false;
+  try {
+    const response = await fetch(`${apiService}/overview/api/state`, { cache: 'no-store' });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    discovered = endpointsFromOverview(await response.json(), apiService);
+    endpointListError = '';
+    ok = true;
+  } catch (err) {
+    endpointListError = `读不到端点列表（${err.message}）。若是自签证书，先在新标签页打开 ${apiService}/overview 并选择继续访问，再点 Use。`;
+  }
+  endpointOptions = mergeEndpointOptions(discovered, configured);
+  renderEndpointOptions();
+  return ok;
 }
 
 function renderEndpointOptions() {
+  if (el.apiServiceStatus) {
+    el.apiServiceStatus.textContent = endpointListError;
+    el.apiServiceStatus.hidden = !endpointListError;
+  }
   const select = el.apiEndpointSelect;
   if (!select || document.activeElement === select) return;      // 用户正在选时不重画
   const current = apiEndpoint?.base || '';
   const known = endpointOptions.some((o) => o.url === current);
+  const stray = current ? `<option value="">${escapeHtml(current.replace(/^.*\/e\//, ''))}（不在列表里）</option>` : '';
   select.innerHTML = [
     ...endpointOptions.map((o) => `<option value="${escapeHtml(o.url)}">${escapeHtml(o.label)}</option>`),
-    known ? '' : `<option value="">${current ? `自定义：${escapeHtml(current)}` : '（未选择）'}</option>`,
+    known ? '' : (stray || '<option value="">（没有可选端点）</option>'),
   ].join('');
   select.value = known ? current : '';
   select.title = select.selectedOptions[0]?.textContent || '';      // 侧栏窄，名字会被截断
@@ -616,10 +649,8 @@ async function selectApiEndpoint(raw) {
     return 0;
   }
   globalThis.localStorage?.setItem(API_ENDPOINT_KEY, apiEndpoint.base);
-  if (el.apiEndpoint) el.apiEndpoint.value = apiEndpoint.base;
   renderEndpointOptions();
-  lastEndpointStatus = await queryEndpointInfo();
-  return lastEndpointStatus;
+  return queryEndpointInfo();
 }
 
 async function queryEndpointInfo() {
@@ -661,7 +692,10 @@ function renderSessionConfig(summary) {
   if (summary.listening || summary.speaking) nsView.setBudgets(Number(summary.listening) || 0, Number(summary.speaking) || 0);
 }
 
-el.applyApiEndpoint?.addEventListener('click', () => selectApiEndpoint(el.apiEndpoint?.value));
+el.applyApiService?.addEventListener('click', () => useApiService(el.apiService?.value, apiEndpoint?.base));
+el.apiService?.addEventListener('keydown', (event) => {
+  if (event.key === 'Enter') useApiService(el.apiService.value, apiEndpoint?.base);
+});
 el.apiEndpointSelect?.addEventListener('change', () => {
   if (el.apiEndpointSelect.value) selectApiEndpoint(el.apiEndpointSelect.value);
 });

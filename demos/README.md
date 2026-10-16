@@ -88,9 +88,9 @@ class MyDemo:
 | `extra_mounts` | 额外静态目录（相对 Demo 目录），URL = `/demos/<id>/<path>`；`create=True` 时启动时 mkdir |
 
 **`GET /api/demos/<id>/defaults`** 由 Gallery 自动提供：先放 Demo 侧通用字段
-（`api_endpoints` 可选的 API 端点、`default_api_endpoint`、`api_discovery` 自动发现端点的 API 服务地址、
-`default_quick_setting`，来自 Demo 服务的环境变量，见 `demo_gallery/runtime.py`；shell 在浏览器里读
-`<服务地址>/overview/api/state`，把控制面板上的全部端点列进下拉框），再用 `defaults()` 的返回值**覆盖合并**。
+（`api_endpoints` 可选的 API 端点、`default_api_endpoint`、`default_api_service` 首次打开时的 API 服务地址、
+`default_quick_setting`，来自 Demo 服务的环境变量，见 `demo_gallery/runtime.py`；页面上先填 API 地址，shell 在浏览器里读
+`<API 地址>/overview/api/state`，把全部端点列进下拉框，选中的端点（一个端点 = 一个模型）就是会话实际连的），再用 `defaults()` 的返回值**覆盖合并**。
 
 **模型信息不在 defaults 里。** 用的是哪个 checkpoint 由 API 端点决定；预算、调度方式、tts_pad 虽然是
 Session 参数，Demo 也不发送，直接用端点的默认值：shell 在会话前查 `<端点>/v1/info`
