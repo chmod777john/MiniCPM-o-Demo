@@ -137,6 +137,47 @@ async def test_scale_up_clones_template_into_same_endpoint(tmp_path: Path) -> No
 
 
 @pytest.mark.asyncio
+async def test_scale_up_uses_current_template_not_worker_snapshot(tmp_path: Path) -> None:
+    """模板改过（例如修正了 checkpoint 目录）后，在失败的 Worker 上重新起要用新内容，不能原样重试旧快照。"""
+
+    jobs = FakeJobs()
+    plane = await _plane(tmp_path, jobs)
+    await plane.create_endpoint("alpha")
+    await plane.put_template(TEMPLATE)
+    first = await plane.add_worker("alpha", TEMPLATE.name)
+    await _settle()
+    jobs.statuses[first.job_id] = "Failed"
+    await plane.tick()
+    assert first.phase == WorkerPhase.FAILED
+
+    fixed = TEMPLATE.model_copy(update={"model_dir": "/abs/ckpt-fixed"})
+    await plane.put_template(fixed)
+    view = plane._worker_view(first, 0.0)
+    assert view["template_changes"] == [{"field": "model_dir", "worker": "/abs/ckpt", "current": "/abs/ckpt-fixed"}]
+
+    retry = await plane.scale_up(first.worker_id)
+    await _settle()
+    assert retry.template == fixed and first.template == TEMPLATE        # 旧 Worker 的快照保持原样
+    spec = WorkerJobSpec.model_validate_json((Path(retry.run_dir) / SPEC_FILE).read_text())
+    assert spec.template.model_dir == "/abs/ckpt-fixed"
+    assert plane._worker_view(retry, 0.0)["template_changes"] == []
+
+
+@pytest.mark.asyncio
+async def test_template_changes_ignores_note_and_reports_deleted_template(tmp_path: Path) -> None:
+    jobs = FakeJobs()
+    plane = await _plane(tmp_path, jobs)
+    worker_id = await _ready_worker(plane, jobs)
+    record = plane.state.workers[worker_id]
+    await plane.put_template(TEMPLATE.model_copy(update={"note": "只改备注"}))
+    assert plane._worker_view(record, 0.0)["template_changes"] == []     # 备注不影响运行，不算旧版
+    await plane.delete_template(TEMPLATE.name)
+    assert plane._worker_view(record, 0.0)["template_changes"] is None
+    with pytest.raises(ControlPlaneError, match="已删除"):
+        await plane.scale_up(worker_id)
+
+
+@pytest.mark.asyncio
 async def test_drain_waits_for_the_live_session(tmp_path: Path) -> None:
     jobs = FakeJobs()
     plane = await _plane(tmp_path, jobs)

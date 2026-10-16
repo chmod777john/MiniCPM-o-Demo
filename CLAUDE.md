@@ -32,6 +32,8 @@ deploy 资源池：每个 Worker 一个 cctl job（2×A100 TP2，scripts/o5_work
 - **起停 Worker、扩容、驱逐、强制关闭、换模型：在控制面板 `https://47.95.219.248:7029/control` 上操作**，
   不要手工 `cctl job create`。面板状态与 Worker 运行目录在 `/user/sunweiyue/runtime/o5_api_control_plane/`。
 - 两个 env 文件（含面板密码、subagent 的 Claude Code 配置）在 `/user/sunweiyue/runtime/o5_api_deploy/`，600 权限，不进仓库。
+- **新起的 Worker（添加 / 扩容 / 在失败 Worker 上重新起）一律按模板当前保存的内容**；Worker 记录里的模板快照只表示
+  它实际跑的是什么。改模板不影响在跑的 Worker，面板把它们标成「旧版模板」，要换就扩容新副本再驱逐旧的。
 - 重启 API Gateway 不影响在跑的 Worker job：重启后从面板状态与就绪文件把它们重新登记回端点（进行中的会话会断）。
 - 两个进程都用 `setsid nohup … &` 脱离会话启动，日志分别在 `o5_api_control_plane/gateway.log`、`o5_api_deploy/demo_server.log`。
 
