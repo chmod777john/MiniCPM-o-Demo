@@ -21,6 +21,36 @@ export function normalizeEndpoint(raw) {
   };
 }
 
+/**
+ * 把 API 服务公开状态（<服务地址>/overview/api/state）转成端点选项。
+ * @param {object} state overview 状态：{public_base, endpoints: [{name, model, available, queue_length, workers}]}
+ * @param {string} serviceBase 发现用的服务地址；状态里没有 public_base 时用它拼端点地址。
+ * @returns {{name: string, url: string, label: string, available: number}[]}
+ */
+export function endpointsFromOverview(state, serviceBase) {
+  const base = String(state?.public_base || serviceBase || '').replace(/\/+$/, '');
+  return (Array.isArray(state?.endpoints) ? state.endpoints : []).filter((e) => e?.name).map((e) => {
+    const workers = Array.isArray(e.workers) ? e.workers.length : 0;
+    const available = Number(e.available) || 0;
+    const load = workers ? `可用 ${available}/${workers}${e.queue_length ? ` · 排队 ${e.queue_length}` : ''}` : '没有 Worker';
+    return { name: e.name, url: `${base}/e/${e.name}`, label: `${e.name} · ${e.model || '未部署模型'} · ${load}`, available };
+  });
+}
+
+/** 合并自动发现的端点与 Demo 配置里写死的端点（按规范化地址去重，发现到的在前、信息更全）。 */
+export function mergeEndpointOptions(discovered, configured) {
+  const seen = new Set();
+  const out = [];
+  for (const option of [...discovered, ...configured.map((c) => ({ ...c, label: c.label || c.name, available: null }))]) {
+    let key;
+    try { key = normalizeEndpoint(option.url).base; } catch { continue; }
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ ...option, url: key });
+  }
+  return out;
+}
+
 function firstValue(value) {
   return Array.isArray(value) ? value[0] : value;
 }

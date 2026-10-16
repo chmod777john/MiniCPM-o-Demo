@@ -1169,6 +1169,12 @@ body.gallery-index { overflow: auto; }
   font-size: 12px;
   white-space: nowrap;
 }
+.api-endpoint-row select {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  padding: 3px 4px;
+}
 .api-endpoint-row input {
   flex: 1;
   min-width: 0;

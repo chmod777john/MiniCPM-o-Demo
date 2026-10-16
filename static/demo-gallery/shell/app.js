@@ -10,7 +10,9 @@ import { DEFAULT_PLAYBACK_DELAY_MS, resolvePlaybackDelayMs } from '../core/playb
 import { MIC_SPEECH_DB, openingSilenceWarning } from '../core/mic-policy.js';
 import { MODEL_IDENTITY_HINTS, MODEL_IDENTITY_ROWS } from '../core/model-identity.js';
 import { escapeHtml, textFromSteps } from '../core/ui-utils.js';
-import { normalizeEndpoint, summarizeEndpointInfo, summarizeSessionConfig } from '../core/api-endpoint.js';
+import {
+  endpointsFromOverview, mergeEndpointOptions, normalizeEndpoint, summarizeEndpointInfo, summarizeSessionConfig,
+} from '../core/api-endpoint.js';
 
 // 后端注入的当前 demo 元信息（入口模块 URL / API 前缀 / 标题）。
 const bootstrap = JSON.parse(document.getElementById('gallery-bootstrap').textContent);
@@ -111,7 +113,7 @@ const el = {
   nsStream: document.getElementById('nonSpokenStream'),
   kvMode: document.getElementById('kvMode'),
   apiEndpoint: document.getElementById('apiEndpoint'),
-  apiEndpointOptions: document.getElementById('apiEndpointOptions'),
+  apiEndpointSelect: document.getElementById('apiEndpointSelect'),
   applyApiEndpoint: document.getElementById('applyApiEndpoint'),
   apiEndpointStatus: document.getElementById('apiEndpointStatus'),
   kvCkpt: document.getElementById('kvCkpt'),
@@ -537,27 +539,70 @@ async function loadFcBoardDefaults() {
 
 // ---------------------------------------------------------------- API 端点
 
+// 下拉框 = 自动发现的端点（各 API 服务的公开状态 /overview/api/state）+ Demo 配置里写死的端点。
+// 控制面板上新建 / 删除端点后，页面下次刷新列表（打开时、之后每 30 秒）就能看到，Demo 不用改配置。
+
+const ENDPOINT_REFRESH_MS = 30000;
+let configuredEndpoints = [];
+let discoveryBases = [];
+let endpointOptions = [];
+let lastEndpointStatus = null;     // 最近一次查当前端点 /v1/info 的 HTTP 状态
+
 function setupApiEndpoints(defaults) {
-  const options = Array.isArray(defaults.api_endpoints) ? defaults.api_endpoints : [];
-  if (el.apiEndpointOptions) {
-    el.apiEndpointOptions.innerHTML = options.map((option) => (
-      `<option value="${escapeHtml(option.url)}">${escapeHtml(option.name)}</option>`
-    )).join('');
-  }
+  configuredEndpoints = Array.isArray(defaults.api_endpoints) ? defaults.api_endpoints : [];
+  discoveryBases = Array.isArray(defaults.api_discovery) ? defaults.api_discovery : [];
+  endpointOptions = mergeEndpointOptions([], configuredEndpoints);
+  renderEndpointOptions();
   const saved = globalThis.localStorage?.getItem(API_ENDPOINT_KEY);
-  const fallback = defaults.default_api_endpoint || options[0]?.url || '';
+  const fallback = defaults.default_api_endpoint || configuredEndpoints[0]?.url || '';
   const initial = saved || fallback;
   if (el.apiEndpoint) el.apiEndpoint.value = initial;
-  if (!initial) {
-    renderEndpoint('请填写 API 端点地址（https://<host>:<port>/e/<端点名>）');
-    return;
-  }
-  selectApiEndpoint(initial).then((status) => {
-    // 浏览器记住的端点已被删除（404）：回到 Demo 服务配置的默认端点，免得一直连一个不存在的地址。
-    if (status === 404 && saved && fallback && normalizeEndpoint(fallback).base !== normalizeEndpoint(saved).base) {
-      selectApiEndpoint(fallback);
+  const selected = initial
+    ? selectApiEndpoint(initial).then(async (status) => {
+      // 浏览器记住的端点已被删除（404）：回到 Demo 服务配置的默认端点，免得一直连一个不存在的地址。
+      if (status === 404 && saved && fallback && normalizeEndpoint(fallback).base !== normalizeEndpoint(saved).base) {
+        await selectApiEndpoint(fallback);
+      }
+    })
+    : Promise.resolve(renderEndpoint('请选择或填写 API 端点地址（https://<host>:<port>/e/<端点名>）'));
+  Promise.all([selected, discoverEndpoints()]).then(pickDiscoveredIfCurrentGone);
+  if (discoveryBases.length) setInterval(discoverEndpoints, ENDPOINT_REFRESH_MS);
+}
+
+/** 读各 API 服务的公开状态，刷新下拉框。查不到的服务（网络 / 自签证书未信任）跳过，不影响写死的端点。 */
+async function discoverEndpoints() {
+  const results = await Promise.all(discoveryBases.map(async (base) => {
+    try {
+      const response = await fetch(`${base}/overview/api/state`, { cache: 'no-store' });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      return endpointsFromOverview(await response.json(), base);
+    } catch (err) {
+      console.warn(`[gallery] 自动发现端点失败：${base}`, err);
+      return [];
     }
-  });
+  }));
+  endpointOptions = mergeEndpointOptions(results.flat(), configuredEndpoints);
+  renderEndpointOptions();
+}
+
+/** 当前端点不存在（没有任何可连的端点、或记住的和默认的都已删除）时，自动换到第一个有可用 Worker 的端点。 */
+function pickDiscoveredIfCurrentGone() {
+  if (apiEndpoint && lastEndpointStatus !== 404) return;
+  const next = endpointOptions.find((o) => o.available > 0) || endpointOptions.find((o) => o.available !== null);
+  if (next) selectApiEndpoint(next.url);
+}
+
+function renderEndpointOptions() {
+  const select = el.apiEndpointSelect;
+  if (!select || document.activeElement === select) return;      // 用户正在选时不重画
+  const current = apiEndpoint?.base || '';
+  const known = endpointOptions.some((o) => o.url === current);
+  select.innerHTML = [
+    ...endpointOptions.map((o) => `<option value="${escapeHtml(o.url)}">${escapeHtml(o.label)}</option>`),
+    known ? '' : `<option value="">${current ? `自定义：${escapeHtml(current)}` : '（未选择）'}</option>`,
+  ].join('');
+  select.value = known ? current : '';
+  select.title = select.selectedOptions[0]?.textContent || '';      // 侧栏窄，名字会被截断
 }
 
 /** 选中一个端点并查询 /v1/info；返回 HTTP 状态码（地址不合法或网络失败为 0）。 */
@@ -572,6 +617,12 @@ async function selectApiEndpoint(raw) {
   }
   globalThis.localStorage?.setItem(API_ENDPOINT_KEY, apiEndpoint.base);
   if (el.apiEndpoint) el.apiEndpoint.value = apiEndpoint.base;
+  renderEndpointOptions();
+  lastEndpointStatus = await queryEndpointInfo();
+  return lastEndpointStatus;
+}
+
+async function queryEndpointInfo() {
   el.kvMode.textContent = apiEndpoint.realtime;
   renderEndpoint('查询端点信息…');
   try {
@@ -611,6 +662,9 @@ function renderSessionConfig(summary) {
 }
 
 el.applyApiEndpoint?.addEventListener('click', () => selectApiEndpoint(el.apiEndpoint?.value));
+el.apiEndpointSelect?.addEventListener('change', () => {
+  if (el.apiEndpointSelect.value) selectApiEndpoint(el.apiEndpointSelect.value);
+});
 el.apiEndpoint?.addEventListener('change', () => selectApiEndpoint(el.apiEndpoint?.value));
 
 function applyDefaults(defaults) {

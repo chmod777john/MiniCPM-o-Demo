@@ -48,11 +48,15 @@
       <section class="panel settings-panel">
         <div class="panel-title">Session</div>
         <!-- Demo 与 API 是两个服务：这里选要连的 API 端点（https://<host>:<port>/e/<端点名>）。 -->
+        <!-- 下拉框的端点从 API 服务的公开状态自动发现（DEMO_API_DISCOVERY）；不在列表里的可在下面直接填地址。 -->
         <div class="api-endpoint-row">
-          <label for="apiEndpoint">API endpoint</label>
-          <input id="apiEndpoint" list="apiEndpointOptions" type="text" spellcheck="false"
+          <label for="apiEndpointSelect">API endpoint</label>
+          <select id="apiEndpointSelect"></select>
+        </div>
+        <div class="api-endpoint-row">
+          <label for="apiEndpoint">地址</label>
+          <input id="apiEndpoint" type="text" spellcheck="false"
                  placeholder="https://host:port/e/&lt;端点名&gt;" />
-          <datalist id="apiEndpointOptions"></datalist>
           <button id="applyApiEndpoint" class="ctrl-btn tiny" type="button">Use</button>
         </div>
         <p id="apiEndpointStatus" class="hint api-endpoint-status"></p>
