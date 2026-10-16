@@ -127,3 +127,27 @@ def test_prefill_eager_threshold_keeps_small_prefills_on_original_impl(
     monkeypatch.setenv("O5_PREFILL_EAGER_MIN_TOKENS", "0")
     with pytest.raises(ValueError, match="正整数"):
         prefill_eager_min_tokens()
+
+
+def test_prefill_experts_target_selects_long_prefill_implementation(monkeypatch: pytest.MonkeyPatch) -> None:
+    """长 prefill 切到的实现可配置：默认 eager；batched_mm 等于不切换（TP2 实时部署用）。"""
+
+    from modeling.o5.bounded_prefill import prefill_experts_target
+
+    config = SimpleNamespace(_experts_implementation="batched_mm")
+    model = _Experts(config)
+    monkeypatch.setenv("O5_PREFILL_EAGER_MIN_TOKENS", "256")
+    monkeypatch.delenv("O5_PREFILL_EXPERTS_IMPLEMENTATION", raising=False)
+    assert prefill_experts_target() == "eager"
+    monkeypatch.setenv("O5_PREFILL_EXPERTS_IMPLEMENTATION", "batched_mm")
+    with prefill_experts_implementation(model, 5000):
+        assert config._experts_implementation == "batched_mm"
+    monkeypatch.setenv("O5_PREFILL_EXPERTS_IMPLEMENTATION", "grouped_mm")
+    with prefill_experts_implementation(model, 5000):
+        assert config._experts_implementation == "grouped_mm"
+    with prefill_experts_implementation(model, 40):
+        assert config._experts_implementation == "batched_mm"
+    assert config._experts_implementation == "batched_mm"
+    monkeypatch.setenv("O5_PREFILL_EXPERTS_IMPLEMENTATION", "fast")
+    with pytest.raises(ValueError, match="只能是"):
+        prefill_experts_target()

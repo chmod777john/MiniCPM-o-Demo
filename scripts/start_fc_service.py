@@ -68,6 +68,9 @@ def main() -> None:
         # 以下用 batched_mm 的瞬时显存有限，开场长 system prefill 仍走 eager。显式设置的值优先；
         # 离线评测副本池不走这里，不受影响。见 modeling/o5/bounded_prefill.py。
         environment.setdefault("O5_PREFILL_EAGER_MIN_TOKENS", "256")
+        # 开场长 system prefill 也不切 eager：TP2 下 batched_mm 按 512 token 分块，瞬时显存每块 ~8 GiB，
+        # 建会话快约 2.8 倍（2×A100 实测 5021 token 22.1→7.7 秒，峰值显存 44→56 GiB，输出逐 Unit 一致）。
+        environment.setdefault("O5_PREFILL_EXPERTS_IMPLEMENTATION", "batched_mm")
         entry = project_dir / "scripts" / "start_o5_tp2_cctl_service.sh"
     else:
         entry = project_dir / "scripts" / "start_o5_cctl_service.sh"

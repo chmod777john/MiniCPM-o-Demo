@@ -26,6 +26,12 @@ decode（L=1）只有 32 MiB，速度最快；但一次 ~550 token 的 system pr
 小 prefill，全部切 eager 后单 Unit 处理从 1 秒内被拖到 1–2 秒，语音一卡一卡。小 prefill 的显存本来就小
 （每 token ~32 MiB，TP2 再减半），所以加 ``O5_PREFILL_EAGER_MIN_TOKENS``：只有 L 达到阈值的 prefill 才切 eager。
 默认 2（= 任何 L>1 都切，与引入时行为一致，离线单卡评测不受影响）；TP2 实时部署显式调大。
+
+⚠️ 代价二（2026-10-16 定位建会话慢）：开场的长 system prefill（Demo 带工具定义常见 2000–5000 token）仍达到阈值、
+走 eager，实测每秒只有 ~230 token，5000 token 建会话要 22 秒。切到哪种实现由 ``O5_PREFILL_EXPERTS_IMPLEMENTATION``
+决定：TP2 实时部署设为 ``batched_mm``（= 不切，仍按 512 token 分块，瞬时显存每块 ~8 GiB），2×A100 实测
+1889 / 5021 token 建会话 8.2→3.0 / 22.1→7.7 秒，峰值显存 44→56 GiB，15 个 Unit 输出与 eager 逐个一致。
+``grouped_mm`` 只在 H100（sm90）可用，A100 上 ``torch._grouped_mm`` 直接报错。默认仍是 eager（离线单卡不变）。
 """
 
 from __future__ import annotations
@@ -39,7 +45,8 @@ import torch
 DEFAULT_PREFILL_CHUNK_TOKENS = 512
 DEFAULT_PREFILL_EAGER_MIN_TOKENS = 2
 _MEMORY_HEAVY_EXPERTS_IMPLEMENTATIONS = frozenset({"batched_mm"})
-_PREFILL_EXPERTS_IMPLEMENTATION = "eager"
+_PREFILL_EXPERTS_IMPLEMENTATIONS = ("eager", "grouped_mm", "batched_mm")
+DEFAULT_PREFILL_EXPERTS_IMPLEMENTATION = "eager"
 _PREFILL_ATTENTION_IMPLEMENTATION = "sdpa"
 
 
@@ -79,6 +86,27 @@ def prefill_eager_min_tokens() -> int:
     value = int(raw)
     if value <= 0:
         raise ValueError(f"O5_PREFILL_EAGER_MIN_TOKENS 必须为正整数，实际为 {raw!r}")
+    return value
+
+
+def prefill_experts_target() -> str:
+    """返回长 prefill（达到 ``prefill_eager_min_tokens()``）期间要切到的 MoE 专家实现。
+
+    返回:
+        ``O5_PREFILL_EXPERTS_IMPLEMENTATION`` 的值，未设置时为 ``eager``（逐专家循环，显存最省、最慢）。
+        ``grouped_mm`` 按专家排序后一次分组矩阵乘，不复制专家权重（只支持 H100 / sm90，A100 上报错）；
+        ``batched_mm`` 等于不切换
+        （瞬时显存 = 分块 token 数 × 每 token 专家副本）。
+
+    异常:
+        ValueError: 取值不在上述三种之内。
+    """
+
+    value = os.environ.get("O5_PREFILL_EXPERTS_IMPLEMENTATION") or DEFAULT_PREFILL_EXPERTS_IMPLEMENTATION
+    if value not in _PREFILL_EXPERTS_IMPLEMENTATIONS:
+        raise ValueError(
+            f"O5_PREFILL_EXPERTS_IMPLEMENTATION 只能是 {'/'.join(_PREFILL_EXPERTS_IMPLEMENTATIONS)}，实际为 {value!r}"
+        )
     return value
 
 
@@ -135,12 +163,13 @@ def prefill_experts_implementation(
     if length is not None and length < prefill_eager_min_tokens():
         yield
         return
+    target = prefill_experts_target()
     switched: list[tuple[object, str]] = []
     for config in _experts_configs(model):
         current = getattr(config, "_experts_implementation", None)
-        if current in _MEMORY_HEAVY_EXPERTS_IMPLEMENTATIONS:
+        if current in _MEMORY_HEAVY_EXPERTS_IMPLEMENTATIONS and current != target:
             switched.append((config, current))
-            config._experts_implementation = _PREFILL_EXPERTS_IMPLEMENTATION
+            config._experts_implementation = target
     try:
         yield
     finally:
