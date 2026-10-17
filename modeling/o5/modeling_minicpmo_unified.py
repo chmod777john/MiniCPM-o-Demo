@@ -580,11 +580,13 @@ class MiniCPMO(BaseMiniCPMO):
         system_content: "O5SystemContent",
         tts_prompt_audio_path: str | None,
         generate_audio: bool | None,
+        input_mode: str = "audio",
     ) -> FcModelPrepareResult:
         return self._require_fc_duplex().prepare(
             system_content=system_content,
             tts_prompt_audio_path=tts_prompt_audio_path,
             generate_audio=generate_audio,
+            input_mode=input_mode,
         )
 
     def fc_duplex_streaming_prefill(
