@@ -16,11 +16,29 @@
       <a class="gallery-back" href="/demos" title="返回 Demo Gallery">←</a>
       <h1 id="pageTitle">{{DEMO_TITLE}}</h1>
       <span id="modeBadge" class="mode-tag">Realtime API</span>
+      <!-- 输入模式(协议 v5):开始会话前选定,会话中锁定。omni = 音频 + 每秒一帧摄像头画面。 -->
+      <div id="inputModeSwitch" class="input-mode-switch" role="radiogroup" aria-label="输入模式">
+        <button type="button" class="input-mode-btn" data-input-mode="audio" role="radio"
+                title="只发送麦克风音频">🎙 Audio</button>
+        <button type="button" class="input-mode-btn" data-input-mode="omni" role="radio"
+                title="音频 + 每秒一帧摄像头画面(需要摄像头权限)">📷 Omni</button>
+      </div>
     </div>
     <div class="header-right">
       <span id="wsState" class="ws-state">idle</span>
     </div>
   </header>
+
+  <!-- ============ 摄像头预览(omni 模式):悬浮小窗,所有 Demo 共用 ============ -->
+  <div id="cameraTile" class="camera-tile" hidden>
+    <video id="cameraPreview" autoplay muted playsinline></video>
+    <div class="camera-tile-bar">
+      <span id="cameraInfo" class="camera-info">摄像头</span>
+      <button id="cameraFlip" type="button" class="camera-btn" title="切换前后摄像头">⟲</button>
+      <button id="cameraMirror" type="button" class="camera-btn" title="镜像">⇋</button>
+      <button id="cameraCollapse" type="button" class="camera-btn" title="收起 / 展开">▾</button>
+    </div>
+  </div>
 
   <!-- ============ Main grid: left (1fr) | right (2fr) ============ -->
   <div class="main">

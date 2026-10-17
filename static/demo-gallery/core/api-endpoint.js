@@ -3,6 +3,15 @@
 // 端点地址的规范形态是 https://<host>:<port>/e/<端点名>；也接受直接粘贴的 realtime 地址
 // （wss://…/e/<端点名>/v1/realtime?mode=audio）或 info 地址，统一规范化。
 
+/** 端点会话的两种输入模式(协议 v5):audio 只送音频,omni 每秒再带一帧画面。 */
+export const INPUT_MODES = ['audio', 'omni'];
+
+/** 某个输入模式的 realtime 地址。 */
+export function realtimeUrl(endpoint, mode) {
+  if (!INPUT_MODES.includes(mode)) throw new Error(`未知输入模式:${mode}`);
+  return endpoint.realtime.replace(/\?mode=[a-z]+$/, `?mode=${mode}`);
+}
+
 /**
  * @param {string} raw 用户填写 / 配置里的端点地址。
  * @returns {{base: string, info: string, realtime: string}}

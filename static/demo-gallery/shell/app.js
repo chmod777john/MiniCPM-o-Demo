@@ -11,9 +11,10 @@ import { MIC_SPEECH_DB, openingSilenceWarning } from '../core/mic-policy.js';
 import { MODEL_IDENTITY_HINTS, MODEL_IDENTITY_ROWS } from '../core/model-identity.js';
 import { escapeHtml, textFromSteps } from '../core/ui-utils.js';
 import {
-  endpointsFromOverview, mergeEndpointOptions, normalizeEndpoint, parseApiService, summarizeEndpointInfo,
-  summarizeSessionConfig,
+  endpointsFromOverview, INPUT_MODES, mergeEndpointOptions, normalizeEndpoint, parseApiService, realtimeUrl,
+  summarizeEndpointInfo, summarizeSessionConfig,
 } from '../core/api-endpoint.js';
+import { CameraCapture } from '../core/camera-capture.js';
 
 // 后端注入的当前 demo 元信息（入口模块 URL / API 前缀 / 标题）。
 const bootstrap = JSON.parse(document.getElementById('gallery-bootstrap').textContent);
@@ -67,6 +68,10 @@ let apiEndpoint = null;
 let endpointInfo = null;
 const API_ENDPOINT_KEY = 'demo_gallery_api_endpoint';
 const API_SERVICE_KEY = 'demo_gallery_api_service';
+// 输入模式(协议 v5):audio 只发音频;omni 每个 Unit 再带一帧摄像头画面。会话前选定、会话中锁定。
+const INPUT_MODE_KEY = 'demo_gallery_input_mode';
+let inputMode = 'audio';
+let sessionInputMode = null;       // 本次会话实际用的模式(会话期间不随按钮变)
 // 音频路径 → v4 base64 音频对象（由 Demo 服务读本机文件）；同一页面内复用。
 const audioCache = new Map();
 let micLiveState = 'idle';
@@ -76,6 +81,13 @@ let speechDrainer = null;
 
 const el = {
   status: document.getElementById('status'),
+  inputModeSwitch: document.getElementById('inputModeSwitch'),
+  cameraTile: document.getElementById('cameraTile'),
+  cameraPreview: document.getElementById('cameraPreview'),
+  cameraInfo: document.getElementById('cameraInfo'),
+  cameraFlip: document.getElementById('cameraFlip'),
+  cameraMirror: document.getElementById('cameraMirror'),
+  cameraCollapse: document.getElementById('cameraCollapse'),
   micLevelBar: document.getElementById('micLevelBar'),
   micLevelText: document.getElementById('micLevelText'),
   statusLamp: document.getElementById('statusLamp'),
@@ -143,6 +155,10 @@ const el = {
 // non-spoken segment 的 3 轨审计视图（think / tool_call 渲染）
 const nsView = new NsSegmentView(el.nsStream);
 
+const camera = el.cameraPreview
+  ? new CameraCapture(el.cameraPreview, { onState: (text) => { if (el.cameraInfo) el.cameraInfo.textContent = text; } })
+  : null;
+
 // 动态 import 当前 demo 的入口模块 —— import 的副作用就是自注册（见 core/registry.js）。
 await import(bootstrap.entry);
 
@@ -176,7 +192,99 @@ function initPage() {
   setMicLiveState('idle');
   setStatus('Loading defaults…');
   scene.render();
+  initInputMode();
   loadFcBoardDefaults();
+}
+
+// ---------------------------------------------------------------- 输入模式(audio / omni)
+
+function initInputMode() {
+  if (!el.inputModeSwitch) return;
+  for (const button of el.inputModeSwitch.querySelectorAll('[data-input-mode]')) {
+    button.addEventListener('click', () => selectInputMode(button.dataset.inputMode));
+  }
+  el.cameraFlip?.addEventListener('click', () => camera?.flip().catch((err) => setStatus(err.message)));
+  el.cameraMirror?.addEventListener('click', () => camera?.toggleMirror());
+  el.cameraCollapse?.addEventListener('click', () => el.cameraTile.classList.toggle('collapsed'));
+  // 打开页面总是 Audio:不在页面一打开就弹相机权限,用户点 Omni 时才申请。
+  renderInputMode('audio');
+  // 上次用的是 Omni:按钮加个提示圈(状态栏会被随后的加载信息覆盖,不放那里)
+  if (globalThis.localStorage?.getItem(INPUT_MODE_KEY) === 'omni') {
+    el.inputModeSwitch.querySelector('[data-input-mode="omni"]')?.classList.add('last-used');
+  }
+}
+
+/** 会话开始前切换模式。切到 omni 立刻申请摄像头权限,拿不到就退回 audio 并说明原因。 */
+async function selectInputMode(mode) {
+  if (!INPUT_MODES.includes(mode) || sessionInputMode) return;      // 会话中锁定
+  if (mode === 'omni') {
+    if (!camera) { setStatus('这个页面没有摄像头组件'); return; }
+    el.cameraTile.hidden = false;
+    el.cameraInfo.textContent = '正在申请摄像头权限…';
+    try {
+      await camera.open();
+    } catch (err) {
+      camera.close();
+      el.cameraTile.hidden = true;
+      renderInputMode('audio');
+      setStatus(`无法使用 Omni:${err.message}`);
+      return;
+    }
+  } else {
+    camera?.close();
+    if (el.cameraTile) el.cameraTile.hidden = true;
+  }
+  renderInputMode(mode);
+  el.inputModeSwitch.querySelector('.last-used')?.classList.remove('last-used');
+  globalThis.localStorage?.setItem(INPUT_MODE_KEY, mode);
+  setStatus(mode === 'omni'
+    ? '已切到 Omni:开始后每秒随音频发送一帧摄像头画面'
+    : '已切到 Audio:只发送麦克风音频');
+}
+
+function renderInputMode(mode) {
+  inputMode = mode;
+  for (const button of el.inputModeSwitch?.querySelectorAll('[data-input-mode]') || []) {
+    const on = button.dataset.inputMode === mode;
+    button.classList.toggle('active', on);
+    button.setAttribute('aria-checked', on ? 'true' : 'false');
+  }
+  if (apiEndpoint && el.kvMode) el.kvMode.textContent = realtimeUrl(apiEndpoint, mode);
+  if (el.runFileReplay) {
+    el.runFileReplay.disabled = mode === 'omni';
+    el.runFileReplay.title = mode === 'omni' ? '文件回放只支持 Audio 模式(没有视频)' : '';
+  }
+}
+
+/** 会话开始:锁定模式;omni 还要锁定帧尺寸(整个会话视觉 token 数必须不变)。 */
+function lockInputMode() {
+  sessionInputMode = inputMode;
+  el.inputModeSwitch?.classList.add('locked');
+  for (const button of el.inputModeSwitch?.querySelectorAll('[data-input-mode]') || []) button.disabled = true;
+  if (sessionInputMode === 'omni') {
+    if (!camera?.active) throw new Error('Omni 模式需要先打开摄像头');
+    const size = camera.lockCaptureSize();
+    el.cameraTile.classList.add('sending');
+    el.cameraInfo.textContent = `发送中 ${size.width}×${size.height}`;
+  }
+  return sessionInputMode;
+}
+
+function unlockInputMode() {
+  sessionInputMode = null;
+  el.inputModeSwitch?.classList.remove('locked');
+  for (const button of el.inputModeSwitch?.querySelectorAll('[data-input-mode]') || []) button.disabled = false;
+  camera?.unlockCaptureSize();
+  el.cameraTile?.classList.remove('sending');
+  if (camera?.active && el.cameraInfo) el.cameraInfo.textContent = '摄像头就绪';
+}
+
+/** 本 Unit 要带的帧:omni 必须有,拿不到就结束会话(服务端也不兜底,这里提前给出清楚原因)。 */
+function frameForUnit() {
+  if (sessionInputMode !== 'omni') return null;
+  const frame = camera?.captureFrame();
+  if (!frame) throw new Error('摄像头这一秒没有画面,Omni 会话无法继续');
+  return frame;
 }
 
 function renderQuickSettingOptions() {
@@ -279,6 +387,13 @@ el.startMicLive.addEventListener('click', async () => {
     setStatus('Preparing session (reading reference audio)…');
     sessionInitPayload = await buildSessionInitPayload();
   } catch (err) {
+    setStatus(`Cannot start: ${err.message}`);
+    return;
+  }
+  try {
+    lockInputMode();
+  } catch (err) {
+    unlockInputMode();
     setStatus(`Cannot start: ${err.message}`);
     return;
   }
@@ -443,8 +558,9 @@ async function createConnectedClient(onControlEvent = null) {
     onStatus: setStatus,
   });
   if (!apiEndpoint) throw new Error('No API endpoint selected');
-  setStatus(`Connecting to ${apiEndpoint.realtime} …`);
-  await client.connect(apiEndpoint.realtime);
+  const url = realtimeUrl(apiEndpoint, sessionInputMode || inputMode);
+  setStatus(`Connecting to ${url} …`);
+  await client.connect(url);
   setWsState('connected');
   return client;
 }
@@ -473,7 +589,15 @@ async function resumeRealtimeSession(payload) {
 function createMicProvider(client) {
   return new LiveMicProvider({
     onChunk: (chunk) => {
-      client.appendAudio({ audioBase64: float32ToBase64(chunk), sampleRate: 16000 });
+      let videoFrame;
+      try {
+        videoFrame = frameForUnit();
+      } catch (err) {
+        setStatus(err.message);
+        stopMicLive('error');
+        return;
+      }
+      client.appendAudio({ audioBase64: float32ToBase64(chunk), sampleRate: 16000, videoFrame });
       sentChunkCount += 1;
       updateStats();
     },
@@ -517,9 +641,10 @@ async function buildSessionInitPayload() {
       ? { kind: 'audio', audio: await resolveAudio(segment.audio.file_path) }
       : segment);
   }
-  // 协议 v4：音频以 base64 上传；预算、调度、tts_pad、checkpoint profile 由端点上的模型决定，不发送。
+  // 协议 v5：音频以 base64 上传；输入模式由连接地址 ?mode= 决定(服务端写进 input_mode)；
+  // 预算、调度、tts_pad、checkpoint profile 由端点上的模型决定，不发送。
   const payload = {
-    protocol_version: '4',
+    protocol_version: '5',
     mode: 'full_duplex',
     fc_duplex: true,
     system: {
@@ -673,7 +798,7 @@ async function selectApiEndpoint(raw) {
 }
 
 async function queryEndpointInfo() {
-  el.kvMode.textContent = apiEndpoint.realtime;
+  el.kvMode.textContent = realtimeUrl(apiEndpoint, sessionInputMode || inputMode);
   renderEndpoint('查询端点信息…');
   try {
     const response = await fetch(apiEndpoint.info, { cache: 'no-store' });
@@ -877,7 +1002,9 @@ function applyApiEvent(event) {
     case 'session.closed':
       setWsState('closed');
       releaseMicLive('closed');
-      setStatus(`Session closed: ${event.reason || 'closed'}`);
+      setStatus(event.reason === 'input_mode_error'
+        ? `会话结束:输入与模式不符 —— ${event.diagnostic?.message || ''}`
+        : `Session closed: ${event.reason || 'closed'}`);
       return;
     case 'response.unit.started':
       scene.onUnitStarted(event);
@@ -1074,6 +1201,7 @@ function stopMicLive(finalState = 'stopped') {
   }
   setMicLiveState(finalState);
   setWsState('closed');
+  unlockInputMode();
 }
 
 function releaseMicLive(finalState = 'closed') {
@@ -1083,6 +1211,7 @@ function releaseMicLive(finalState = 'closed') {
   }
   liveClient = null;
   setMicLiveState(finalState);
+  unlockInputMode();
 }
 
 function clearViews() {

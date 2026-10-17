@@ -95,20 +95,23 @@ export class FcRealtimeClient {
     };
   }
 
-  appendAudio({ audioBase64, sampleRate = 16000, inputId = null }) {
+  /**
+   * 发一个 Unit 的用户输入。omni 会话必须带恰好一帧(videoFrame,JPEG base64),audio 会话不能带;
+   * 服务端不兜底,不符会以 input_mode_error 结束会话。
+   */
+  appendAudio({ audioBase64, sampleRate = 16000, inputId = null, videoFrame = null }) {
     if (!this.ready) {
       throw new Error('Session is not ready for audio input');
     }
     const resolvedInputId = inputId || `input_${String(this._inputSeq).padStart(6, '0')}`;
     this._inputSeq += 1;
-    this._send({
-      type: 'input.append',
-      input: {
-        input_id: resolvedInputId,
-        audio_base64: audioBase64,
-        sample_rate: sampleRate,
-      },
-    });
+    const input = {
+      input_id: resolvedInputId,
+      audio_base64: audioBase64,
+      sample_rate: sampleRate,
+    };
+    if (videoFrame) input.video_frames = [videoFrame];
+    this._send({ type: 'input.append', input });
   }
 
   sendToolResult({ toolCallId, content }) {
