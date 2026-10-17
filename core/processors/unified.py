@@ -2160,6 +2160,7 @@ class FcDuplexView:
             system_content=system_content,
             tts_prompt_audio_path=tts_prompt_audio_path,
             generate_audio=request.generate_audio,
+            input_mode=request.input_mode,
         )
         self._protocol_tokenizer = None
         self._stream_seq = 0

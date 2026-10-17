@@ -397,6 +397,7 @@ class PyTorchBackend:
         tts_prompt_audio: FcAudioPathInput | None,
         generate_audio: bool,
         fixed_tool_call_ids: list[str] | None,
+        input_mode: str = "audio",
     ) -> FcDuplexPrepareResult:
         """按 v3 canonical contract 初始化 FC Duplex View。
 
@@ -405,6 +406,7 @@ class PyTorchBackend:
             tts_prompt_audio: 独立的 TTS 提示音频路径输入。
             generate_audio: 是否生成 spoken waveform。
             fixed_tool_call_ids: 评测专用的确定性内部工具调用 ID；None 使用默认生成器。
+            input_mode: ``audio`` 或 ``omni``(每个 Unit 必须带一帧视频)。
 
         返回:
             FC Duplex View 的初始化结果。
@@ -423,6 +425,7 @@ class PyTorchBackend:
                 system=system,
                 tts_prompt_audio=tts_prompt_audio,
                 generate_audio=generate_audio,
+                input_mode=input_mode,
             ),
             tool_call_id_generator=tool_call_id_generator,
         )

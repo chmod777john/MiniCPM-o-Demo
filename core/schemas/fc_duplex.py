@@ -214,6 +214,13 @@ class FcDuplexPrepareRequest(BaseModel):
     system: FcSystemContentInput
     tts_prompt_audio: FcAudioPathInput | None = None
     generate_audio: bool = False
+    input_mode: Literal["audio", "omni"] = Field(
+        "audio",
+        description=(
+            "会话输入模式。audio:每个 Unit 只有音频,不得带视频帧;omni:每个 Unit 必须恰好带一帧"
+            "user_video,按 SDK user_video slot 喂入并使用 canvas_v6 位置。会话中不可切换。"
+        ),
+    )
 
     @model_validator(mode="after")
     def validate_tts_prompt_audio(self) -> "FcDuplexPrepareRequest":

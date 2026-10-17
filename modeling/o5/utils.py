@@ -1478,6 +1478,9 @@ class StreamDecoder:
         else:
             self.cache = None
         self._static_pos = 0
+        # canvas_v6 位置(omni 会话喂过 user_video 帧之后才启用;纯音频会话恒为 None,
+        # 位置走原来的一维路径,见 canvas_stream.py)
+        self._canvas = None
         self.generated_tokens = []
         self.generated_special_tokens = []
         self.embeds = None
@@ -2286,13 +2289,40 @@ class StreamDecoder:
             self.cache = self._llm_runner.cache
         return self._llm_runner
 
+    def _canvas_positions(self, L: int, canvas_image_grid, device) -> Optional[torch.Tensor]:
+        """本次 feed 的 canvas_v6 位置 ``[4, 1, L]``;会话还没出现过图像时返回 None。
+
+        第一次喂图像组时开启 canvas:此前的 token 都是文本,三路位置等于槽位,所以游标
+        从当前 cache 长度起算即与训练侧整条序列的结果一致。
+        """
+
+        if canvas_image_grid is None and self._canvas is None:
+            return None
+        if self._canvas is None:
+            from .canvas_stream import CanvasStreamPositions
+
+            self._canvas = CanvasStreamPositions()
+            start = self.get_cache_length()
+            self._canvas.slot = start
+            self._canvas.cursor = start
+        if self._canvas.slot != self.get_cache_length():
+            raise RuntimeError(
+                f"canvas 槽位 {self._canvas.slot} 与 KV cache 长度 {self.get_cache_length()} 不一致"
+            )
+        if canvas_image_grid is None:
+            return self._canvas.text(L, device=device)
+        return self._canvas.image(L - 2, canvas_image_grid, device=device)
+
     @torch.no_grad()
-    def feed(self, embeds: torch.Tensor, return_logits: bool = False):
+    def feed(self, embeds: torch.Tensor, return_logits: bool = False, canvas_image_grid=None):
         """
         embeds : [L, H]   —— new embedding sequence fed into model at once
+        canvas_image_grid: 本次喂的是一整个 user_video 帧组 ``<image> + N 视觉 + </image>`` 时传
+            该帧的 LLM 网格 ``(h, w)``(``h × w == L - 2``);普通 token 不传。
         """
         L = embeds.size(0)
         device = embeds.device
+        canvas_pos = self._canvas_positions(L, canvas_image_grid, device)
 
         from .opt_flags import OPT as _OPT
         if bool(_OPT.get("llm_graph")):
@@ -2301,9 +2331,9 @@ class StreamDecoder:
             # Session 超过 StaticCache 上限时 runner 直接报错（不静默复位丢上下文）。
             _r._check_capacity(_pos + L)
             if L == 1:
-                _h = _r.decode(embeds.unsqueeze(0), _pos)
+                _h = _r.decode(embeds.unsqueeze(0), _pos, canvas_position_ids=canvas_pos)
             else:
-                _h = _r.prefill(embeds.unsqueeze(0), _pos)
+                _h = _r.prefill(embeds.unsqueeze(0), _pos, canvas_position_ids=canvas_pos)
             self._static_pos = _pos + L
             self.cache = _r.cache
             if return_logits:
@@ -2313,6 +2343,8 @@ class StreamDecoder:
                 return logits, _h.clone()
             return
         if bool(_OPT.get("llm_static")):
+            if canvas_pos is not None:
+                raise NotImplementedError("llm_static 路径不支持 user_video(canvas 位置);请用 llm_graph 或动态 cache")
             from transformers.cache_utils import StaticCache
             if self.cache is None or not isinstance(self.cache, StaticCache):
                 self.cache = StaticCache(config=self.m.config, max_cache_len=8192)
@@ -2341,10 +2373,13 @@ class StreamDecoder:
         hidden_chunks = []
         with prefill_experts_implementation(self.m, L) if L > 1 else contextlib.nullcontext():
             for chunk_start, chunk_end in iter_prefill_chunks(L):
-                past_len = self.get_cache_length()
-                pos_ids = torch.arange(
-                    past_len, past_len + (chunk_end - chunk_start), device=device
-                ).unsqueeze(0)
+                if canvas_pos is not None:
+                    pos_ids = canvas_pos[:, :, chunk_start:chunk_end]
+                else:
+                    past_len = self.get_cache_length()
+                    pos_ids = torch.arange(
+                        past_len, past_len + (chunk_end - chunk_start), device=device
+                    ).unsqueeze(0)
                 out = self.m.model(
                     inputs_embeds=embeds[chunk_start:chunk_end].unsqueeze(0),  # [1, l, H]
                     position_ids=pos_ids,

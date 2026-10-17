@@ -19,6 +19,12 @@ Same technique as TTSGraphRunner, adapted for the HYBRID cache and a PERSISTENT 
 Numerically: same kernels as the llm_static StaticCache path (gate-verified argmax-identical on real
 omni context), just replayed. Position/mask are updated in-place before each replay (graph reads
 current tensor values).
+
+Positions are always the 4-row ``[text, T, H, W]`` form the Qwen3.5 backbone accepts. For audio-only
+sessions all four rows equal the cache slot (identical to the former 1-D positions). Once an omni
+session has fed a user_video frame, T/H/W follow the canvas_v6 cursor (``canvas_stream.py``) and
+diverge from the slot; the caller then passes them explicitly. Capturing the graph against a
+``[4, 1, 1]`` position buffer lets the same graph serve both cases.
 """
 import torch
 from transformers.cache_utils import StaticCache
@@ -99,13 +105,15 @@ class LLMGraphRunner:
                 meta, tensor_payload = payload
                 tensor = self._empty_like(tensor_payload)
                 self._broadcast_tensor(tensor)
-                self._prefill_local(tensor, int(meta["start_pos"]))
+                positions = self._recv_positions(meta)
+                self._prefill_local(tensor, int(meta["start_pos"]), positions)
                 continue
             if method == "graph_decode":
                 meta, tensor_payload = payload
                 tensor = self._empty_like(tensor_payload)
                 self._broadcast_tensor(tensor)
-                self._decode_local(tensor, int(meta["pos"]))
+                positions = self._recv_positions(meta)
+                self._decode_local(tensor, int(meta["pos"]), positions)
                 continue
             raise RuntimeError(f"unknown graph worker method: {method}")
 
@@ -126,7 +134,16 @@ class LLMGraphRunner:
         dist.broadcast(tensor, src=0)
         return tensor
 
-    def _driver_graph_call(self, method, tensor=None, **meta):
+    def _recv_positions(self, meta):
+        """worker 侧:driver 带了 canvas 位置就再收一个张量,否则为 None。"""
+        shape = meta.get("positions_shape")
+        if shape is None:
+            return None
+        positions = torch.empty(tuple(shape), dtype=torch.long, device=self.device)
+        self._broadcast_tensor(positions)
+        return positions
+
+    def _driver_graph_call(self, method, tensor=None, positions=None, **meta):
         if not self._dist_enabled or not self._dist_driver:
             return _NO_DIST_CALL
         with self.distributed._call_lock:
@@ -134,13 +151,18 @@ class LLMGraphRunner:
                 self.distributed._broadcast_object((method, None))
                 self._reset_local()
                 return True
+            if positions is not None:
+                positions = positions.to(device=self.device, dtype=torch.long).contiguous()
+                meta["positions_shape"] = tuple(positions.shape)
             payload = (meta, self._tensor_payload(tensor))
             self.distributed._broadcast_object((method, payload))
             self._broadcast_tensor(tensor)
+            if positions is not None:
+                self._broadcast_tensor(positions)
             if method == "graph_prefill":
-                return self._prefill_local(tensor, int(meta["start_pos"]))
+                return self._prefill_local(tensor, int(meta["start_pos"]), positions)
             if method == "graph_decode":
-                return self._decode_local(tensor, int(meta["pos"]))
+                return self._decode_local(tensor, int(meta["pos"]), positions)
             raise RuntimeError(f"unknown graph driver method: {method}")
 
     def _init(self, H):
@@ -155,7 +177,7 @@ class LLMGraphRunner:
         with torch.inference_mode():
             self.cache = StaticCache(config=self.cfg, max_cache_len=self.max_cache_len)
             self._emb = torch.zeros(1, 1, H, device=self.device, dtype=self.dtype)
-            self._pos = torch.zeros(1, 1, dtype=torch.long, device=self.device)
+            self._pos = torch.zeros(4, 1, 1, dtype=torch.long, device=self.device)
             self._cpos = torch.zeros(1, dtype=torch.long, device=self.device)
             self._mask = torch.full((1, 1, 1, self.max_cache_len), self.neg, dtype=self.dtype, device=self.device)
 
@@ -220,11 +242,12 @@ class LLMGraphRunner:
                 f"{self.max_cache_len}; raise O5_LLM_CACHE for this deployment"
             )
 
-    def _prefill_local(self, inputs_embeds, start_pos):
+    def _prefill_local(self, inputs_embeds, start_pos, positions=None):
         """Variable-length prefill via the non-graph StaticCache path. inputs_embeds: [1,L,H].
 
         Long prefills are fed in bounded chunks with a memory-safe MoE implementation
         (see bounded_prefill.py); the captured decode graph is unaffected.
+        ``positions``: canvas ``[4, 1, L]``; None means plain slot positions.
         """
         from .bounded_prefill import (
             iter_prefill_chunks,
@@ -243,9 +266,11 @@ class LLMGraphRunner:
                     cpos = torch.arange(pos0, pos1, device=self.device)
                     mask2d = torch.zeros(1, self.max_cache_len, dtype=torch.long, device=self.device)
                     mask2d[:, :pos1] = 1
+                    pos_ids = (cpos.unsqueeze(0) if positions is None
+                               else positions[:, :, chunk_start:chunk_end])
                     hidden_chunks.append(self.model(
                         inputs_embeds=inputs_embeds[:, chunk_start:chunk_end, :],
-                        position_ids=cpos.unsqueeze(0), cache_position=cpos,
+                        position_ids=pos_ids, cache_position=cpos,
                         attention_mask=mask2d, past_key_values=self.cache,
                         use_cache=True, return_dict=True).last_hidden_state)
             h = hidden_chunks[0] if len(hidden_chunks) == 1 else torch.cat(hidden_chunks, dim=1)
@@ -253,26 +278,34 @@ class LLMGraphRunner:
             self._mask[..., :start_pos + L] = 0.0
         return h
 
-    def prefill(self, inputs_embeds, start_pos):
-        out = self._driver_graph_call("graph_prefill", inputs_embeds, start_pos=int(start_pos))
+    def prefill(self, inputs_embeds, start_pos, canvas_position_ids=None):
+        out = self._driver_graph_call("graph_prefill", inputs_embeds, canvas_position_ids,
+                                      start_pos=int(start_pos))
         if out is not _NO_DIST_CALL:
             return out
-        return self._prefill_local(inputs_embeds, start_pos)
+        return self._prefill_local(inputs_embeds, start_pos, canvas_position_ids)
 
-    def _decode_local(self, inputs_embeds, pos):
-        """Single-token decode at absolute position `pos` (== cache length before this token)."""
+    def _decode_local(self, inputs_embeds, pos, positions=None):
+        """Single-token decode at cache slot `pos` (== cache length before this token).
+
+        ``positions``: canvas ``[4, 1, 1]``; None means all four rows equal ``pos``.
+        """
         with torch.inference_mode():
             self._check_capacity(pos + 1)
             self._emb.copy_(inputs_embeds)
-            self._pos.fill_(pos); self._cpos.fill_(pos)
+            if positions is None:
+                self._pos.fill_(pos)
+            else:
+                self._pos.copy_(positions)
+            self._cpos.fill_(pos)
             self._mask[..., pos] = 0.0
             if self._failed or not self._captured:
                 return self._fwd()
             self.graph.replay()
             return self._hidden
 
-    def decode(self, inputs_embeds, pos):
-        out = self._driver_graph_call("graph_decode", inputs_embeds, pos=int(pos))
+    def decode(self, inputs_embeds, pos, canvas_position_ids=None):
+        out = self._driver_graph_call("graph_decode", inputs_embeds, canvas_position_ids, pos=int(pos))
         if out is not _NO_DIST_CALL:
             return out
-        return self._decode_local(inputs_embeds, pos)
+        return self._decode_local(inputs_embeds, pos, canvas_position_ids)
