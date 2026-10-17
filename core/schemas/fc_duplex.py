@@ -309,6 +309,10 @@ class FcDuplexPrefillResult(BaseModel):
     cost_apm_ms: Optional[float] = Field(
         None, description="Wall-clock of APM audio encoding alone, excluding the feed"
     )
+    cost_video_ms: Optional[float] = Field(
+        None, description="omni:本 Unit 视频帧的预处理 + 视觉编码 + feed 墙钟;audio 会话为 None"
+    )
+    n_video_tokens: int = Field(0, description="omni:本 Unit 视频帧的视觉 token 数;audio 会话为 0")
 
 
 class FcSpokenGenerateRequest(BaseModel):

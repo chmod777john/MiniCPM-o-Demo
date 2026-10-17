@@ -707,6 +707,7 @@ class FcDuplexSessionRuntime:
         self._accumulate_unit_cost("prefill", getattr(prefill, "cost_prefill_ms", None))
         self._accumulate_unit_cost("audio", getattr(prefill, "cost_audio_ms", None))
         self._accumulate_unit_cost("apm", getattr(prefill, "cost_apm_ms", None))
+        self._accumulate_unit_cost("video", getattr(prefill, "cost_video_ms", None))
         await self._emit_unit_input_events(
             prefill,
             unit_index=unit_index,
