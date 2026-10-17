@@ -16,7 +16,7 @@ Demo 是模型能力的测量仪器，不是补偿器。**禁止**为了展示�
 | | API | Demo |
 |---|---|---|
 | 代码 | `gateway.py`、`gateway_modules/`、`control_plane/`、`worker.py`、`py_backend/`、`core/`、`modeling/`、`clients/` | `demo_server.py`、`demo_gallery/`、`demos/`、`static/demo-gallery/` |
-| 协议 | 对外只认 **v4**（`docs/fc-duplex/semantic-realtime-api-v4.md`）：音频只收 base64 WAV，不收服务端路径；预算、调度、tts_pad 是 Session 参数，Worker 模板只给默认值（`/v1/info` 的 `model.session_defaults`） | 页面上选 API 端点，按 v4 直连；会话前查 `<端点>/v1/info`；音频路径由 Demo 服务读成 base64 |
+| 协议 | 对外现行 **v5**（`docs/fc-duplex/semantic-realtime-api-v5.md`）：端点会话分 **audio**（`?mode=audio`，不带帧）与 **omni**（`?mode=omni`，每个 Unit 恰好一帧 JPEG，按 SDK user_video slot + canvas_v6 位置喂入），帧数不符直接以 `input_mode_error` 结束、不兜底；音频只收 base64 WAV，不收服务端路径；预算、调度、tts_pad 是 Session 参数，Worker 模板只给默认值（`/v1/info` 的 `model.session_defaults`）。v4 客户端照常可用，等同 audio | 页面上选 API 端点与 audio/omni 模式，按 v5 直连；会话前查 `<端点>/v1/info`；音频路径由 Demo 服务读成 base64 |
 | v3 | 只在评测副本池里保留（`scripts/run_o5_replica_pool.py` 设 `FC_API_ACCEPT_V3=1`，评测锁步客户端不动） | — |
 
 ## 部署

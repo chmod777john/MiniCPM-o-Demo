@@ -23,7 +23,7 @@ from control_plane.manager import ControlPlane, ControlPlaneError
 from control_plane.specs import WorkerTemplate
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
-API_DOC = Path(__file__).resolve().parents[1] / "docs" / "fc-duplex" / "semantic-realtime-api-v4.md"
+API_DOC = Path(__file__).resolve().parents[1] / "docs" / "fc-duplex" / "semantic-realtime-api-v5.md"
 COOKIE = "o5_control"
 COOKIE_TTL_S = 7 * 24 * 3600
 _SIGNING_KEY = secrets.token_bytes(32)
@@ -237,7 +237,7 @@ docs_router = APIRouter()
 
 _DOC_PAGE = """<!doctype html><html lang="zh"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>MiniCPM-o 5 Realtime API v4</title>
+<title>MiniCPM-o 5 Realtime API v5</title>
 <style>
 body{max-width:920px;margin:2em auto;padding:0 1em;font:15px/1.7 -apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;color:#1f2328}
 pre{background:#f6f8fa;padding:12px;border-radius:6px;overflow:auto;font-size:13px;line-height:1.5}

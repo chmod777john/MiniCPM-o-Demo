@@ -3,7 +3,7 @@
 # Demo Gallery：怎么新加 / 修改一个 Demo
 
 **Demo 与 API 是两件事。** Demo 服务（`demo_server.py`）只有页面与各 Demo 自己的后端，不加载模型；
-页面上选一个 API 端点，浏览器按协议 v4 直接连它（`docs/fc-duplex/semantic-realtime-api-v4.md`）。
+页面上选一个 API 端点与 audio / omni 模式，浏览器按协议 v5 直接连它（`docs/fc-duplex/semantic-realtime-api-v5.md`）。
 Demo 侧代码**不许 import API 侧任何模块**（`core/`、`py_backend/`、`gateway*`、`control_plane/`…），
 有守卫测试 `tests/test_api_demo_boundary.py`。
 

@@ -5,8 +5,8 @@
 > 这一条不是约定，是测试：`tests/test_gallery_pluggability.py` 会按本文的步骤逐字复制一遍脚手架并挂载验证。
 
 **Demo 与 API 是两个服务。** Demo 服务（`demo_server.py`）只提供页面和各 Demo 自己的后端，
-不加载模型；页面上选一个 API 端点（`https://<host>:<port>/e/<端点名>`），浏览器直接按协议 v4
-（见 `docs/fc-duplex/semantic-realtime-api-v4.md`）连那个端点。Demo 侧代码不许 import API 侧任何模块
+不加载模型；页面上选一个 API 端点（`https://<host>:<port>/e/<端点名>`）与 audio / omni 模式，浏览器直接按协议 v5
+（见 `docs/fc-duplex/semantic-realtime-api-v5.md`）连那个端点。Demo 侧代码不许 import API 侧任何模块
 （`tests/test_api_demo_boundary.py`）。
 
 上线后的入口（都在 Demo 服务上）：

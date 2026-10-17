@@ -106,7 +106,7 @@ async def test_runtime_rejects_non_v3_and_legacy_prepare_fields() -> None:
         backend=object(),
         send=send,
     )
-    with pytest.raises(RuntimeError, match="protocol_version='4'"):
+    with pytest.raises(RuntimeError, match="protocol_version='5'"):
         await runtime.prepare({"protocol_version": "fc-duplex-semantic-v2"})
 
     with pytest.raises(RuntimeError, match="legacy prepare fields.*system_prompt"):

@@ -126,7 +126,7 @@ async def test_v3_is_rejected_unless_explicitly_enabled(monkeypatch, tmp_path: P
     wav.write_bytes(_wav_bytes())
     v3 = _payload(protocol_version="3", generate_audio=True,
                   tts_prompt_audio={"source": "path", "file_path": str(wav)})
-    with pytest.raises(RuntimeError, match="protocol_version='4'"):
+    with pytest.raises(RuntimeError, match="protocol_version='5'"):
         await _runtime(_Backend()).prepare(v3)
 
     monkeypatch.setenv("FC_API_ACCEPT_V3", "1")         # 评测副本池

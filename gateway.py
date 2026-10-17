@@ -50,7 +50,7 @@ from gateway_modules.models import (
 from gateway_modules.worker_pool import WorkerPool, WorkerConnection
 from gateway_modules.endpoints import DEFAULT_ENDPOINT, EndpointError, EndpointRegistry
 from gateway_modules.live_sessions import LiveSession, LiveSessionRegistry
-from runtime.protocol import API_PROTOCOL_VERSION
+from runtime.protocol import API_INPUT_MODES, API_PROTOCOL_VERSION
 from control_plane.routes import docs_router as control_docs_router
 from control_plane.routes import public_router as control_public_router
 from control_plane.routes import router as control_router
@@ -491,8 +491,13 @@ async def _api_worker_passthrough_ws(
     max_duration_s: Optional[float] = None,
     pool: Optional[WorkerPool] = None,
     endpoint_name: str = DEFAULT_ENDPOINT,
+    input_mode: Optional[str] = None,
 ) -> None:
-    """Queue, assign a worker, then pass API-shaped events through unchanged."""
+    """Queue, assign a worker, then pass API-shaped events through unchanged.
+
+    ``input_mode``(v5 端点会话)不为 None 时,把它写进客户端 ``session.init`` 的
+    ``payload.input_mode`` 再转发;客户端自己写了且与 URL 不一致则直接拒绝。其它帧原样转发。
+    """
 
     pool = pool or worker_pool
     if pool is None:
@@ -737,6 +742,8 @@ async def _api_worker_passthrough_ws(
                 if item is None:
                     return                      # 客户端断开
                 recv, raw = item
+                if input_mode is not None:
+                    raw = _stamp_input_mode(raw, input_mode)
                 sent: Optional[float] = None
                 try:
                     await worker_ws.send(raw)
@@ -1637,13 +1644,22 @@ async def endpoint_realtime_ws(ws: WebSocket, endpoint: str):
     if pool is None:
         await ws.close(code=4404, reason=f"Unknown endpoint: {endpoint}")
         return
-    await _realtime_entry(ws, pool=pool, endpoint_name=endpoint, allow_chat=False)
+    # v5:端点只有两种会话 —— audio(只送音频)与 omni(每个 Unit 必须带一帧视频)。
+    # 模式由 URL 决定,网关把它写进 session.init.payload.input_mode 交给 Worker 强校验。
+    mode = ws.query_params.get("mode")
+    if mode not in API_INPUT_MODES:
+        await ws.close(code=1008, reason=f"mode 必须是 {'/'.join(API_INPUT_MODES)} 之一,收到 {mode!r}")
+        return
+    await _realtime_entry(ws, pool=pool, endpoint_name=endpoint, allow_chat=False, input_mode=mode)
 
 
 async def _realtime_entry(
     ws: WebSocket, *, pool: Optional[WorkerPool], endpoint_name: str, allow_chat: bool,
+    input_mode: Optional[str] = None,
 ) -> None:
-    mode = ws.query_params.get("mode", "video")
+    """``input_mode`` 只有端点路由(v5)会给:audio / omni;default 端点的旧页面仍按 mode=video|audio 走。"""
+
+    mode = input_mode or ws.query_params.get("mode", "video")
 
     if mode == "chat" and allow_chat:
         if not app_registry.is_enabled("turnbased"):
@@ -1661,7 +1677,7 @@ async def _realtime_entry(
         )
         return
 
-    if mode not in {"video", "audio"}:
+    if mode not in {"video", "audio", "omni"}:
         await ws.close(code=1008, reason=f"Unsupported realtime mode: {mode}")
         return
 
@@ -1669,12 +1685,12 @@ async def _realtime_entry(
     # inference is still being optimized. Keep the API session watchdog, but
     # make the total session duration 4x the original limits to avoid ending
     # otherwise healthy long-running manual tests.
-    max_duration_s: Optional[float] = 1200 if mode == "video" else 2400
+    max_duration_s: Optional[float] = 1200 if mode in ("video", "omni") else 2400
     # 离线评测按 Unit 锁步驱动，墙钟时长与对话时长无关；副本池部署用 0 关闭该看门狗。
     override = os.environ.get("FC_API_SESSION_MAX_DURATION_S")
     if override is not None:
         max_duration_s = float(override) or None
-    request_type = "omni_duplex" if mode == "video" else "audio_duplex"
+    request_type = "omni_duplex" if mode in ("video", "omni") else "audio_duplex"
 
     await _api_worker_passthrough_ws(
         ws,
@@ -1686,6 +1702,7 @@ async def _realtime_entry(
         max_duration_s=max_duration_s,
         pool=pool,
         endpoint_name=endpoint_name,
+        input_mode=input_mode,
     )
 
 
@@ -1701,6 +1718,32 @@ async def endpoint_info(endpoint: str):
 
 
 _PUBLIC_CORS_HEADERS = {"Access-Control-Allow-Origin": "*", "Cache-Control": "no-store"}
+
+
+def _stamp_input_mode(raw: Any, input_mode: str) -> Any:
+    """给 ``session.init`` 写上 URL 决定的 ``payload.input_mode``;其它帧原样返回。
+
+    客户端没写:补上。写了且一致:原样。写了但不一致:写成 ``input_mode_conflict``,
+    由 Worker 走统一的 ``session.closed`` 报错路径返回给客户端,网关不另起一套关闭逻辑。
+    """
+
+    if not isinstance(raw, str) or '"session.init"' not in raw:
+        return raw
+    try:
+        frame = json.loads(raw)
+    except ValueError:
+        return raw
+    if not isinstance(frame, dict) or frame.get("type") != "session.init":
+        return raw
+    payload = frame.get("payload")
+    if not isinstance(payload, dict):
+        return raw
+    declared = payload.get("input_mode")
+    if declared is not None and declared != input_mode:
+        payload = dict(payload, input_mode_conflict={"url": input_mode, "payload": declared})
+    else:
+        payload = dict(payload, input_mode=input_mode)
+    return json.dumps(dict(frame, payload=payload), ensure_ascii=False)
 
 
 def build_endpoint_info(endpoint: str, pool: WorkerPool) -> Dict[str, Any]:
@@ -1724,6 +1767,7 @@ def build_endpoint_info(endpoint: str, pool: WorkerPool) -> Dict[str, Any]:
         "endpoint": endpoint,
         "protocol_version": API_PROTOCOL_VERSION,
         "realtime_path": f"/e/{endpoint}/v1/realtime?mode=audio",
+        "realtime_paths": {m: f"/e/{endpoint}/v1/realtime?mode={m}" for m in API_INPUT_MODES},
         "workers": workers,
         "available_workers": pool.idle_count,
         "queue_length": pool.queue_length,

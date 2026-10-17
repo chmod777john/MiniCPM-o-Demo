@@ -1,5 +1,8 @@
 # MiniCPM-o 5 Realtime API v4
 
+> ⚠️ **已被 v5 取代**（见 `semantic-realtime-api-v5.md`）：v5 新增 omni 模式（每秒一帧画面）。
+> 按本文发 `protocol_version: "4"` 的客户端仍可用，等同于 v5 的 audio 模式。
+
 本文档是对外调用 MiniCPM-o 5 全双工语音 API 的唯一说明。部署方会给你一个**端点地址**，
 形如 `https://<host>:<port>/e/<端点名>`；下文用 `<端点>` 代指它。
 
