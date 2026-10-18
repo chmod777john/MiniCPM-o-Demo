@@ -15,6 +15,7 @@ import {
   summarizeEndpointInfo, summarizeSessionConfig,
 } from '../core/api-endpoint.js';
 import { CameraCapture } from '../core/camera-capture.js';
+import { initPanelCollapse } from '../core/panel-collapse.js';
 
 // 后端注入的当前 demo 元信息（入口模块 URL / API 前缀 / 标题）。
 const bootstrap = JSON.parse(document.getElementById('gallery-bootstrap').textContent);
@@ -192,6 +193,7 @@ function initPage() {
   setMicLiveState('idle');
   setStatus('Loading defaults…');
   scene.render();
+  initPanelCollapse(document.getElementById('colRight'));
   initInputMode();
   loadFcBoardDefaults();
 }
@@ -628,6 +630,12 @@ async function resolveAudio(filePath) {
 
 async function buildSessionInitPayload() {
   if (!apiEndpoint) throw new Error('No API endpoint selected');
+  // 场景的最后一道确定性变换（如刷新会话时间）；写回编辑区，页面上看到的就是实际发出去的。
+  const prepared = await scene.prepareSystem(cloneSystemSegments(systemSegments));
+  if (Array.isArray(prepared) && JSON.stringify(prepared) !== JSON.stringify(systemSegments)) {
+    systemSegments = cloneSystemSegments(prepared);
+    renderSystemSegments();
+  }
   const validatedSegments = systemSegments.map((segment, index) => (
     validateSystemSegment(segment, index)
   ));
@@ -1037,10 +1045,12 @@ function applyApiEvent(event) {
       return;
     case 'response.tool_call.begin':
       nsView.beginSegment('tool_call', event.unit_index, { toolCallId: event.tool_call_id });
+      scene.onToolCallBegin(event);
       return;
     case 'response.tool_call.delta':
       generationStepCount += (Array.isArray(event.steps) ? event.steps.length : 0);
       nsView.appendSteps(event.unit_index, event.steps);
+      scene.onToolCallDelta(event, textFromSteps(event.steps));
       updateStats();
       return;
     case 'response.tool_call.done':
@@ -1059,6 +1069,7 @@ function handleSpokenDelta(event) {
   generationStepCount += steps.length;
   const text = textFromSteps(steps);
   if (text) enqueueSpeech(text, 0);
+  scene.onSpokenDelta(event, text);
   if (event.audio) {
     handleSpokenOutput({
       isListen: false,
@@ -1074,6 +1085,7 @@ function handleSpokenEnd(event) {
   // 该 Unit 的 spoken 决策决定 non-spoken 用哪档 budget：listen → listening，其余 → speaking
   const lane = event.reason === 'listen' ? 'listen' : 'speak';
   nsView.setUnitLane(event.unit_index, lane);
+  scene.onSpokenEnd(event);
   if (event.reason === 'listen' || event.reason === 'turn_eos') {
     if (audioPlayerReady && audioPlayer.turnActive) audioPlayer.endTurn();
   }

@@ -489,6 +489,24 @@ body {
 .conv-panel, .ns-panel {
   min-height: 0;
 }
+/* 下方两个面板可折叠（core/panel-collapse.js）：折叠的面板只剩标题条；
+   两个都折叠时整行缩成标题条，场景面板占满右栏。 */
+.panel-collapse { margin-left: 8px; flex: 0 0 auto; }
+.conv-panel .panel-collapse { margin-left: auto; }
+.panel.is-collapsed { align-self: start; }
+.panel.is-collapsed .panel-title { margin-bottom: 0; }
+.panel.is-collapsed .scroll-body,
+.panel.is-collapsed .panel-title .hint { display: none; }
+.ns-panel.is-collapsed .panel-collapse { margin-left: auto; }
+.col-right.speech-collapsed .conv-row { grid-template-columns: max-content 1fr; }
+.col-right.ns-collapsed .conv-row { grid-template-columns: 1fr max-content; }
+.col-right.speech-collapsed.ns-collapsed .conv-row {
+  flex: 0 0 auto;
+  min-height: 0;
+  grid-template-columns: max-content max-content;
+}
+.col-right.speech-collapsed.ns-collapsed .stage-panel { flex: 1 1 0; }
+
 .scroll-body {
   flex: 1;
   overflow: auto;

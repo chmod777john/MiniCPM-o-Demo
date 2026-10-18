@@ -201,7 +201,7 @@
     </div>
 
     <!-- ===== Right column: demo stage (top) + conversation row (bottom) ===== -->
-    <div class="col-right">
+    <div class="col-right" id="colRight">
 
       <section class="panel stage-panel">
         <div class="panel-title">
@@ -213,18 +213,22 @@
       </section>
 
       <div class="conv-row">
-        <section class="panel conv-panel">
-          <div class="panel-title">AI Speech</div>
+        <section class="panel conv-panel" data-collapsible="speech">
+          <div class="panel-title">
+            AI Speech
+            <button class="panel-title-action panel-collapse" type="button" data-collapse-toggle="speech" aria-expanded="true">收起 ▴</button>
+          </div>
           <div class="scroll-body">
             <div id="aiSpeech" class="speech-stream">
               <div class="placeholder">AI 还没开口</div>
             </div>
           </div>
         </section>
-        <section class="panel ns-panel">
+        <section class="panel ns-panel" data-collapsible="ns">
           <div class="panel-title">
             Think / Tool-Call
             <span class="hint">Per-Unit token ledger · budget audit</span>
+            <button class="panel-title-action panel-collapse" type="button" data-collapse-toggle="ns" aria-expanded="true">收起 ▴</button>
           </div>
           <div class="scroll-body">
             <div id="nonSpokenStream" class="ns-stream">
