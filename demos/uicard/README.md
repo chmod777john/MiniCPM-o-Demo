@@ -54,7 +54,9 @@ Demo 服务 env 里设 `UICARD_TOOLS_CONFIG=<配置文件绝对路径>`（文件
 ```
 
 **不设就不调用外部接口**：需要 key 的工具如实给模型回 `{"status":"error","message":"… 未配置 api_key …"}`，
-页面上方标出未配置的工具；不回退到任何人的默认 key。`map_display` 可省，省了地图卡用 OpenStreetMap 底图。
+页面上方标出未配置的工具；不回退到任何人的默认 key。`map_display` 可省，省了地图卡用 Leaflet（本地 `web/vendor/`）+ 高德栅格瓦片
+（不需要 key；坐标在 iframe 里由 WGS-84 换成 GCJ-02）。**不要换回 OpenStreetMap**：国内访问 `tile.openstreetmap.org` 不通，
+cjp 原实现在国内只剩灰底 + 路线。
 
 ## 测试
 

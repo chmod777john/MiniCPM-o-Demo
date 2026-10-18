@@ -2,12 +2,19 @@
 //
 // 移植自 cjp/o5-fc-dev 分支 static/agent-tools/card-view.js，渲染逻辑未改。卡片对象来自模型的
 // show_card 参数或工具拼好的天气 / 地图卡，一律当不可信输入：未知 type 退回 JSON，文本全部转义。
-// 地图卡在 sandbox iframe 里画：配置了高德 JS key 用高德，否则 Leaflet + OpenStreetMap。
+// 地图卡在 sandbox iframe 里画：配置了高德 JS key 用高德 JS API，否则 Leaflet + 高德栅格瓦片。
+//
+// 与 cjp 原实现的差异（2026-10-18）：底图从 OpenStreetMap 换成高德栅格瓦片，Leaflet 从 unpkg 换成本地 vendor。
+// 原因：国内网络访问 tile.openstreetmap.org 不通（开发机实测连接失败），cjp 原样的地图卡只剩灰底 + 路线；
+// 高德栅格瓦片（webrd0x.is.autonavi.com）不需要 key、国内可达。它是 GCJ-02 坐标，所以 Leaflet 这条路也要把
+// 工具给的 WGS-84 坐标换成 GCJ-02 再画（与高德 JS API 那条路同一个换算）。
 
 const TONES = new Set(['neutral', 'info', 'success', 'warning', 'danger', 'brand']);
 
-const LEAFLET_CSS = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
-const LEAFLET_JS = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';
+// 本地 vendor（BSD-2，见 vendor/leaflet-1.9.4/LICENSE）。iframe 用 srcdoc，相对地址不可靠，按本模块地址拼绝对 URL。
+const LEAFLET_CSS = new URL('./vendor/leaflet-1.9.4/leaflet.css', import.meta.url).href;
+const LEAFLET_JS = new URL('./vendor/leaflet-1.9.4/leaflet.js', import.meta.url).href;
+const AMAP_TILE_URL = 'https://webrd0{s}.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=8&x={x}&y={y}&z={z}';
 const MAP_BRAND = '#3949ab';
 const MAP_PADDING = 24;
 const MAP_MARKER_LIMIT = 20;
@@ -206,7 +213,7 @@ function renderMap(card) {
       <span class="route-mode">${escapeHtml(ROUTE_MODES[route?.mode] || route?.mode)}</span>
       <span class="route-metric">${formatDistance(route?.distanceMeters)} · ${formatDuration(route?.durationSeconds)}</span>
     </li>`).join('');
-  const source = useAmap ? '高德地图' : card.provider === 'amap' ? '高德数据 · OSM 底图' : 'OSM 数据';
+  const source = useAmap ? '高德地图' : card.provider === 'amap' ? '高德数据 · 高德底图' : '高德底图';
   return `${title(card.title)}
     <div class="card-meta">${escapeHtml(source)}</div>
     ${frame}
@@ -237,7 +244,7 @@ function isCoordinate(point) {
  * Normalise the AMap JS credentials the defaults endpoint sent, or null.
  *
  * A bare key is rejected: AMap JS 2.0 refuses requests that carry neither the
- * security code nor a proxy host, and failing over to OSM beats a blank frame.
+ * security code nor a proxy host, and failing over to the Leaflet path beats a blank frame.
  */
 function amapDisplayConfig() {
   const apiKey = String(mapDisplayConfig?.amap_js_api_key || '').trim();
@@ -262,14 +269,16 @@ html,body,#map{width:100%;height:100%;margin:0;background:#ececea}
 ${MAP_PIN_CSS}</style></head><body><div id="map"></div>
 <script src="${LEAFLET_JS}"></script><script>
 const data=${inlineJson(data)};
+${WGS84_TO_GCJ02_JS}
+const ll=p=>{const g=gcj(p);return [g[1],g[0]];};
 const all=[...data.markers,...data.routes.flatMap(r=>r.path)];
 const first=all[0]||{latitude:39.9042,longitude:116.4074};
-const map=L.map('map').setView([first.latitude,first.longitude],13);
-L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'&copy; OpenStreetMap'}).addTo(map);
-data.routes.forEach((r,i)=>L.polyline(r.path.map(p=>[p.latitude,p.longitude]),{color:i?'#9aa0a6':'${MAP_BRAND}',weight:i?4:6,opacity:i?.55:.9}).addTo(map));
+const map=L.map('map').setView(ll(first),13);
+L.tileLayer(${inlineJson(AMAP_TILE_URL)},{subdomains:'1234',maxZoom:18,attribution:'&copy; 高德地图'}).addTo(map);
+data.routes.forEach((r,i)=>L.polyline(r.path.map(ll),{color:i?'#9aa0a6':'${MAP_BRAND}',weight:i?4:6,opacity:i?.55:.9}).addTo(map));
 data.markers.forEach((m,i)=>{const icon=L.divIcon({className:'',html:'<div class="pin"><span>'+(i+1)+'</span></div>',iconSize:[29,29],iconAnchor:[8,27]});
-L.marker([m.latitude,m.longitude],{icon}).addTo(map).bindPopup('<b>'+esc(m.name||'地点')+'</b>'+(m.address?'<br>'+esc(m.address):''));});
-if(all.length>1)map.fitBounds(L.latLngBounds(all.map(p=>[p.latitude,p.longitude])),{padding:[${MAP_PADDING},${MAP_PADDING}],maxZoom:16});
+L.marker(ll(m),{icon}).addTo(map).bindPopup('<b>'+esc(m.name||'地点')+'</b>'+(m.address?'<br>'+esc(m.address):''));});
+if(all.length>1)map.fitBounds(L.latLngBounds(all.map(ll)),{padding:[${MAP_PADDING},${MAP_PADDING}],maxZoom:16});
 function esc(v){return String(v).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 </script></body></html>`;
 }
