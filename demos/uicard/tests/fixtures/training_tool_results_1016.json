@@ -1,0 +1,165 @@
+{
+ "source": "ui_card/agent_duplex_uicard_1016_min2k_max8k_sysalign_train_recipe_002_v3_swy",
+ "results": {
+  "map_search_search": {
+   "data_id": "interleaved:adv2_v7tft_g01157_t010v6_v2_c2",
+   "arguments": {
+    "operation": "search",
+    "query": "珠江新城",
+    "city": "广州",
+    "limit": 1
+   },
+   "content": "{\"provider\":\"amap\",\"operation\":\"search\",\"query\":\"珠江新城\",\"places\":[{\"id\":\"BV10024361\",\"name\":\"珠江新城(地铁站)\",\"latitude\":23.121968825465174,\"longitude\":113.31578668921014,\"address\":\"3号线;5号线\"}],\"cards\":[{\"title\":\"珠江新城\",\"markerCount\":1,\"card_id\":\"m8\"}]}"
+  },
+  "map_search_route_driving": {
+   "data_id": "interleaved:adv2_v7tft_g01157_t010v6_v2_c2",
+   "arguments": {
+    "operation": "route",
+    "origin": "珠江新城",
+    "origin_latitude": 23.121968825465174,
+    "origin_longitude": 113.31578668921014,
+    "destination": "广州白云国际机场",
+    "destination_latitude": 23.380446045096697,
+    "destination_longitude": 113.2992507970297,
+    "mode": "driving",
+    "city": "广州"
+   },
+   "content": "{\"provider\":\"amap\",\"operation\":\"route\",\"origin\":{\"id\":\"origin\",\"name\":\"珠江新城\",\"latitude\":23.121968825465174,\"longitude\":113.31578668921014},\"destination\":{\"id\":\"destination\",\"name\":\"广州白云国际机场\",\"latitude\":23.380446045096697,\"longitude\":113.2992507970297},\"routes\":[{\"mode\":\"driving\",\"distanceMeters\":36932,\"durationSeconds\":1994,\"path\":[{\"latitude\":23.121859762036024,\"longitude\":113.3158435798896},{\"latitude\":23.13215953469975,\"longitude\":113.31054866218713},{\"latitude\":23.149140531434714,\"longitude\":113.25945697964796},{\"latitude\":23.191741126088097,\"longitude\":113.25576637631778},{\"latitude\":23.28264664391523,\"longitude\":113.26730045474235},{\"latitude\":23.382078586487168,\"longitude\":113.29696491026598}]}],\"cards\":[{\"title\":\"珠江新城 → 广州白云国际机场\",\"markerCount\":2,\"card_id\":\"m10\"}]}"
+  },
+  "tavily_search_general": {
+   "data_id": "interleaved:adv2_v7tft_g01157_t010v6_v2_c2",
+   "arguments": {
+    "query": "广州 搬家 红木家具 保护服务 价格 保护方法 常见问题 售后 2026",
+    "include_domains": [
+     "gz.bendibao.com",
+     "58.com",
+     "ganji.com",
+     "baidu.com"
+    ],
+    "max_results": 5
+   },
+   "content": "{\"query\":\"广州 搬家 红木家具 保护服务 价格 保护方法 常见问题 售后 2026\",\"results\":[{\"url\":\"https://b2bwiki.baidu.com/encyclopedic/anti-collision-furniture-transportation\",\"title\":\"防磕碰家具托运 - 爱采购寻源宝典 - 百度\",\"content\":\"防磕碰家具托运是专业物流服务中的重要环节，专注于保护高档家具在运输过程中免受损坏。本文详细介绍其包装材料选择、运输注意事项、常见问题解决方案以及B2B采购时的\",\"score\":0.21611117},{\"url\":\"https://b2bwiki.baidu.com/encyclopedic/solid-wood-logistics-line\",\"title\":\"实木专线 - 爱采购寻源宝典\",\"content\":\"价格方面,实木专线的费用通常按体积或重量计算,约500-2000元/立方米。 常见问题问实木专线和普通物流有什么区别? 实木专线针对实木产品的特性设计,配备防\",\"score\":0.08377804},{\"url\":\"https://b2bwiki.baidu.com/encyclopedic/fruits-vegetables-and-furniture-transportation-service\",\"title\":\"果蔬家具运输服务 - 爱采购寻源宝典\",\"content\":\"这类服务比普通物流贵多少？ ... 价格通常比普通物流高30-50%，但比分别使用冷链和家具专线便宜约20%。具体溢价取决于温控要求和防震等级。\",\"score\":0.074966356}]}"
+  },
+  "show_card": {
+   "data_id": "interleaved:adv2_v7tft_g01157_t010v6_v2_c2",
+   "arguments": {
+    "card": {
+     "type": "list",
+     "title": "红木家具搬家保护要点",
+     "rows": [
+      {
+       "title": "参考价格",
+       "subtitle": "500-2000元/立方米，仅为实木运输参考，不能当作广州搬家报价"
+      },
+      {
+       "title": "保护措施",
+       "subtitle": "逐件包裹、防潮防磕碰、拆装和木架加固"
+      },
+      {
+       "title": "搬前准备",
+       "subtitle": "拍照、清点、签验收单"
+      },
+      {
+       "title": "售后确认",
+       "subtitle": "破损责任、理赔时限和书面保价"
+      }
+     ]
+    }
+   },
+   "content": "卡片已展示给用户。"
+  },
+  "serp_google_search": {
+   "data_id": "interleaved:adv2t3_v7mixcap2_g00110_t040v2_v3_c3_1",
+   "arguments": {
+    "query": "路由器频繁掉线 官方说明 解决方法 2026"
+   },
+   "content": "{\n  \"code\": 0,\n  \"msg\": \"success\",\n  \"result\": {\n    \"general\": {\n      \"engine\": \"google\",\n      \"page\": 1,\n      \"query\": \"路由器频繁掉线 官方说明 解决方法 2026\",\n      \"type\": \"search\",\n      \"count\": 48\n    },\n    \"top_stories\": [],\n    \"organic\": [\n      {\n        \"display_link\": \"https://zhidao.baidu.com › question\",\n        \"link\": \"https://zhidao.baidu.com/question\",\n        \"rank\": 1,\n        \"snippet\": \"路由器不稳定老是掉线的解决方法：1、在浏览器里输入路由器的管理地址192.168.1.1，输入账号和密码，登陆路由器；2、在管理页面左侧选择无线设置，进入无线设置页面；3、在 ...\",\n        \"title\": \"路由上网掉线问题\"\n      }\n    ],\n    \"people_also_ask\": [],\n    \"people_also_search_for\": []\n  }\n}"
+  },
+  "get_client_location": {
+   "data_id": "interleaved:adv2_v7tft_g01177_t008v3_v3_c2",
+   "arguments": {},
+   "content": "{\"status\":\"ok\",\"message\":\"\",\"timestamp\":1791864062000,\"latitude\":22.5838525,\"longitude\":113.9535424,\"accuracy\":31,\"city\":\"深圳市\"}"
+  },
+  "map_search_nearby": {
+   "data_id": "interleaved:adv2_v7tft_g01177_t008v3_v3_c2",
+   "arguments": {
+    "operation": "nearby",
+    "query": "公园",
+    "latitude": 22.5838525,
+    "longitude": 113.9535424,
+    "radius": 5000,
+    "limit": 5
+   },
+   "content": "{\"provider\":\"amap\",\"operation\":\"nearby\",\"query\":\"公园\",\"places\":[{\"id\":\"B0KRK9ATAA\",\"name\":\"大沙河生态长廊绿道-河岸挑台\",\"latitude\":22.584329607781452,\"longitude\":113.95457091390736,\"address\":\"留仙大道南山区人才公寓西南侧\",\"distanceMeters\":118},{\"id\":\"B0FFLESTE8\",\"name\":\"九祥岭湿地公园\",\"latitude\":22.584895853782115,\"longitude\":113.95401788980007,\"address\":\"留仙大道1310号\",\"distanceMeters\":126},{\"id\":\"B0KUFCVNGQ\",\"name\":\"溪流园\",\"latitude\":22.585702630170914,\"longitude\":113.95449296971695,\"address\":\"唯科路与学苑大道(西)交叉口西北120米\",\"distanceMeters\":228},{\"id\":\"B0FFFTU36W\",\"name\":\"九祥岭社区公园\",\"latitude\":22.58742480343812,\"longitude\":113.95475238252233,\"address\":\"学苑大道(西)与八号路交叉口西北160米\",\"distanceMeters\":416},{\"id\":\"B0I13AR9J0\",\"name\":\"紫涧园\",\"latitude\":22.580157543094003,\"longitude\":113.95224636351192,\"address\":\"珠光北路40号(茶光地铁站D口步行440米)\",\"distanceMeters\":432}],\"cards\":[{\"title\":\"附近的公园\",\"markerCount\":5,\"card_id\":\"m1\"}]}"
+  },
+  "amap_weather_base": {
+   "data_id": "interleaved:adv2_v7tft_g01177_t008v3_v3_c2",
+   "arguments": {
+    "city": "深圳",
+    "extensions": "base"
+   },
+   "content": "{\"status\":\"1\",\"count\":\"1\",\"info\":\"OK\",\"infocode\":\"10000\",\"lives\":[{\"province\":\"广东\",\"city\":\"深圳市\",\"adcode\":\"440300\",\"weather\":\"晴\",\"temperature\":\"31\",\"winddirection\":\"北\",\"windpower\":\"≤3\",\"humidity\":\"56\",\"reporttime\":\"2026-10-13 11:50:02\"}],\"cards\":[{\"card_id\":\"w6\",\"label\":\"今天\"}]}"
+  },
+  "amap_weather_all": {
+   "data_id": "interleaved:adv2_v7tft_g01653_t547v2_v2_c4",
+   "arguments": {
+    "city": "上海",
+    "extensions": "all"
+   },
+   "content": "{\"status\":\"1\",\"count\":\"1\",\"info\":\"OK\",\"infocode\":\"10000\",\"forecasts\":[{\"city\":\"上海市\",\"adcode\":\"310000\",\"province\":\"上海\",\"reporttime\":\"2025-02-04 05:50:07\",\"casts\":[{\"date\":\"2025-02-04\",\"week\":\"2\",\"dayweather\":\"小雨\",\"nightweather\":\"阴\",\"daytemp\":\"8\",\"nighttemp\":\"0\",\"daywind\":\"西\",\"nightwind\":\"西\",\"daypower\":\"≤3\",\"nightpower\":\"≤3\"},{\"date\":\"2025-02-05\",\"week\":\"3\",\"dayweather\":\"阴\",\"nightweather\":\"多云\",\"daytemp\":\"11\",\"nighttemp\":\"1\",\"daywind\":\"西\",\"nightwind\":\"北\",\"daypower\":\"≤3\",\"nightpower\":\"≤3\"},{\"date\":\"2025-02-06\",\"week\":\"4\",\"dayweather\":\"阴\",\"nightweather\":\"阴\",\"daytemp\":\"8\",\"nighttemp\":\"0\",\"daywind\":\"西\",\"nightwind\":\"西北\",\"daypower\":\"≤3\",\"nightpower\":\"≤3\"},{\"date\":\"2025-02-07\",\"week\":\"5\",\"dayweather\":\"阴\",\"nightweather\":\"晴\",\"daytemp\":\"3\",\"nighttemp\":\"-4\",\"daywind\":\"西北\",\"nightwind\":\"西北\",\"daypower\":\"4\",\"nightpower\":\"≤3\"}]}],\"cards\":[{\"card_id\":\"w2\",\"label\":\"今天\"},{\"card_id\":\"w3\",\"label\":\"明天\"},{\"card_id\":\"w4\",\"label\":\"后天\"},{\"card_id\":\"w5\",\"label\":\"2025-02-07\"}]}"
+  },
+  "map_search_route_walking": {
+   "data_id": "interleaved:adv2_v7_g00953_d428v0_v7_c4",
+   "arguments": {
+    "operation": "route",
+    "origin": "星巴克(上海平凉路店)",
+    "destination": "上海中心大厦",
+    "origin_latitude": 31.262148262980336,
+    "origin_longitude": 121.5261193257228,
+    "destination_latitude": 31.235543540494742,
+    "destination_longitude": 121.5009538858774,
+    "mode": "walking"
+   },
+   "content": "{\"provider\":\"amap\",\"operation\":\"route\",\"origin\":{\"id\":\"origin\",\"name\":\"星巴克(上海平凉路店)\",\"latitude\":31.262148262980336,\"longitude\":121.5261193257228},\"destination\":{\"id\":\"destination\",\"name\":\"上海中心大厦\",\"latitude\":31.235543540494742,\"longitude\":121.5009538858774},\"routes\":[{\"mode\":\"walking\",\"distanceMeters\":13949,\"durationSeconds\":11159,\"path\":[{\"latitude\":31.262119025565408,\"longitude\":121.52602402318314},{\"latitude\":31.25227063372221,\"longitude\":121.49849462050511},{\"latitude\":31.234734164502868,\"longitude\":121.48800240164697},{\"latitude\":31.210911736539494,\"longitude\":121.50082349825485},{\"latitude\":31.21532265967181,\"longitude\":121.50757926686413},{\"latitude\":31.235673773278005,\"longitude\":121.50071702338124}]}],\"cards\":[{\"title\":\"星巴克(上海平凉路店) → 上海中心大厦\",\"markerCount\":2,\"card_id\":\"m3\"}]}"
+  },
+  "map_search_route_cycling": {
+   "data_id": "interleaved:adv2_v7tft_g02737_t075v3_v4_c2",
+   "arguments": {
+    "operation": "route",
+    "origin": "当前位置",
+    "destination": "尚书房",
+    "origin_latitude": 23.1562496,
+    "origin_longitude": 113.2257545,
+    "destination_latitude": 23.161263782192318,
+    "destination_longitude": 113.22775406104725,
+    "mode": "cycling"
+   },
+   "content": "{\"provider\":\"amap\",\"operation\":\"route\",\"origin\":{\"id\":\"origin\",\"name\":\"当前位置\",\"latitude\":23.1562496,\"longitude\":113.2257545},\"destination\":{\"id\":\"destination\",\"name\":\"尚书房\",\"latitude\":23.161263782192318,\"longitude\":113.22775406104725},\"routes\":[{\"mode\":\"cycling\",\"distanceMeters\":839,\"durationSeconds\":310,\"path\":[{\"latitude\":23.156240407779283,\"longitude\":113.22574519563294},{\"latitude\":23.15715237488031,\"longitude\":113.22621442879525},{\"latitude\":23.158220207705472,\"longitude\":113.22658358295853},{\"latitude\":23.159893787802183,\"longitude\":113.2254587667254},{\"latitude\":23.160406319100144,\"longitude\":113.22652239914768},{\"latitude\":23.16128782826139,\"longitude\":113.22784310924308}]}],\"cards\":[{\"title\":\"当前位置 → 尚书房\",\"markerCount\":2,\"card_id\":\"m2\"}]}"
+  },
+  "tavily_search_news": {
+   "data_id": "basic:t2_g00355_b1773v0_v0",
+   "arguments": {
+    "query": "2026年10月 上海 最近上映 国产电影 排片",
+    "topic": "news",
+    "time_range": "month",
+    "max_results": 5
+   },
+   "content": "{\"query\":\"2026年10月 上海 最近上映 国产电影 排片\",\"results\":[{\"url\":\"https://m.sohu.com/a/1085355668_122014422?scm=10001.325_13-325_13.0.0-0-0-0-0.5_1334\",\"title\":\"国庆档总票房11亿，中外修复电影展周六将启幕_搜狐网\",\"content\":\"## 国庆档总票房11亿，中外修复电影展周六将启幕\\n\\n新浪财经\\n\\n（来源：上观新闻）\\n\\n2026年国庆档从10月1日至10月7日，共持续7天。截至10月7日18:30，2026年国庆档总票房为11.39亿元。那么，今年国庆档的电影情况如何？在国庆长假之后，上海的影迷朋友还有什么电影可以观看？本期新闻晨报《上海会客厅》节目，我们就此进行了采访。\\n\\n国庆档票房回落，大片未能集中上映\\n\\n截至10月7日18:39，2026年国庆档总票房为11.43亿元，与2025年国庆档总票房（18.3亿元）相比，票房数据出现了回落。\\n\\n截至10月7日18:39，2026年国庆档总票房为11.43亿元（猫眼数据）\\n\\n对于国庆长假电影票房出现“降温”，上海电影评论学会会长、上海大学上海电影学院教授刘海波认为，主要原因是档期内缺乏大片集中上映：“以往国庆档的电影都是神仙打架，至少有几部大片竞争。但今年国庆档除了一部《神探之痕迹》，进口片《生化危机：爆发夜》上档的时间拖后（10月5日上映），没有什么有竞争力的票房大片。”\\n\\n上海影城SHO的电影海报 [...] 第二届影展海报中国修复单元\\n\\n时隔一年，焕映如约归来，\",\"score\":0.52962893,\"published_date\":\"Fri, 09 Oct 2026 08:02:48 GMT\"},{\"url\":\"https://m.thepaper.cn/newsDetail_forward_34200220\",\"title\":\"国庆档没有“大片”：陈思诚新片领跑、《龙餐馆》上映一个多月仍是前三\",\"content\":\"# 国庆档没有“大片”：陈思诚新片领跑、《龙餐馆》上映一个多月仍是前三\\n\\n（记者 赵凯）2026年的国庆档，没有悬念，没有惊喜，也没有黑马。不过另一方面，电影市场的结构正在改善，观众们早就不再盲目相信档期、大导和各种营销切片了。\\n\\n陈思诚新作领跑，《龙餐馆》上映一个多月还能进前三\\n\\n早在国庆档片单出炉之时，不少影迷和业内人士就断定今年的国庆档可能“不太好看”。从档期过半的票房表现来看，这份成绩单的确“略显尴尬”。\\n\\n据灯塔专业版数据，截至2026年10月4日18时左右，国庆档总票房破6.8亿元，《神探之痕迹》《什么意思夫妇》《欢迎来龙餐馆》分列票房榜前三。除前两部电影为新片外，《欢迎来龙餐馆》已上映近两个月；而榜单前列的《复仇者联盟4》更是多年前的老片重映。\\n\\n今年国庆档其实有十余部新片上映，题材横跨悬疑、犯罪、喜剧与动画，供给相当多元。但档期内缺乏“超级大片”，整体票房较去年同期有所下降。 [...] 这种失衡其实并非第一次出现，过去多个热门档期均未跑出“大爆款”。但头部缺失之外，整体市场结构正在改善。\\n\\n中国国家电影局统计数据显示，截至9月底，全年净增影院438家、银幕2632块，\",\"score\":0.40098447,\"published_date\":\"Tue, 06 Oct 2026 16:00:00 GMT\"},{\"url\":\"https://www.sina.cn/news/article/comos_nirtwin4925989.html\",\"title\":\"周末亲子动画电影怎么选？当前仅《八仙！》可看，9月25日后有《红孩儿》+FAX|亲子动画|周末排片|八仙|红孩儿|电影推荐_新浪新闻\",\"content\":\"# 周末亲子动画电影怎么选？当前仅《八仙！》可看，9月25日后有《红孩儿》+FAX\\n\\n2026-09-14 08:26 来源：街巷寻访社\\n\\n核心结论：这个周末（2026年9月14日）带娃看电影，唯一在映的国产亲子动画是《八仙！》——该片密钥已二次延期至10月17日，票房突破19亿元，口碑稳定；如果你愿意再等11天，9月25日《红孩儿火焰山之王》将上映，中秋合家欢首选；而梦工厂《忘却之岛》北美9月25日上映，国内暂无引进消息，暂时不用考虑。\\n\\n01当下唯一选择——《八仙！》值不值得看？\\n\\n　　《八仙！》是东方梦工厂西南总部联合上海华人影业、猫眼等出品的国风喜剧动画，由牟正洋自编自导，2026年7月18日首映，目前已上映近两个月。截至9月12日，片方宣布第二轮密钥延期，内地院线放映延长至2026年10月17日23:59，这意味着中秋、国庆假期均能观看。\\n\\n🎬 国风喜剧💰 票房破19亿📅 延长至10月17日👨‍👩‍👧 合家欢 [...] 《忘却之岛》由梦工厂出品、《穿靴子的猫2》原班团队打造，加布里埃拉·威尔森等配音，片长99分钟，北美9月25日上映。但重要的事说三遍：内地暂无引进消息。所以\",\"score\":0.38609254,\"published_date\":\"Mon, 14 Sep 2026 00:00:00 GMT\"},{\"url\":\"https://www.jfdaily.com/news/detail?id=1190143\",\"title\":\"国庆档票房丨陈思诚4亿领跑，古天乐400万撤档\",\"content\":\"{{summary}}\\n\\n  {{subsectionname}} {{publishHours}}   {{replay}}\\n\\n;)\\n\\n;)\\n\\n;) [...] # {{title}}\\n\\n   {{subsectionname}}        \\n\\n来源：上观新闻 作者：{{author}}\\n\\n{{summary}}\\n\\n  \\n\\n  {{brTitle}}\\n\\n \\n\\n以上内容由AI生成，仅供参考\\n\\n{{editorLabel}}：{{maineditor}} 文字编辑：{{writerName}} 题图来源：{{picSource}} 图片来源：{{imgSource}} 图片编辑：{{picEditor}} 编辑邮箱：{{writerEmail}} {{publicityType}}\\n\\n```\\n{{customattr}}\\n```\\n\\n未经正式授权严禁转载本文，侵权必究\\n\\n {{praiseText}};)    收藏;)\\n\\n 微信;)    微博;)    QQ空间;)\\n\\n \\n\\n  作者 {{name}}\\n\\n   {{organizename}}  {{departname}}\\n\\n  \",\"score\":0.06985216,\"published_date\":\"Wed, 07 Oct 2026 16:00:00 GMT\"},{\"url\":\"https://m.yule.360.com/content/5236042\",\"title\":\"多元影片国庆上映 “电影+”释放市场活力 - 360娱乐，你开心就好\",\"content\":\"360娱乐\\n\\n 首页\\n 明星\\n 电影\\n 电视\\n 综艺\\n 音乐\\n 推荐\\n 眼界\\n 热门游戏\\n 小游戏\\n\\n登录 | 注册\\n\\n# 多元影片国庆上映 “电影+”释放市场活力\\n\\n\\n 明星;)\\n 影视;)\\n 综艺;)\\n 好奇心;)\\n 搞笑;)\\n 图片;)\",\"score\":0.064071424,\"published_date\":\"Wed, 07 Oct 2026 16:00:00 GMT\"}]}"
+  },
+  "map_search_route_transit": {
+   "data_id": "interleaved:sandwich_v1_g00264_s310v4_v7_clw2",
+   "arguments": {
+    "operation": "route",
+    "origin": "我的当前位置",
+    "origin_latitude": 39.8752516,
+    "origin_longitude": 116.3510102,
+    "destination": "北京西站",
+    "destination_latitude": 39.893612651820256,
+    "destination_longitude": 116.3159143863044,
+    "mode": "transit",
+    "city": "北京市"
+   },
+   "content": "{\"provider\":\"amap\",\"operation\":\"route\",\"origin\":{\"id\":\"origin\",\"name\":\"我的当前位置\",\"latitude\":39.8752516,\"longitude\":116.3510102},\"destination\":{\"id\":\"destination\",\"name\":\"北京西站\",\"latitude\":39.893612651820256,\"longitude\":116.3159143863044},\"routes\":[{\"mode\":\"transit\",\"distanceMeters\":5449,\"durationSeconds\":2381,\"path\":[{\"latitude\":39.87523927590815,\"longitude\":116.35099961945598},{\"latitude\":39.87819299409277,\"longitude\":116.35299448005286},{\"latitude\":39.88273211357812,\"longitude\":116.35277331568628},{\"latitude\":39.88774511125764,\"longitude\":116.35261996565403},{\"latitude\":39.890989694519504,\"longitude\":116.31543181171573},{\"latitude\":39.89350778174104,\"longitude\":116.31532473770929}]},{\"mode\":\"transit\",\"distanceMeters\":6531,\"durationSeconds\":3240,\"path\":[{\"latitude\":39.87523927590815,\"longitude\":116.35099961945598},{\"latitude\":39.8762905862557,\"longitude\":116.34302255861014},{\"latitude\":39.87576071267854,\"longitude\":116.32206256146013},{\"latitude\":39.88512445520034,\"longitude\":116.3203972089697},{\"latitude\":39.89553684267302,\"longitude\":116.32306077295458},{\"latitude\":39.89350778174104,\"longitude\":116.31532473770929}]},{\"mode\":\"transit\",\"distanceMeters\":6083,\"durationSeconds\":2816,\"path\":[{\"latitude\":39.87523927590815,\"longitude\":116.35099961945598},{\"latitude\":39.88145608727836,\"longitude\":116.35283037129096},{\"latitude\":39.88837226579788,\"longitude\":116.34517853820277},{\"latitude\":39.89665969669558,\"longitude\":116.33904250328938},{\"latitude\":39.89599393326285,\"longitude\":116.32248304461466},{\"latitude\":39.89350778174104,\"longitude\":116.31532473770929}]},{\"mode\":\"transit\",\"distanceMeters\":5760,\"durationSeconds\":2407,\"path\":[{\"latitude\":39.87523927590815,\"longitude\":116.35099961945598},{\"latitude\":39.88020106198493,\"longitude\":116.35288642618256},{\"latitude\":39.8882729287109,\"longitude\":116.3501945166122},{\"latitude\":39.884900170469514,\"longitude\":116.35266923475211},{\"latitude\":39.88857402796569,\"longitude\":116.32782370594316},{\"latitude\":39.89350778174104,\"longitude\":116.31532473770929}]},{\"mode\":\"transit\",\"distanceMeters\":8498,\"durationSeconds\":2708,\"path\":[{\"latitude\":39.87523927590815,\"longitude\":116.35099961945598},{\"latitude\":39.87689659082218,\"longitude\":116.36018309574872},{\"latitude\":39.87743954217928,\"longitude\":116.36828709114616},{\"latitude\":39.88826397600144,\"longitude\":116.36832366578298},{\"latitude\":39.88867630157802,\"longitude\":116.31986897399089},{\"latitude\":39.89350778174104,\"longitude\":116.31532473770929}]}],\"cards\":[{\"title\":\"我的当前位置 → 北京西站\",\"markerCount\":2,\"card_id\":\"m2\"}]}"
+  }
+ }
+}

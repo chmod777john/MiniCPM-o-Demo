@@ -12,6 +12,7 @@
 #   DEMO_AUDIO_ROOTS         允许读取参考音频的目录（: 分隔）；不设则不读任何音频
 #   DEMO_BOARD_CASE_FOLDER   board 默认 system 取自的训练数据目录
 #   SUBAGENT_CLAUDE_BIN / SUBAGENT_CLAUDE_SETTINGS  subagent 后台 Claude Code（不设则 subagent 503）
+#   UICARD_TOOLS_CONFIG      uicard 工具的 key 配置文件（SERP / Tavily / 高德；不设则这些工具给模型回「未配置」错误）
 set -euo pipefail
 
 ENV_FILE="${1:?usage: $0 <env file>}"

@@ -1,0 +1,283 @@
+/* UI Card Demo。所有选择器以 [data-demo="uicard"] .uc-root 开头：只作用于本场景，
+   不碰 shell 里同名的 .placeholder / .scroll-body 等。卡片样式移植自 cjp/o5-fc-dev 的
+   static/agent-tools/agent-tools.css（只加了命名空间，@keyframes 加 uicard- 前缀）。 */
+
+/* ---------- 布局：左卡片区 + 右消息区（可折叠） ---------- */
+[data-demo="uicard"] .stage { display: flex; flex-direction: column; }
+[data-demo="uicard"] .uc-root {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(300px, 0.85fr);
+  gap: 12px;
+  flex: 1;
+  min-height: 0;
+}
+[data-demo="uicard"] .uc-root.side-collapsed { grid-template-columns: minmax(0, 1fr) max-content; }
+[data-demo="uicard"] .uc-root .uc-cards {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow-y: auto;
+}
+[data-demo="uicard"] .uc-root .uc-card-slot {
+  flex: 1 0 auto;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 4px 2px;
+}
+[data-demo="uicard"] .uc-root .uc-card-slot > * { width: 100%; max-width: 640px; }
+[data-demo="uicard"] .uc-root .uc-card-meta {
+  font-size: 10px;
+  color: #bbb;
+  margin-top: 6px;
+  text-align: right;
+  word-break: break-all;
+}
+[data-demo="uicard"] .uc-root .uc-empty { font-size: 12px; color: #999; line-height: 1.9; padding: 12px 4px; }
+[data-demo="uicard"] .uc-root .uc-empty code,
+[data-demo="uicard"] .uc-root .uc-source code {
+  background: #f0f0eb; padding: 1px 5px; border-radius: 4px; font-size: 11px;
+}
+[data-demo="uicard"] .uc-root .uc-strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid #f0f0eb;
+}
+[data-demo="uicard"] .uc-root .uc-strip:empty { display: none; }
+[data-demo="uicard"] .uc-root .uc-strip-title { font-size: 11px; color: #999; margin-right: 4px; }
+[data-demo="uicard"] .uc-root .uc-chip {
+  border: 1px solid #e1e1da;
+  border-radius: 12px;
+  background: #fafaf7;
+  color: #555;
+  font: inherit;
+  font-size: 11px;
+  padding: 3px 10px;
+  cursor: pointer;
+}
+[data-demo="uicard"] .uc-root .uc-chip.active { border-color: #3949ab; color: #3949ab; background: #eef2ff; }
+
+[data-demo="uicard"] .uc-root .uc-side {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-left: 1px solid #f0f0eb;
+  padding-left: 12px;
+}
+[data-demo="uicard"] .uc-root .uc-side-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+[data-demo="uicard"] .uc-root .uc-side-title { font-size: 12px; font-weight: 600; color: #666; }
+[data-demo="uicard"] .uc-root .uc-side-hint {
+  font-size: 10px; color: #999; margin-right: auto;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+[data-demo="uicard"] .uc-root .uc-btn {
+  border: 1px solid #e1e1da;
+  border-radius: 5px;
+  background: #fff;
+  color: #555;
+  font: inherit;
+  font-size: 10px;
+  line-height: 1;
+  padding: 5px 8px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+[data-demo="uicard"] .uc-root .uc-btn:hover { border-color: #b8b8ad; color: #222; }
+[data-demo="uicard"] .uc-root .uc-side-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+[data-demo="uicard"] .uc-root .uc-side.collapsed .uc-side-body,
+[data-demo="uicard"] .uc-root .uc-side.collapsed .uc-side-hint,
+[data-demo="uicard"] .uc-root .uc-side.collapsed [data-action="clear"] { display: none; }
+
+[data-demo="uicard"] .uc-root .uc-settings {
+  border: 1px solid #ecece5; border-radius: 6px; background: #fdfdfb; padding: 6px 10px; font-size: 11px; color: #666;
+}
+[data-demo="uicard"] .uc-root .uc-settings summary { cursor: pointer; font-weight: 600; color: #555; }
+[data-demo="uicard"] .uc-root .uc-field { display: flex; align-items: center; gap: 6px; margin-top: 6px; }
+[data-demo="uicard"] .uc-root .uc-field-label { flex: 0 0 150px; }
+[data-demo="uicard"] .uc-root .uc-field input[type="number"] { width: 72px; }
+[data-demo="uicard"] .uc-root .uc-field select,
+[data-demo="uicard"] .uc-root .uc-field input {
+  font: inherit; font-size: 11px; padding: 2px 4px; border: 1px solid #e0e0da; border-radius: 4px;
+}
+[data-demo="uicard"] .uc-root .uc-check { display: inline-flex; align-items: center; gap: 4px; flex: 0 0 150px; }
+[data-demo="uicard"] .uc-root .uc-hint { font-size: 10px; color: #999; margin-top: 4px; line-height: 1.5; }
+[data-demo="uicard"] .uc-root .uc-notice:empty { display: none; }
+[data-demo="uicard"] .uc-root .uc-warn {
+  font-size: 11px; color: #9a6700; background: #fff8e1; border-radius: 6px; padding: 5px 8px; margin-bottom: 4px;
+}
+[data-demo="uicard"] .uc-root .uc-source { font-size: 10px; color: #999; }
+
+/* ---------- 消息区（移植 cjp 的 .messages / .msg，改名 uc-） ---------- */
+[data-demo="uicard"] .uc-root .uc-messages {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-right: 4px;
+}
+[data-demo="uicard"] .uc-root .uc-placeholder { font-size: 12px; color: #aaa; padding: 8px 2px; font-style: italic; }
+[data-demo="uicard"] .uc-root .uc-msg { display: flex; gap: 8px; align-items: flex-start; }
+[data-demo="uicard"] .uc-root .uc-msg-tag {
+  flex: 0 0 auto; font-size: 10px; font-weight: 600; border-radius: 4px; padding: 2px 6px;
+  background: #f0f0eb; color: #888; margin-top: 2px;
+}
+[data-demo="uicard"] .uc-root .uc-msg-speech .uc-msg-tag { background: #ddf4e4; color: #1a7f37; }
+[data-demo="uicard"] .uc-root .uc-msg-tool .uc-msg-tag { background: #eef2ff; color: #3949ab; }
+[data-demo="uicard"] .uc-root .uc-msg-body {
+  font-size: 13px; line-height: 1.65; color: #333; word-break: break-word; min-width: 0; flex: 1;
+}
+[data-demo="uicard"] .uc-root .uc-msg-think .uc-msg-body { color: #999; font-size: 12px; }
+[data-demo="uicard"] .uc-root .uc-msg-tool .uc-msg-body code {
+  display: block; font-family: ui-monospace, Menlo, monospace; font-size: 11px; color: #3949ab;
+  background: #f7f8fd; border-radius: 6px; padding: 4px 6px; margin-top: 3px;
+  white-space: pre-wrap; word-break: break-all;
+}
+[data-demo="uicard"] .uc-root .uc-tool-name { font-size: 13px; color: #333; }
+[data-demo="uicard"] .uc-root .uc-msg-tool.streaming .uc-tool-name { color: #999; font-weight: 500; }
+[data-demo="uicard"] .uc-root .uc-msg-tool.streaming .uc-tool-args::after {
+  content: '▍'; color: #3949ab; animation: uicard-caret 1s steps(1) infinite;
+}
+@keyframes uicard-caret { 0%, 50% { opacity: 1; } 50.01%, 100% { opacity: 0; } }
+[data-demo="uicard"] .uc-root .uc-tool-result { margin-top: 5px; }
+[data-demo="uicard"] .uc-root .uc-tool-result summary {
+  display: inline-flex; gap: 4px; cursor: pointer; list-style: none; font-size: 11px; color: #777;
+  border: 1px solid #ecece5; border-radius: 10px; padding: 1px 8px; background: #fafaf7;
+}
+[data-demo="uicard"] .uc-root .uc-tool-result summary::-webkit-details-marker { display: none; }
+[data-demo="uicard"] .uc-root .uc-tool-result summary::before { content: '▸'; color: #bbb; }
+[data-demo="uicard"] .uc-root .uc-tool-result[open] summary::before { content: '▾'; }
+[data-demo="uicard"] .uc-root .uc-tool-result.failed summary { border-color: #f5c2c0; color: #cf222e; background: #fff8f8; }
+[data-demo="uicard"] .uc-root .uc-tool-result .uc-tool-result-text {
+  color: #555 !important; background: #fafaf7 !important; max-height: 260px; overflow: auto;
+}
+[data-demo="uicard"] .uc-root .uc-msg-error-text { display: block; color: #cf222e; font-size: 11px; margin-top: 3px; }
+
+/* 窄屏：消息区放到卡片下面。 */
+@media (max-width: 1100px) {
+  [data-demo="uicard"] .uc-root,
+  [data-demo="uicard"] .uc-root.side-collapsed { grid-template-columns: minmax(0, 1fr); }
+  [data-demo="uicard"] .uc-root .uc-side { border-left: none; padding-left: 0; border-top: 1px solid #f0f0eb; padding-top: 8px; }
+  [data-demo="uicard"] .uc-root .uc-messages { max-height: 420px; }
+}
+
+/* ---------- 卡片（cjp 原样） ---------- */
+[data-demo="uicard"] .uc-root .card {
+  border: 1px solid #e5e5e0;
+  border-radius: 14px;
+  padding: 22px 24px;
+  background: linear-gradient(160deg, #ffffff 0%, #fafaf7 100%);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+}
+[data-demo="uicard"] .uc-root .card-type {
+  font-size: 10px;
+  color: #aaa;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin-bottom: 10px;
+}
+[data-demo="uicard"] .uc-root .card-title { font-size: 17px; font-weight: 600; color: #2d2d2d; margin-bottom: 8px; }
+[data-demo="uicard"] .uc-root .card-body { font-size: 14px; line-height: 1.75; color: #444; }
+[data-demo="uicard"] .uc-root .card-caption { font-size: 14px; color: #555; text-align: center; margin-top: 10px; line-height: 1.6; }
+[data-demo="uicard"] .uc-root .card-status { font-size: 11px; color: #888; margin-bottom: 8px; }
+[data-demo="uicard"] .uc-root .card-note { font-size: 12px; color: #777; margin-top: 8px; line-height: 1.6; }
+[data-demo="uicard"] .uc-root .card-meta { font-size: 11px; color: #999; margin-top: 8px; }
+[data-demo="uicard"] .uc-root .card-prompt { font-size: 13px; color: #444; margin-bottom: 8px; line-height: 1.6; }
+[data-demo="uicard"] .uc-root .card-raw {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  color: #666;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+/* tones: a left accent bar only, no fills — the training prompt forbids colors
+   in the card JSON, so tone is the model's single styling lever. */
+[data-demo="uicard"] .uc-root .card.tone-info { border-left: 3px solid #3949ab; }
+[data-demo="uicard"] .uc-root .card.tone-success { border-left: 3px solid #1a7f37; }
+[data-demo="uicard"] .uc-root .card.tone-warning { border-left: 3px solid #b8860b; }
+[data-demo="uicard"] .uc-root .card.tone-danger { border-left: 3px solid #cf222e; }
+[data-demo="uicard"] .uc-root .card.tone-brand { border-left: 3px solid #7c4dff; }
+[data-demo="uicard"] .uc-root .card-emoji { font-size: 68px; text-align: center; line-height: 1.2; }
+[data-demo="uicard"] .uc-root .card-animation { display: flex; justify-content: center; gap: 6px; padding: 12px 0; }
+[data-demo="uicard"] .uc-root .card-animation span {
+  width: 10px; height: 10px; border-radius: 50%; background: #c8c8c0;
+  animation: uicard-bounce 1.2s infinite ease-in-out;
+}
+[data-demo="uicard"] .uc-root .card-animation span:nth-child(2) { animation-delay: 0.15s; }
+[data-demo="uicard"] .uc-root .card-animation span:nth-child(3) { animation-delay: 0.3s; }
+@keyframes uicard-bounce { 0%, 80%, 100% { transform: translateY(0); opacity: 0.5; } 40% { transform: translateY(-7px); opacity: 1; } }
+[data-demo="uicard"] .uc-root .card-score { display: flex; align-items: center; justify-content: center; gap: 18px; padding: 14px 0; }
+[data-demo="uicard"] .uc-root .score-side { display: flex; flex-direction: column; align-items: center; gap: 5px; flex: 1; }
+[data-demo="uicard"] .uc-root .score-name { font-size: 13px; color: #666; text-align: center; }
+[data-demo="uicard"] .uc-root .score-value { font-size: 38px; font-weight: 600; color: #2d2d2d; }
+[data-demo="uicard"] .uc-root .score-sep { font-size: 24px; color: #ccc; }
+[data-demo="uicard"] .uc-root .card-weather { display: flex; align-items: center; gap: 20px; }
+[data-demo="uicard"] .uc-root .weather-icon { font-size: 58px; }
+[data-demo="uicard"] .uc-root .weather-city { font-size: 13px; color: #888; }
+[data-demo="uicard"] .uc-root .weather-temp { font-size: 44px; font-weight: 600; color: #2d2d2d; line-height: 1.15; }
+[data-demo="uicard"] .uc-root .weather-temp span { font-size: 18px; color: #999; margin-left: 2px; }
+[data-demo="uicard"] .uc-root .weather-desc { font-size: 14px; color: #555; }
+[data-demo="uicard"] .uc-root .card-stat { display: flex; flex-wrap: wrap; gap: 10px; }
+[data-demo="uicard"] .uc-root .stat-item {
+  flex: 1 1 90px; background: #f7f7f2; border-radius: 8px; padding: 8px 10px;
+  display: flex; flex-direction: column; gap: 3px;
+}
+[data-demo="uicard"] .uc-root .stat-label { font-size: 11px; color: #999; }
+[data-demo="uicard"] .uc-root .stat-value { font-size: 17px; color: #2d2d2d; }
+[data-demo="uicard"] .uc-root .card-list, [data-demo="uicard"] .uc-root .card-choice, [data-demo="uicard"] .uc-root .card-custom, [data-demo="uicard"] .uc-root .card-map, [data-demo="uicard"] .uc-root .card-routes { list-style: none; }
+[data-demo="uicard"] .uc-root .card-list li {
+  display: flex; justify-content: space-between; align-items: center; gap: 10px;
+  padding: 7px 0; border-bottom: 1px solid #f2f2ed;
+}
+[data-demo="uicard"] .uc-root .card-list li:last-child { border-bottom: none; }
+[data-demo="uicard"] .uc-root .row-main { display: flex; flex-direction: column; gap: 2px; }
+[data-demo="uicard"] .uc-root .row-title { font-size: 13px; color: #333; }
+[data-demo="uicard"] .uc-root .row-subtitle { font-size: 11px; color: #999; }
+[data-demo="uicard"] .uc-root .row-trailing { font-size: 12px; color: #666; }
+[data-demo="uicard"] .uc-root .card-choice li {
+  display: flex; flex-direction: column; gap: 2px;
+  border: 1px solid #eeeee8; border-radius: 8px; padding: 8px 10px; margin-bottom: 6px;
+}
+[data-demo="uicard"] .uc-root .card-choice li.selected { border-color: #1a7f37; background: #f4fbf6; }
+[data-demo="uicard"] .uc-root .option-label { font-size: 13px; color: #333; }
+[data-demo="uicard"] .uc-root .option-hint { font-size: 11px; color: #999; }
+[data-demo="uicard"] .uc-root .card-custom-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+[data-demo="uicard"] .uc-root .custom-emoji { font-size: 20px; }
+[data-demo="uicard"] .uc-root .card-custom-head .card-title { margin-bottom: 0; }
+[data-demo="uicard"] .uc-root .card-custom li { font-size: 12px; color: #555; line-height: 1.85; }
+[data-demo="uicard"] .uc-root .card-map-frame {
+  display: block; width: 100%; height: 240px; margin: 8px 0 4px;
+  border: 1px solid #eeeee8; border-radius: 10px; background: #ececea;
+}
+[data-demo="uicard"] .uc-root .card-map-empty {
+  height: 90px; margin: 8px 0 4px; border: 1px dashed #e2e2dc; border-radius: 10px;
+  display: flex; align-items: center; justify-content: center; font-size: 12px; color: #aaa;
+}
+[data-demo="uicard"] .uc-root .card-map li {
+  display: flex; align-items: flex-start; gap: 8px;
+  padding: 7px 0; border-bottom: 1px solid #f2f2ed;
+}
+[data-demo="uicard"] .uc-root .card-map li:last-child { border-bottom: none; }
+[data-demo="uicard"] .uc-root .marker-index {
+  flex: 0 0 18px; height: 18px; border-radius: 50%; background: #eef2ff; color: #3949ab;
+  font-size: 10px; display: flex; align-items: center; justify-content: center;
+}
+[data-demo="uicard"] .uc-root .marker-main { display: flex; flex-direction: column; gap: 2px; flex: 1; }
+[data-demo="uicard"] .uc-root .marker-name { font-size: 13px; color: #333; }
+[data-demo="uicard"] .uc-root .marker-address { font-size: 11px; color: #999; }
+[data-demo="uicard"] .uc-root .marker-coord { font-size: 10px; color: #bbb; font-family: ui-monospace, Menlo, monospace; }
+[data-demo="uicard"] .uc-root .marker-distance { font-size: 11px; color: #666; white-space: nowrap; }
+[data-demo="uicard"] .uc-root .card-routes { margin-top: 10px; border-top: 1px solid #f2f2ed; padding-top: 8px; }
+[data-demo="uicard"] .uc-root .card-routes li { display: flex; justify-content: space-between; font-size: 12px; color: #555; padding: 4px 0; }
+[data-demo="uicard"] .uc-root .route-mode { color: #888; }

@@ -57,7 +57,7 @@ demos/<id>/
     └── <id>.css       # 本 Demo 专属样式
 ```
 
-现有 Demo 就是活范例：`demos/board/`（带工具 + 额外静态目录）、`demos/rejection/`（纯 think 解析）、`demos/standalone/`（输入框注入 standalone_event + Unit 回执，不带工具）、`demos/subagent/`（工具调用交给 headless Claude Code，按 preset 切换工具，每会话独立工作区；部署必须配自己的 Claude Code 与网关账号，见 `demos/CLAUDE.md`「部署 subagent」）。
+现有 Demo 就是活范例：`demos/board/`（带工具 + 额外静态目录）、`demos/rejection/`（纯 think 解析）、`demos/standalone/`（输入框注入 standalone_event + Unit 回执，不带工具）、`demos/subagent/`（工具调用交给 headless Claude Code，按 preset 切换工具，每会话独立工作区；部署必须配自己的 Claude Code 与网关账号，见 `demos/CLAUDE.md`「部署 subagent」）、`demos/uicard/`（ui_card 工具真实执行 + 卡片注册表 + 主面板内可折叠消息区；用 `prepareSystem` 刷新会话时间；见 `demos/uicard/README.md`）。
 
 ## 3. 后端：`demo.py`
 
@@ -109,7 +109,7 @@ Session 参数，Demo 也不发送，直接用端点的默认值：shell 在会�
 ## 4. 前端：场景契约
 
 shell（`static/demo-gallery/shell/app.js`）负责一切通用的东西：会话握手、麦克风、播放、
-system 段编辑、quick setting 下拉、think/tool-call 账本、模型信息栏。
+system 段编辑、quick setting 下拉、think/tool-call 账本、模型信息栏；下方的 AI Speech 与 Think/Tool-Call 两个面板可各自折叠（`core/panel-collapse.js`，状态记在浏览器里、所有 Demo 共用；两个都折叠时场景面板占满右栏）。
 **场景只负责右上主面板 `stageEl`**。完整契约在 `static/demo-gallery/core/scene-contract.js` 顶部注释。
 
 ```js
@@ -140,6 +140,9 @@ registerDemo({ id: 'my_demo', createScene });
 | `reset()` | | 新会话开始时清场；缺省等于 `render()` |
 | `onThinkBegin/Delta/End`、`onToolCallDone(event)` | | 模型事件钩子 |
 | `onUnitStarted(event)` | | 每个被处理 Unit 的 `response.unit.started`，含 `tool_events` / `standalone_events` 回执，用来展示事件落在哪个 Unit |
+| `onSpokenDelta(event, text)`、`onSpokenEnd(event)` | | 模型说的话（逐段文本）与每个 Unit 的 spoken 结束（`reason`: listen / turn_eos …） |
+| `onToolCallBegin(event)`、`onToolCallDelta(event, text)` | | 工具调用参数逐 token 生成的过程（`onToolCallDone` 是生成完的那一刻） |
+| `prepareSystem(segments)` | | 建会话前的最后一步：收到当前 system segments 副本，返回（可 async）真正发出去的。只做与训练口径一致的确定性变换（如刷新会话时间）；shell 把结果写回 system 编辑区 |
 
 **工具调用的链路**：session 用 `auto_execute_tools=false`，模型只发 tool_call →
 场景在 `onToolCallDone` 里 `fetch(api.url('tools/<name>'))` 调本 Demo 的后端 → 拿到结果后
