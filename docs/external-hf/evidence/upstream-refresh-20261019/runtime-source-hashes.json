@@ -1,0 +1,30 @@
+{
+  "hf": {
+    "inference_commit": "db7541095e458bf71269a49fafea508369556574",
+    "current_head": "528cb102868278f276d99a562a67c8912eee8996",
+    "sha256": {
+      "fc/capability.py": "86c6b96d1f94a2df4f99998adcff2c5456cec1b06bcbcac36fe8b74644b7d1fa",
+      "fc/migration/extract.py": "a7bd0cd67d9b241663efc867054a2f7a41c687dcec5e062396106ddfcc1ae872",
+      "fc/migration/adaptations.patch": "08e8476408b4dc016c1b4c127598e0a930d6f50a375d47a1f5d83708fd93b4a3",
+      "fc/migration/manifest.json": "d9c7e161cbb1992da034d75dbf0f7fc60f6942b55e9ba7f880bdffcf5fd37dd7",
+      "utils.py": "fa06f8af0c6d47da5358b5a1ecaeff552913902166189f75a398bcb5e37059a4",
+      "modeling_minicpmo.py": "3412a5bb575217553c58b40da5bcec8d3cf3c9a0622b0839c0ca746fff5ef1dd",
+      "mrope_canvas.py": "4bb9306c5a45052ef1d02dada429092478edd1436a3e28a44eea5a706ae654cf"
+    },
+    "matches_inference_commit": true
+  },
+  "demo": {
+    "inference_commit": "ba64bb95f70a118b435ad336ad2fa4eec3d13258",
+    "current_head": "e55d21c2de01526e292cd42cbc74adaca42a0813",
+    "sha256": {
+      "gateway.py": "4056904133d6007caae6e8b40074645dde44a34f1943cf8811370602047010ca",
+      "scripts/start_fc_service.py": "358415fa2a14d77abb8d7b0c5f382fc210159bdf4a514941b9ad4ab9c49949a0",
+      "core/external_o5.py": "2994ecaba112ccedd6833e4777a55cbc9b4944941e9a5038e9047c64ebc3a3d7",
+      "core/processors/unified.py": "9c1db25443815b13b795ee36a8f101933ed6cfcf14bb70fab6fa0f39d6a83d18",
+      "core/fc_duplex/model_adapter.py": "2edd94694755c3811c3e09250d5ed7b826486857aff12155755ea403da5eb122",
+      "py_backend/server.py": "8c456334b5758202377606e001d50a370a1508750c27f9a78b09b001748b6719",
+      "py_backend/fc_duplex_runtime.py": "8d9b95022047c3aa674aca035a12a4ad99973acc7fb642820f93d47b993217c5"
+    },
+    "matches_inference_commit": true
+  }
+}

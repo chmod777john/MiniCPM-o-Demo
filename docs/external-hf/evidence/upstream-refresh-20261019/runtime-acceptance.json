@@ -1,0 +1,645 @@
+{
+  "schema_version": 1,
+  "date_utc": "2026-10-19",
+  "status": "representative-runtime-validation-passed-with-recorded-capacity-limits",
+  "runtime_source_commits": {
+    "hf": "db7541095e458bf71269a49fafea508369556574",
+    "demo": "ba64bb95f70a118b435ad336ad2fa4eec3d13258",
+    "accel": "337ac3e84b69dde135efaad7f4113bc244fe7bd4"
+  },
+  "validation_commits": {
+    "hf": "528cb102868278f276d99a562a67c8912eee8996",
+    "demo": "e55d21c2de01526e292cd42cbc74adaca42a0813"
+  },
+  "product_changes_required": false,
+  "cpu": {
+    "demo_python_passed": 642,
+    "deselected_preexisting_o45": 4,
+    "node_passed": 25,
+    "standalone_scripts_passed": 3,
+    "external_hf_component_passed": 30,
+    "accel_contract_passed": 59,
+    "generator_managed_outputs_reproduced": 7,
+    "scope_note": "HF uses actual AST-loaded methods with synthetic model/processor/codec; real canvas and pinned accel source. Demo vendored TTS/canvas cases do not validate external HF."
+  },
+  "environment": {
+    "python": "3.10.12 (main, Nov 20 2023, 15:14:05) [GCC 11.4.0]",
+    "torch": "2.11.0+cu128",
+    "cuda": "12.8",
+    "gpu": "NVIDIA A100-SXM4-80GB",
+    "total_memory": 84987740160,
+    "versions": {
+      "transformers": "5.13.0",
+      "flash-attn": "2.8.3",
+      "minicpmo-utils": "1.0.7",
+      "minicpm-o5-sdk": "0.0.6",
+      "triton": "3.6.0"
+    },
+    "selected_env": {
+      "O5_LLM_GRAPH": "1",
+      "O5_DEMO_CONFIG_PATH": "/user/weihongliang/analysis-runs/20261019-o5fc-runtime-validation/gpu-validation/tp2-all-on/config.json",
+      "FC_DUPLEX_TRACE_DIR": "/user/weihongliang/analysis-runs/20261019-o5fc-runtime-validation/gpu-validation/tp2-all-on/model-traces",
+      "O5_MOE_PARALLEL": "tp",
+      "O5_ASSETS_DIR": "/user/shangchuxiang/code/MiniCPM-o-4_6/local_assets/token2wav_causal_vocoder",
+      "O5_TTS_GRAPH": "1",
+      "FC_DUPLEX_UNIT_METRICS": "1",
+      "O5_LLM_CACHE": "8192",
+      "O5_ATTN_IMPLEMENTATION": "sdpa",
+      "DUPLEX_SLOT_PROTOCOL": "1",
+      "CANONICAL_UNIT_PREFILL_BATCH": "1",
+      "O5_ACCELERATION_PATH": "/user/weihongliang/worktrees/hf-accel-no-fc-3d-rope-20261009-canvas-window-20261010-combined-batch-tts-20261010-exact-window-20261010-bulk-window-20261010-paired-rotation-20261010-direct-table-20261010-o5fc-cu130-20261014",
+      "O5_ACCELERATION_HARDWARE": "a100",
+      "O5_COMPACT_LOGITS": "1",
+      "O5_CANONICAL_PATH": "/user/weihongliang/worktrees/fc-upstream-refresh-20261019",
+      "O5_CHECKPOINT_PATH": "/user/chenjinpeng/Checkpoints/job_1054182/checkpoints/iter_0001275/job_1054182_iter_0001275.pt",
+      "O5_DEPLOY_MODE": "tp2",
+      "O5_TTS_FA2_WHOLE_DECODE": "1",
+      "O5_VOCODER_GRAPH": "1",
+      "O5_CANVAS_WINDOW_EXACT_CHAIN": "1"
+    }
+  },
+  "gpu_job": {
+    "billingAccountId": "N00002",
+    "billingAccountName": "MiniCPM-o 5.0",
+    "cluster": "langfang_train",
+    "createTime": "2026-10-19T08:48:33.872937Z",
+    "creator": "魏弘量",
+    "description": "Codex refresh_review user-authorized deploy finite TP2 FC audio Omni validation HFdb754109 Demoba64bb95 accel337ac3e8 all graphs merge ON no public services",
+    "entry": "bash /user/weihongliang/analysis-runs/20261019-o5fc-runtime-validation/gpu-validation/tp2-all-on/job_entry.sh",
+    "expose": {
+      "id": 1295039,
+      "enabled": false,
+      "path_prefix": "/langfang_train/job/1295039/expose"
+    },
+    "filesystemId": 375,
+    "gpuModel": "a100",
+    "id": 1295039,
+    "image": "cybertron/minicpmo:202506140642-bb9a49",
+    "kind": "BATCH",
+    "name": "tasks/1295039",
+    "namespace": "training",
+    "nodes": 1,
+    "priority": "NORMAL",
+    "project": "o5",
+    "resourcePoolId": 534,
+    "resourcesPerNode": {
+      "cpu": 16,
+      "gpuCount": 2,
+      "memory": "256Gi"
+    },
+    "resourcesTotal": {
+      "cpu": 16,
+      "gpuCount": 2,
+      "memory": "256Gi"
+    },
+    "status": "Succeeded",
+    "updateTime": "2026-10-19T08:53:19.675829Z"
+  },
+  "checkpoint": "/user/chenjinpeng/Checkpoints/job_1054182/checkpoints/iter_0001275/job_1054182_iter_0001275.pt",
+  "input_fixture": "/user/chenjinpeng/OmniAgentBench/runs/0812_cjp_2/20260924_064536/basic-1",
+  "visual_input": "synthetic repeated 448x448 geometric image; 64 visual tokens per unit, no visual question/answer accuracy claim",
+  "policy": {
+    "tts_pad_protocol": "legacy",
+    "decoding_policy": "constrained_decoding",
+    "non_spoken_scheduling": "quality",
+    "tts_condition_legacy": false,
+    "llm_cache_capacity": 8192
+  },
+  "acceleration_info": {
+    "acceleration": "/user/weihongliang/worktrees/hf-accel-no-fc-3d-rope-20261009-canvas-window-20261010-combined-batch-tts-20261010-exact-window-20261010-bulk-window-20261010-paired-rotation-20261010-direct-table-20261010-o5fc-cu130-20261014",
+    "tp": 2,
+    "acceleration_info": {
+      "package": "minicpm_o_accel",
+      "hardware": "a100",
+      "mode": "tp",
+      "devices": [
+        "cuda:0",
+        "cuda:1"
+      ],
+      "llm_graph": true,
+      "tts_graph": true,
+      "t2w_graph": true,
+      "merge_unit_feed": true,
+      "compact_logits": true,
+      "long_context_head_split": true,
+      "t2w_max_graphs": 32,
+      "retained_kv_append": true,
+      "canvas_window": true,
+      "canvas_window_exact_chain": true,
+      "tts_fa2_whole_decode": true,
+      "runtime_hooks": [
+        "tp_selected_prefill",
+        "split_norm",
+        "parallel_concurrent_prefill",
+        "retained_kv_append"
+      ],
+      "tts_decode_graph": true,
+      "tts_private_startup": {
+        "ms": 3167.0134738087654,
+        "allocated_delta_bytes": 504267776,
+        "peak_allocated_bytes": 76976994816,
+        "captures": 16,
+        "rng_exact": true
+      },
+      "llm_warmup": {
+        "seconds": 60.57503673713654,
+        "input_lengths": [
+          16,
+          14,
+          2,
+          30,
+          50,
+          94,
+          127,
+          1,
+          1
+        ],
+        "cache_length": 335
+      },
+      "attention_policy": "scoped cuDNN SDPA exclusion"
+    },
+    "mode": "tp"
+  },
+  "api_cases": [
+    {
+      "case": "tp2-all-on/audio-reject-video",
+      "mode": "audio",
+      "protocol_version": "5",
+      "session_id": "sess_2dda44109e6f",
+      "completed_units": 0,
+      "commits_ordered": true,
+      "turn_eos_units": [],
+      "audio_samples": 0,
+      "audio_seconds": 0,
+      "finite_audio": true,
+      "nonzero_audio": false,
+      "tool_calls": [],
+      "tool_results_supplied": [],
+      "tool_results_consumed": [],
+      "synthetic_tool_errors": [],
+      "errors": [],
+      "expected_error": {
+        "type": "session.closed",
+        "session_id": "sess_2dda44109e6f",
+        "reason": "input_mode_error",
+        "diagnostic": {
+          "message": "audio 模式不接受视频帧,本次 input.append 带了 1 帧;要传视频请用 ?mode=omni"
+        },
+        "server_send_ts": 1792399947.072595
+      },
+      "elapsed_unit_seconds": [],
+      "visual_tokens_per_unit": []
+    },
+    {
+      "case": "tp2-all-on/audio-v4-after-error",
+      "mode": "audio",
+      "protocol_version": "4",
+      "session_id": "sess_0f927eef2f7b",
+      "completed_units": 2,
+      "commits_ordered": true,
+      "turn_eos_units": [],
+      "audio_samples": 0,
+      "audio_seconds": 0,
+      "finite_audio": true,
+      "nonzero_audio": false,
+      "tool_calls": [],
+      "tool_results_supplied": [],
+      "tool_results_consumed": [],
+      "synthetic_tool_errors": [],
+      "errors": [],
+      "expected_error": null,
+      "elapsed_unit_seconds": [
+        0.24219168350100517,
+        0.24504390824586153
+      ],
+      "observed_latency": {
+        "median_seconds": 0.24361779587343335,
+        "max_seconds": 0.24504390824586153,
+        "units_over_1s": 0,
+        "not_realtime_sla": true
+      },
+      "visual_tokens_per_unit": [
+        0,
+        0
+      ]
+    },
+    {
+      "case": "tp2-all-on/audio-v5",
+      "mode": "audio",
+      "protocol_version": "5",
+      "session_id": "sess_696a2de77fd1",
+      "completed_units": 12,
+      "commits_ordered": true,
+      "turn_eos_units": [
+        3,
+        11
+      ],
+      "audio_samples": 190080,
+      "audio_seconds": 7.92,
+      "finite_audio": true,
+      "nonzero_audio": true,
+      "tool_calls": [
+        "tc_000001",
+        "tc_000002",
+        "tc_000003"
+      ],
+      "tool_results_supplied": [
+        "tc_000001",
+        "tc_000002",
+        "tc_000003"
+      ],
+      "tool_results_consumed": [
+        "tc_000001",
+        "tc_000002",
+        "tc_000003"
+      ],
+      "synthetic_tool_errors": [
+        {
+          "name": "show_card",
+          "arguments": {
+            "card": {
+              "type": "hint",
+              "title": "今天适合出门",
+              "body": "今天晴，29℃，东北风≤3级，湿度56%。",
+              "tone": "success"
+            }
+          }
+        }
+      ],
+      "errors": [],
+      "expected_error": null,
+      "elapsed_unit_seconds": [
+        0.4699506275355816,
+        0.2405039481818676,
+        1.732139284722507,
+        1.1815002812072635,
+        0.31978277396410704,
+        1.0338651556521654,
+        1.1211932022124529,
+        0.8294274089857936,
+        0.7230102829635143,
+        0.5841868221759796,
+        0.5555404862388968,
+        0.8921454288065434
+      ],
+      "observed_latency": {
+        "median_seconds": 0.776218845974654,
+        "max_seconds": 1.732139284722507,
+        "units_over_1s": 4,
+        "not_realtime_sla": true
+      },
+      "visual_tokens_per_unit": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    {
+      "case": "tp2-all-on/omni-after-error",
+      "mode": "omni",
+      "protocol_version": "5",
+      "session_id": "sess_6bb1b5b940e0",
+      "completed_units": 1,
+      "commits_ordered": true,
+      "turn_eos_units": [],
+      "audio_samples": 0,
+      "audio_seconds": 0,
+      "finite_audio": true,
+      "nonzero_audio": false,
+      "tool_calls": [],
+      "tool_results_supplied": [],
+      "tool_results_consumed": [],
+      "synthetic_tool_errors": [],
+      "errors": [],
+      "expected_error": null,
+      "elapsed_unit_seconds": [
+        0.3335538087412715
+      ],
+      "observed_latency": {
+        "median_seconds": 0.3335538087412715,
+        "max_seconds": 0.3335538087412715,
+        "units_over_1s": 0,
+        "not_realtime_sla": true
+      },
+      "visual_tokens_per_unit": [
+        64
+      ]
+    },
+    {
+      "case": "tp2-all-on/omni-reject-missing-frame",
+      "mode": "omni",
+      "protocol_version": "5",
+      "session_id": "sess_531ed40353ba",
+      "completed_units": 0,
+      "commits_ordered": true,
+      "turn_eos_units": [],
+      "audio_samples": 0,
+      "audio_seconds": 0,
+      "finite_audio": true,
+      "nonzero_audio": false,
+      "tool_calls": [],
+      "tool_results_supplied": [],
+      "tool_results_consumed": [],
+      "synthetic_tool_errors": [],
+      "errors": [],
+      "expected_error": {
+        "type": "session.closed",
+        "session_id": "sess_531ed40353ba",
+        "reason": "input_mode_error",
+        "diagnostic": {
+          "message": "omni 模式每个 input.append 必须恰好带 1 帧视频(input.video_frames),本次 0 帧"
+        },
+        "server_send_ts": 1792399951.2016683
+      },
+      "elapsed_unit_seconds": [],
+      "visual_tokens_per_unit": []
+    },
+    {
+      "case": "tp2-all-on/omni-v5",
+      "mode": "omni",
+      "protocol_version": "5",
+      "session_id": "sess_339d33751feb",
+      "completed_units": 5,
+      "commits_ordered": true,
+      "turn_eos_units": [
+        3
+      ],
+      "audio_samples": 32640,
+      "audio_seconds": 1.3599999999999999,
+      "finite_audio": true,
+      "nonzero_audio": true,
+      "tool_calls": [
+        "tc_000001",
+        "tc_000002"
+      ],
+      "tool_results_supplied": [
+        "tc_000001",
+        "tc_000002"
+      ],
+      "tool_results_consumed": [
+        "tc_000001"
+      ],
+      "synthetic_tool_errors": [],
+      "errors": [],
+      "expected_error": null,
+      "elapsed_unit_seconds": [
+        0.3471085587516427,
+        0.32650910411030054,
+        0.8181259278208017,
+        1.0058550266548991,
+        0.4262361815199256
+      ],
+      "observed_latency": {
+        "median_seconds": 0.4262361815199256,
+        "max_seconds": 1.0058550266548991,
+        "units_over_1s": 1,
+        "not_realtime_sla": true
+      },
+      "visual_tokens_per_unit": [
+        64,
+        64,
+        64,
+        64,
+        64
+      ]
+    }
+  ],
+  "ordinary_after_fc": {
+    "units": [
+      {
+        "unit": 0,
+        "kind": "listen",
+        "metrics": {
+          "backend": "pytorch",
+          "kv_cache_length": 264,
+          "generate_ms": 49.49355125427246,
+          "cost_llm_ms": 49.44872856140137,
+          "n_tokens": 0,
+          "n_tts_tokens": 0,
+          "ls_decision": "sampled_listen",
+          "prefill_ms": 272.8,
+          "wall_clock_ms": 322.8,
+          "effective_max_slice_nums": 1
+        }
+      },
+      {
+        "unit": 1,
+        "kind": "listen",
+        "metrics": {
+          "backend": "pytorch",
+          "kv_cache_length": 349,
+          "generate_ms": 49.24774169921875,
+          "cost_llm_ms": 49.199819564819336,
+          "n_tokens": 0,
+          "n_tts_tokens": 0,
+          "ls_decision": "sampled_listen",
+          "prefill_ms": 269.1,
+          "wall_clock_ms": 319.0,
+          "effective_max_slice_nums": 1
+        }
+      },
+      {
+        "unit": 2,
+        "kind": "listen",
+        "metrics": {
+          "backend": "pytorch",
+          "kv_cache_length": 434,
+          "generate_ms": 49.17550086975098,
+          "cost_llm_ms": 49.13496971130371,
+          "n_tokens": 0,
+          "n_tts_tokens": 0,
+          "ls_decision": "sampled_listen",
+          "prefill_ms": 269.3,
+          "wall_clock_ms": 319.0,
+          "effective_max_slice_nums": 1
+        }
+      }
+    ],
+    "errors": [],
+    "created": {
+      "type": "session.created",
+      "session_id": "sess_73d7500b57d7",
+      "mode": "full_duplex",
+      "session_config": {
+        "generate_audio": true,
+        "ls_mode": "explicit",
+        "force_listen_count": 0,
+        "max_new_speak_tokens_per_chunk": 20,
+        "decode_mode": "greedy",
+        "temperature": 0.7,
+        "top_k": 20,
+        "top_p": 0.8,
+        "text_repetition_penalty": 1.05,
+        "text_repetition_window_size": 512,
+        "listen_prob_scale": 1.0,
+        "listen_top_k": null,
+        "tts_temperature": 0.8,
+        "chunk_ms": 1000,
+        "sample_rate": 16000,
+        "sliding_window_mode": "basic",
+        "basic_window_high_tokens": 32768,
+        "basic_window_low_tokens": 24576,
+        "context_previous_max_tokens": 500,
+        "context_max_units": 24,
+        "text_sink": 512,
+        "text_sliding_window": 512,
+        "verify_mode": false,
+        "ls_decision_mode": "legacy",
+        "speak_threshold": 0.5,
+        "ls_strict_unit": false,
+        "ls_log_prob": false,
+        "tts_repetition_penalty": 1.05,
+        "max_slice_nums": 1,
+        "strategy_hd": false,
+        "strategy_hd_max_slice_nums": 4,
+        "unit_finalized_metrics": true,
+        "inactive_options": []
+      },
+      "metrics": {
+        "backend": "pytorch",
+        "kv_cache_length": 179
+      },
+      "server_send_ts": 1792399955.8325465
+    }
+  },
+  "tts_terminal_observations": [
+    {
+      "event": "spoken_audio",
+      "end_of_turn": true,
+      "tts_tokens": 5,
+      "waveform_samples": 11520,
+      "remaining_t2w_buffer": 0,
+      "tts_text_start_pos": 0
+    },
+    {
+      "event": "spoken_audio",
+      "end_of_turn": true,
+      "tts_tokens": 10,
+      "waveform_samples": 16320,
+      "remaining_t2w_buffer": 0,
+      "tts_text_start_pos": 0
+    },
+    {
+      "event": "spoken_audio",
+      "end_of_turn": true,
+      "tts_tokens": 5,
+      "waveform_samples": 11520,
+      "remaining_t2w_buffer": 0,
+      "tts_text_start_pos": 0
+    }
+  ],
+  "omni_merged_feed_example": {
+    "event": "finalize",
+    "mode": "omni",
+    "batch": {
+      "requested_feeds": [
+        {
+          "tokens": 1,
+          "return_logits": false,
+          "canvas": true,
+          "spec": false
+        },
+        {
+          "tokens": 1,
+          "return_logits": false,
+          "canvas": true,
+          "spec": false
+        },
+        {
+          "tokens": 66,
+          "return_logits": false,
+          "canvas": true,
+          "spec": true
+        },
+        {
+          "tokens": 1,
+          "return_logits": false,
+          "canvas": true,
+          "spec": false
+        },
+        {
+          "tokens": 1,
+          "return_logits": false,
+          "canvas": true,
+          "spec": false
+        },
+        {
+          "tokens": 10,
+          "return_logits": false,
+          "canvas": true,
+          "spec": false
+        },
+        {
+          "tokens": 1,
+          "return_logits": false,
+          "canvas": true,
+          "spec": false
+        },
+        {
+          "tokens": 1,
+          "return_logits": true,
+          "canvas": true,
+          "spec": false
+        }
+      ],
+      "executed_feeds": [
+        {
+          "tokens": 82,
+          "return_logits": true
+        }
+      ],
+      "feed_host_seconds": 0.1671359995380044
+    },
+    "canvas_state": {
+      "pos": 2233,
+      "text_pos": 2290
+    },
+    "image_specs": 1
+  },
+  "graph_observation_limit": "Switches true, LLM warmup and16 TTS captures logged. Individual runtime replay counts were not collected. Later instrumentation file was not executed; started wrapper is archived separately.",
+  "failed_trials": [
+    {
+      "job": 1294993,
+      "configuration": "one A10080GB; all graphs+merge on",
+      "failure": "CUDA OOM at fourth audio unit, terminal token2wav reset cloning700MiB;78.88GiB total in use,4.75GiB private pools",
+      "followups": "Same exhausted process cannot initialize later sessions; separate fresh TP2 succeeds. No source change to conceal capacity failure."
+    }
+  ],
+  "other_trial": {
+    "job": 1294952,
+    "configuration": "one A10080GB; graphs+merge off, other accel attached",
+    "api_cases_passed": 6
+  },
+  "coverage_limits": [
+    "No same-prefix real-checkpoint GPU precision pairing",
+    "No paced realtime or long-term throughput/SLA acceptance",
+    "No128k/long-context/window-trigger acceptance",
+    "FC audio and Omni use iter1275 legacy pad; revised pad only component tests",
+    "No visual semantic quality benchmark",
+    "Ordinary regression has three video listen-only units; no ordinary speech or fresh simplex GPU acceptance",
+    "No H20/Pro5000/other-card rerun",
+    "No persistent deployment, remote push, image build or LIS changes",
+    "No allmerge checkpoint rerun; only FC iter1275 weights tested"
+  ],
+  "raw_evidence_root": "/user/weihongliang/analysis-runs/20261019-o5fc-runtime-validation",
+  "resource_cleanup": {
+    "owned_jobs": [
+      1294952,
+      1294993,
+      1295039
+    ],
+    "all_ended": true,
+    "test_services_cleaned": true,
+    "public9007_changed": false,
+    "other_jobs_changed": false
+  }
+}

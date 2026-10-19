@@ -2,7 +2,7 @@
   "schema_version": 1,
   "name": "o5fc-upstream-refresh-20261019",
   "date_utc": "2026-10-19",
-  "status": "source-integrated-runtime-unverified",
+  "status": "representative-runtime-validated",
   "upstream": {
     "branch": "o5-fc-dev",
     "commit": "e0f2ada084d395a00d1956957d345e82b8a5f8f7"
@@ -11,7 +11,8 @@
     "hf": {
       "branch": "fc",
       "commit": "db7541095e458bf71269a49fafea508369556574",
-      "base_commit": "19e87201fb5f094df134a84171a35715bc6e5a69"
+      "base_commit": "19e87201fb5f094df134a84171a35715bc6e5a69",
+      "validation_commit": "528cb102868278f276d99a562a67c8912eee8996"
     },
     "accel": {
       "branch": "hf-fc-accel",
@@ -22,7 +23,8 @@
       "branch": "demo-adapter-fc",
       "implementation_commit": "79c08878016f35aa63360ef35ff857fd6275011c",
       "base_commit": "e760421992b36459fb3e724be38d7caa9cb83551",
-      "note": "This manifest is committed after implementation commit; subsequent documentation-only commit does not change runtime sources."
+      "note": "This manifest is committed after implementation commit; subsequent documentation-only commit does not change runtime sources.",
+      "validation_commit": "e55d21c2de01526e292cd42cbc74adaca42a0813"
     }
   },
   "scope": {
@@ -35,7 +37,7 @@
       "merge pinned upstream API v5 and gallery/uicard updates",
       "preserve external HF/accel and ordinary/simplex/mobile routing"
     ],
-    "accel": "reuse unchanged source; no new runtime compatibility claim"
+    "accel": "unchanged source; TP2 FC audio/Omni API passed with Graph/Merge flags on; no GPU paired numerical claim"
   },
   "source_evidence": {
     "hf_managed_outputs_reproduced": 7,
@@ -51,10 +53,22 @@
     "demo_upstream_only_files_byte_identical": 66
   },
   "runtime_validation": {
-    "tests_run": false,
-    "gpu_inference_run": false,
-    "api_probe_run": false,
-    "numerical_or_performance_claim": false
+    "tests_run": true,
+    "gpu_inference_run": true,
+    "api_probe_run": true,
+    "job_id": 1295039,
+    "gpu": "2xA100-SXM4-80GB",
+    "resource_pool": "deploy/534 (explicit user authorization)",
+    "api_cases_passed": 7,
+    "demo_python_passed": 642,
+    "deselected_preexisting_o45": 4,
+    "node_passed": 25,
+    "hf_component_passed": 30,
+    "accel_cpu_passed": 59,
+    "numerical_or_performance_claim": false,
+    "recorded_capacity_failure_job": 1294993,
+    "report": "../UPSTREAM_REFRESH_RUNTIME_VALIDATION_20261019.md",
+    "evidence": "../evidence/upstream-refresh-20261019/runtime-acceptance.json"
   },
   "deployment": {
     "services_changed": false,

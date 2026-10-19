@@ -2,7 +2,7 @@
 
 ## 版本组合
 
-本次为源码整合记录，尚未进行新版组合的推理、API、精度或性能验证。现有服务与 LIS 镜像继续使用各自历史发布记录。
+本次源码整合后，已完成CPU回归和双A100 TP2代表性API验证，见[实际验证记录](UPSTREAM_REFRESH_RUNTIME_VALIDATION_20261019.md)。推理源码没有因验证而修改；本次未替换已有服务或LIS镜像。真实GPU数值等价、持续实时与长上下文仍不在本轮结论内。
 
 | 物料 | 本地正式分支 | 固定实现 commit |
 |---|---|---|
@@ -37,14 +37,14 @@
 
 ## accel 与边界
 
-accel没有源码变更。其现有FC挂接、Merge-unit的位置/spec账本和模型提供的RoPE position embeddings接口与此次HF适配相接。复用依据来自源码检查，尚未执行新FC视频组合的Graph/Merge-unit数值或性能验证。
+accel没有源码变更。其现有FC挂接、Merge-unit的位置/spec账本和模型提供的RoPE position embeddings接口与此次HF适配相接。后续TP2实测已确认新FC视频配合Merge-unit执行、图开关开启并完成API；未取得逐项Graph replay计数或真实GPU paired数值结论。
 
 Omni要求canvas配置资产，每Unit恰好一帧、不切片，同会话处理后的图像几何固定。记录图像元信息不等于已接通并验收FC滑窗触发/单元登记；本次不新增这项声明。合并feed下视频cost也不能当独立GPU计算耗时。
 
 ## 验证范围与部署状态
 
-完成：Git差异与来源核对、生成器内置AST/重现检查、加载和参数调用链源码复核。
+完成：Git差异与来源核对、生成器内置AST/重现检查、CPU回归及真实GPU API。Demo Python642项、Node25项、外部HF组件30项、accel CPU59项通过；4项旧O45导入测试明确排除。详见实际验证记录的环境、失败与边界。
 
-未执行：测试套件、运行时导入验证、前端构建、GPU推理、WebSocket/API probe、精度/音质/速度验收。没有重启服务、构建镜像、替换LIS资产或更换checkpoint。
+未执行：生产前端构建、真实GPU精度对齐、业务/音质与持续实时验收、128k/长上下文。TP2任务1295039通过并结束；测试过程中单A100全Graph出现容量OOM，完整保留。没有重启既有服务、构建镜像或替换LIS资产。
 
 本次TTS条件语义已经变化，后续评估accel精度应对比同一版更新后的HF；不能将相对旧TTS口径的输出变化直接归为加速误差。
