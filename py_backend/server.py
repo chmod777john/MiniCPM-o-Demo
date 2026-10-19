@@ -42,32 +42,6 @@ logger = logging.getLogger("backend_server")
 SERVER_CONFIG: Dict[str, Any] = {}
 _backend: Any = None
 _server_state: Optional["BackendServerState"] = None
-_spmd_heartbeat_task: Optional[asyncio.Task] = None
-
-
-def _start_spmd_heartbeat(backend: Any) -> Optional[asyncio.Task]:
-    """Keep SPMD worker ranks alive while the HTTP server is idle.
-
-    In tp2 mode rank1 blocks in the model-provided worker loop, waiting for
-    rank0's LLM/graph-runner command. A long idle gap would otherwise hit the
-    process-group timeout and tear down the whole torchrun job.
-    """
-    if not getattr(backend, "spmd_is_driver", False):
-        return None
-
-    import os as _os
-    interval_s = float(_os.environ.get("O5_SPMD_HEARTBEAT_INTERVAL", "30"))
-    if interval_s <= 0:
-        logger.info("[spmd] heartbeat disabled")
-        return None
-
-    async def _loop() -> None:
-        logger.info("[spmd] heartbeat started interval=%.1fs", interval_s)
-        while True:
-            await asyncio.sleep(interval_s)
-            await asyncio.to_thread(backend.call_spmd_noop)
-
-    return asyncio.create_task(_loop())
 
 
 def _ws_debug_enabled() -> bool:
@@ -762,22 +736,16 @@ class BackendProtocolSession:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _backend, _server_state, _spmd_heartbeat_task
+    global _backend, _server_state
     logging.basicConfig(level=logging.INFO)
     logger.info("Loading backend server backend: pytorch")
     _backend = create_backend(SERVER_CONFIG)
     await asyncio.to_thread(_backend.load_model)
     _server_state = BackendServerState(_backend)
-    _spmd_heartbeat_task = _start_spmd_heartbeat(_backend)
     logger.info("Backend server ready")
     try:
         yield
     finally:
-        if _spmd_heartbeat_task is not None:
-            _spmd_heartbeat_task.cancel()
-            with suppress(asyncio.CancelledError):
-                await _spmd_heartbeat_task
-            _spmd_heartbeat_task = None
         for session in list((_server_state.sessions if _server_state else {}).values()):
             with suppress(Exception):
                 await session.close(reason="server_shutdown")
@@ -937,20 +905,8 @@ def main() -> None:
         "llm_cache_len": getattr(cfg.model, "llm_cache_len", 8192),
     })
 
-    # SPMD (multi-rank) deployment: non-driver ranks build the model
-    # (participating in build-time collectives), then enter the model-provided
-    # LLM/graph worker loop. They never start the HTTP server.
-    import os as _os
-    if int(_os.environ.get("RANK", "0")) != 0:
-        _be = create_backend(SERVER_CONFIG); _be.load_model()
-        _m = getattr(getattr(_be, "processor", None), "model", None)
-        _worker_loop = getattr(_m, "_spmd_worker_loop", None)
-        if _worker_loop is not None:
-            logger.info("[spmd] rank %s: entering model worker_loop (no HTTP)", _os.environ.get("RANK"))
-            _worker_loop()
-            return
-        logger.error("[spmd] rank %s: model does not provide _spmd_worker_loop", _os.environ.get("RANK"))
-        return
+    if int(os.environ.get("WORLD_SIZE", "1")) != 1 or int(os.environ.get("RANK", "0")) != 0:
+        parser.error("External HF/accel runs in one process; launch without torchrun")
 
     uvicorn.run(
         app,

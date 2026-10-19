@@ -17,24 +17,6 @@ from scripts.run_o5_api import (
 )
 
 
-def _write_backbone(backbone_dir: Path) -> None:
-    """创建满足启动器静态校验的最小 backbone 目录。
-
-    参数:
-        backbone_dir: 待创建的测试 backbone 目录。
-
-    返回:
-        无返回值。
-    """
-
-    backbone_dir.mkdir(parents=True)
-    (backbone_dir / "config.json").write_text("{}", encoding="utf-8")
-    (backbone_dir / "model.safetensors.index.json").write_text(
-        "{}",
-        encoding="utf-8",
-    )
-
-
 def _runtime_settings(tmp_path: Path) -> O5ApiRuntimeSettings:
     """构造不依赖生产绝对路径的内部运行设置。
 
@@ -74,35 +56,33 @@ def _runtime_settings(tmp_path: Path) -> O5ApiRuntimeSettings:
 
 
 def test_discover_o5_model_assets_uses_canonical_layout(tmp_path: Path) -> None:
-    """标准目录应解析固定的 model.pt 与 backbone。"""
+    """标准目录应解析完整 model.pt，不要求 backbone。"""
 
     model_dir = tmp_path / "model-a"
     model_dir.mkdir()
     (model_dir / "model.pt").touch()
-    _write_backbone(model_dir / "backbone")
 
     assets = discover_o5_model_assets(model_dir)
 
     assert assets.model_dir == model_dir.resolve()
     assert assets.pt_path == (model_dir / "model.pt").resolve()
-    assert assets.backbone_dir == (model_dir / "backbone").resolve()
+    assert assets.backbone_dir is None
     assert assets.model_id == "model-a"
 
 
 def test_discover_o5_model_assets_supports_unique_legacy_names(
     tmp_path: Path,
 ) -> None:
-    """旧资产只要 PT 和 backbone 唯一，也应由一个模型目录启动。"""
+    """旧资产只要 PT 唯一，也应由一个模型目录启动。"""
 
     model_dir = tmp_path / "legacy-model"
     model_dir.mkdir()
     (model_dir / "iter_0000400_o5.pt").touch()
-    _write_backbone(model_dir / "backbone_hf_o5deploy")
 
     assets = discover_o5_model_assets(model_dir)
 
     assert assets.pt_path.name == "iter_0000400_o5.pt"
-    assert assets.backbone_dir.name == "backbone_hf_o5deploy"
+    assert assets.backbone_dir is None
 
 
 def test_discover_o5_model_assets_rejects_ambiguous_pt_files(
@@ -114,7 +94,6 @@ def test_discover_o5_model_assets_rejects_ambiguous_pt_files(
     model_dir.mkdir()
     (model_dir / "a.pt").touch()
     (model_dir / "b.pt").touch()
-    _write_backbone(model_dir / "backbone")
 
     with pytest.raises(ValueError, match="找到多个 PT"):
         discover_o5_model_assets(model_dir)
@@ -150,7 +129,6 @@ def test_prepare_runtime_hides_profile_and_session_defaults(
     model_dir = tmp_path / "model-a"
     model_dir.mkdir()
     (model_dir / "model.pt").touch()
-    _write_backbone(model_dir / "backbone")
     assets = discover_o5_model_assets(model_dir)
     internal = _runtime_settings(tmp_path)
     launch = O5ApiLaunchSettings(
@@ -171,7 +149,7 @@ def test_prepare_runtime_hides_profile_and_session_defaults(
 
     assert profile["model_path"] == str(internal.base_model_path)
     assert profile["pt_path"] == str(assets.pt_path)
-    assert profile["backbone_dir"] == str(assets.backbone_dir)
+    assert profile["backbone_dir"] is None
     assert profile["deployment_mode"] == "tp2"
     assert "reference_audio_path" not in profile
     assert "case_folder" not in profile
@@ -188,7 +166,6 @@ def test_prepare_runtime_uses_internal_default_gateway_port(
     model_dir = tmp_path / "model-a"
     model_dir.mkdir()
     (model_dir / "model.pt").touch()
-    _write_backbone(model_dir / "backbone")
     assets = discover_o5_model_assets(model_dir)
     internal = _runtime_settings(tmp_path).model_copy(
         update={"gateway_port": 8123}
@@ -211,7 +188,6 @@ def test_service_environment_projects_only_public_overrides(
     model_dir = tmp_path / "model-a"
     model_dir.mkdir()
     (model_dir / "model.pt").touch()
-    _write_backbone(model_dir / "backbone")
     assets = discover_o5_model_assets(model_dir)
     internal = _runtime_settings(tmp_path)
     launch = O5ApiLaunchSettings(

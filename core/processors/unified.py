@@ -113,7 +113,6 @@ import time
 import logging
 import base64
 import hashlib
-import glob
 import importlib
 
 import numpy as np
@@ -2985,7 +2984,7 @@ class UnifiedProcessor(BaseProcessor):
         compile: bool = False,
         chat_vocoder: str = "token2wav",
         attn_implementation: str = "auto",
-        fc_model_family: Literal["o45", "o5"] = "o5",
+        fc_model_family: Literal["o5"] = "o5",
     ):
         """Initialize the unified processor.
 
@@ -3089,224 +3088,33 @@ class UnifiedProcessor(BaseProcessor):
             )
             return "sdpa"
 
-    def _is_quantized_model(self, model_path: str) -> bool:
-        """Check if the model at *model_path* uses quantization (AWQ / GPTQ / BnB).
-
-        Reads ``config.json`` in the model directory and looks for a
-        ``quantization_config`` section with a ``quant_method``.
-        """
-        config_file = os.path.join(model_path, "config.json")
-        if not os.path.isfile(config_file):
-            return False
-        try:
-            import json as _json
-            with open(config_file, "r", encoding="utf-8") as f:
-                cfg = _json.load(f)
-            qcfg = cfg.get("quantization_config")
-            return bool(qcfg and qcfg.get("quant_method"))
-        except Exception:
-            return False
-
-    def _has_hf_checkpoint_files(self, model_path: str) -> bool:
-        """Return whether *model_path* contains loadable HF checkpoint files."""
-        patterns = (
-            "model.safetensors",
-            "model-*.safetensors",
-            "pytorch_model.bin",
-            "pytorch_model-*.bin",
-        )
-        return any(glob.glob(os.path.join(model_path, pattern)) for pattern in patterns)
-
-    def _load_state_dict_from_pt(self, pt_path: str) -> dict:
-        try:
-            state_dict = torch.load(pt_path, map_location="cpu", weights_only=True)
-        except TypeError:
-            state_dict = torch.load(pt_path, map_location="cpu")
-        for key in ("state_dict", "model", "module"):
-            if isinstance(state_dict, dict) and isinstance(state_dict.get(key), dict):
-                return state_dict[key]
-        return state_dict
-
     def _load_model(self) -> None:
-        """Load the unified model.
-
-        Supports both full-precision (bf16) and quantized (AWQ) model weights.
-        Quantization metadata (including ``modules_to_not_convert``) is read
-        from the model's own ``config.json``.  When quantization is detected
-        the loader skips ``.bfloat16()`` and ``torch.compile``.
-        """
-        logger.info(f"Loading unified model: {self.model_path}")
-        if self.pt_path:
-            logger.info(f"Extra weights: {self.pt_path}")
-        start = time.time()
-
-        # ── Deployment-mode framework dispatch (core.deploy) ──────────────────
-        # O5_DEPLOY_MODE selects a pluggable deployment mode (single_eager / single_opt / tp2 / …).
-        # Default single_eager = the original path below, byte-for-byte unchanged. Non-default modes
-        # build the ready model (construct + place + init_unified + engine enable) via the framework.
+        """Load external O5 HF and attach accel according to deployment mode."""
+        if self.fc_model_family != "o5":
+            raise ValueError("This adapter supports only external O5 HF (FC_MODEL_FAMILY=o5)")
+        logger.info("Loading external O5 HF: %s", self.model_path)
         import os as _os
         _dep_mode = _os.environ.get("O5_DEPLOY_MODE", "single_eager")
-        if _dep_mode != "single_eager" or _os.environ.get("O5_CANONICAL_PATH"):
-            if _os.environ.get("O5_CANONICAL_PATH") and self.compile:
-                raise ValueError("External O5 requires compile=False; use O5_ACCELERATION_PATH")
-            import core.deploy as _deploy
-            _cfg = {
-                "model_path": self.model_path, "pt_path": self.pt_path,
-                "backbone_dir": _os.environ.get("O5_BACKBONE_DIR", ""),
-                "chat_vocoder": self.chat_vocoder,
-                "attn_implementation": self._resolve_attn_implementation(),
-                "llm_cache_len": int(_os.environ.get("O5_LLM_CACHE", "8192")),
-                "preload_both_tts": self.preload_both_tts,
-                "duplex_config": {
-                    "generate_audio": self.duplex_config.generate_audio,
-                    "ls_mode": self.duplex_config.ls_mode,
-                    "max_new_speak_tokens_per_chunk": self.duplex_config.max_new_speak_tokens_per_chunk,
-                    "temperature": self.duplex_config.temperature,
-                    "top_k": self.duplex_config.top_k, "top_p": self.duplex_config.top_p,
-                    "force_listen_count": self.duplex_config.force_listen_count,
-                },
-            }
-            _br = _deploy.get_mode(_dep_mode).build(_cfg)
-            self.model = _br.model
-            self._deploy = _br
-            self._warm_fc_token2wav_if_configured()
-            self._chat_view = ChatView(self.model, self.ref_audio_path)
-            self._half_duplex_view = HalfDuplexView(self.model, self.ref_audio_path)
-            self._duplex_view = DuplexView(self.model, self.ref_audio_path, self.duplex_config)
-            self._fc_duplex_view = FcDuplexView(
-                create_fc_duplex_model_adapter(
-                    model=self.model,
-                    model_family=self.fc_model_family,
-                )
-            )
-            logger.info("[deploy] built via framework: mode=%s world=%d rank=%d engine=%s",
-                        _dep_mode, _br.world_size, _br.rank, _br.engine)
-            return
-        # ──────────────────────────────────────────────────────────────────────
-
-        model_module = importlib.import_module(
-            f"modeling.{self.fc_model_family}.modeling_minicpmo_unified"
-        )
-        config_module = importlib.import_module(
-            f"modeling.{self.fc_model_family}.configuration_minicpmo"
-        )
-        MiniCPMO = model_module.MiniCPMO
-        MiniCPMOConfig = config_module.MiniCPMOConfig
-
-        # Resolve attention implementation (auto-detect when set to "auto")
-        resolved_attn = self._resolve_attn_implementation()
-
-        is_quantized = self._is_quantized_model(self.model_path)
-        if is_quantized:
-            logger.info("Quantized model detected")
-
-        pt_only_checkpoint = bool(self.pt_path) and not self._has_hf_checkpoint_files(self.model_path)
-        pt_already_loaded = False
-        if pt_only_checkpoint:
-            logger.info(
-                "No HF checkpoint files found in model_path; "
-                "building model from config and loading pt directly"
-            )
-            config = MiniCPMOConfig.from_pretrained(self.model_path)
-            config._attn_implementation = resolved_attn
-            config._name_or_path = self.model_path
-            config.name_or_path = self.model_path
-            from accelerate import init_empty_weights
-
-            state_dict = self._load_state_dict_from_pt(self.pt_path)
-            embed_key = "llm.model.embed_tokens.weight"
-            if embed_key in state_dict:
-                checkpoint_vocab_size = int(state_dict[embed_key].shape[0])
-                configured_vocab_size = int(getattr(config, "vocab_size", checkpoint_vocab_size))
-                if checkpoint_vocab_size != configured_vocab_size:
-                    logger.warning(
-                        "Checkpoint/config vocabulary mismatch: checkpoint=%d, config=%d. "
-                        "Building the O5 LLM with the checkpoint vocabulary size before assign=True load.",
-                        checkpoint_vocab_size,
-                        configured_vocab_size,
-                    )
-                    config.vocab_size = checkpoint_vocab_size
-
-            with init_empty_weights():
-                self.model = MiniCPMO(config)
-
-            info = self.model.load_state_dict(state_dict, strict=False, assign=True)
-            logger.info(
-                "PT weights loaded — missing: %d, unexpected: %d",
-                len(info.missing_keys),
-                len(info.unexpected_keys),
-            )
-            if info.missing_keys:
-                logger.warning("Missing keys: %s...", info.missing_keys[:5])
-            if info.unexpected_keys:
-                logger.warning("Unexpected keys: %s...", info.unexpected_keys[:5])
-            del state_dict
-            pt_already_loaded = True
-        else:
-            # Load base model
-            self.model = MiniCPMO.from_pretrained(
-                self.model_path,
-                _attn_implementation=resolved_attn,
-            )
-
-        if is_quantized:
-            # AWQ/GPTQ: integer qweight/qzeros must NOT be cast to bfloat16.
-            # Non-quantized sub-modules (vpm, apm, tts, resampler) are already
-            # stored in the correct dtype by the checkpoint.
-            self.model.eval()
-            logger.info(
-                "Quantized model detected — skipping .bfloat16() cast "
-                "(quantized layers use integer weights)"
-            )
-        else:
-            self.model.bfloat16().eval()
-
-        if self.device == "cuda":
-            self.model.cuda()
-
-        load_time = time.time() - start
-        logger.info(
-            f"Base model loaded in {load_time:.1f}s, "
-            f"attn_implementation={resolved_attn}, quantized={is_quantized}"
-        )
-
-        # Unified initialization (supports all three modes)
-        logger.info("Initializing unified mode...")
-        init_start = time.time()
-
-        self.model.init_unified(
-            pt_path=None if pt_already_loaded else self.pt_path,
-            preload_both_tts=self.preload_both_tts,
-            duplex_config={
+        if self.compile:
+            raise ValueError("External O5 requires compile=False; use O5_ACCELERATION_PATH")
+        import core.deploy as _deploy
+        _cfg = {
+            "model_path": self.model_path, "pt_path": self.pt_path,
+            "chat_vocoder": self.chat_vocoder,
+            "attn_implementation": self._resolve_attn_implementation(),
+            "preload_both_tts": self.preload_both_tts,
+            "duplex_config": {
                 "generate_audio": self.duplex_config.generate_audio,
                 "ls_mode": self.duplex_config.ls_mode,
                 "max_new_speak_tokens_per_chunk": self.duplex_config.max_new_speak_tokens_per_chunk,
                 "temperature": self.duplex_config.temperature,
-                "top_k": self.duplex_config.top_k,
-                "top_p": self.duplex_config.top_p,
+                "top_k": self.duplex_config.top_k, "top_p": self.duplex_config.top_p,
                 "force_listen_count": self.duplex_config.force_listen_count,
             },
-            device=self.device,
-            chat_vocoder=self.chat_vocoder,
-        )
-
-        init_time = time.time() - init_start
-        logger.info(f"Unified mode initialization done in {init_time:.1f}s")
-
-        # torch.compile acceleration + warmup (optional)
-        if self.compile:
-            compile_start = time.time()
-            # AWQ: skip llm.model (custom INT4 kernels incompatible with compile),
-            # but still compile vpm / resampler / tts.model (all float, full benefit).
-            skip = ["llm.model"] if is_quantized else None
-            self.model.apply_torch_compile(mode="default", dynamic=True, skip_modules=skip)
-            self.model.warmup_compile(ref_audio_path=self.ref_audio_path)
-            compile_time = time.time() - compile_start
-            logger.info(f"torch.compile + warmup done in {compile_time:.1f}s")
-
-        self._warm_fc_token2wav_if_configured()
-
-        # Create View instances
+        }
+        _br = _deploy.get_mode(_dep_mode).build(_cfg)
+        self.model = _br.model
+        self._deploy = _br
         self._chat_view = ChatView(self.model, self.ref_audio_path)
         self._half_duplex_view = HalfDuplexView(self.model, self.ref_audio_path)
         self._duplex_view = DuplexView(self.model, self.ref_audio_path, self.duplex_config)
@@ -3316,54 +3124,9 @@ class UnifiedProcessor(BaseProcessor):
                 model_family=self.fc_model_family,
             )
         )
-
-        total_time = time.time() - start
-        logger.info(f"UnifiedProcessor initialization complete in {total_time:.1f}s")
-
-    def _warm_fc_token2wav_if_configured(self) -> None:
-        """在 Backend ready 前预热 O5 FC 的 prompt-specific Token2Wav cache。
-
-        当部署 Profile 已提供 reference audio 且启用 TTS preload 时，首个 Session 不应
-        再承担数十秒的 prompt cache 初始化。TP2 worker rank 不负责 TTS 输出，因此跳过。
-
-        返回:
-            无返回值；预热失败会中止 Backend 启动，避免健康检查误报可用。
-        """
-
-        if (
-            os.environ.get("O5_CANONICAL_PATH")
-            or self.fc_model_family != "o5"
-            or not self.preload_both_tts
-            or not self.ref_audio_path
-            or os.environ.get("FC_DUPLEX_STARTUP_WARM", "1") == "0"
-        ):
-            return
-        deployment = getattr(self, "_deploy", None)
-        if deployment is not None and not bool(deployment.is_driver):
-            return
-        capability = getattr(self.model, "fc_duplex", None)
-        warm_prepare = getattr(capability, "warm_prepare", None)
-        if warm_prepare is None:
-            raise RuntimeError(
-                "O5 FC capability lacks warm_prepare; cannot declare Backend ready"
-            )
-        audio_input = FcAudioPathInput(file_path=self.ref_audio_path)
-        system_content = materialize_o5_system_content(
-            FcSystemContentInput(
-                segments=[FcSystemAudioInput(audio=audio_input)],
-            )
-        )
-        start = time.time()
-        warm_prepare(
-            system_content=system_content,
-            tts_prompt_audio_path=audio_input.file_path,
-            generate_audio=True,
-        )
-        logger.info(
-            "O5 FC full prepare path warmed before ready in %.1fs: %s",
-            time.time() - start,
-            self.ref_audio_path,
-        )
+        logger.info("[deploy] built via framework: mode=%s world=%d rank=%d engine=%s",
+                    _dep_mode, _br.world_size, _br.rank, _br.engine)
+        return
 
     def _release_resources(self) -> None:
         """Release model resources."""

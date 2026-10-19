@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
+: "${O5_CANONICAL_PATH:?set to the external HF source directory}"
+: "${O5_ACCELERATION_PATH:?set to the external accel source directory}"
 
 PROJECT_DIR="${PROJECT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
-MODEL_PATH="${MODEL_PATH:-}"
-PT_PATH="${PT_PATH:-}"
-BACKBONE_DIR="${BACKBONE_DIR:-${O5_BACKBONE_DIR:-}}"
+MODEL_PATH="${MODEL_PATH:-${O5_CANONICAL_PATH}}"
+PT_PATH="${O5_CHECKPOINT_PATH:-${PT_PATH:-}}"
 VENV_DIR="${VENV_DIR:-${PROJECT_DIR}/.venv}"
 
 BACKEND_HOST="${BACKEND_HOST:-127.0.0.1}"
@@ -17,7 +18,6 @@ GATEWAY_INTERNAL_PORT="${GATEWAY_INTERNAL_PORT:-8010}"
 NUM_WORKERS="${NUM_WORKERS:-2}"
 GPUS_PER_WORKER="${GPUS_PER_WORKER:-2}"
 BACKEND_START_STAGGER_SECONDS="${BACKEND_START_STAGGER_SECONDS:-120}"
-TORCHRUN_MASTER_BASE_PORT="${TORCHRUN_MASTER_BASE_PORT:-29500}"
 
 WORKER_ID_PREFIX="${WORKER_ID_PREFIX:-o5-tp2-cctl-worker}"
 WORKER_GPU_GROUP_PREFIX="${WORKER_GPU_GROUP_PREFIX:-cctl-a100-tp2}"
@@ -27,24 +27,20 @@ FRPC_BIN="${FRPC_BIN:-frpc}"
 FRPC_CONFIG="${FRPC_CONFIG:-}"
 FRPC_RETRY_SECONDS="${FRPC_RETRY_SECONDS:-10}"
 O5_LLM_CACHE="${O5_LLM_CACHE:-32768}"
-O5_SPMD_HEARTBEAT_INTERVAL="${O5_SPMD_HEARTBEAT_INTERVAL:-30}"
 
 mkdir -p "${LOG_DIR}"
 cd "${PROJECT_DIR}"
 
 export PYTHONPATH="${PROJECT_DIR}:${PYTHONPATH:-}"
+export PYTHON="${VENV_DIR}/bin/python"
 export TOKENIZERS_PARALLELISM="${TOKENIZERS_PARALLELISM:-false}"
-export O5_BACKBONE_DIR="${BACKBONE_DIR}"
 export O5_LLM_CACHE
-export O5_SPMD_HEARTBEAT_INTERVAL
-export TORCHRUN="${VENV_DIR}/bin/torchrun"
 
 PYTHON="${VENV_DIR}/bin/python"
 
 if [ ! -x "${PYTHON}" ]; then echo "[tp2-mw-start] missing python: ${PYTHON}" >&2; exit 1; fi
 if [ -z "${MODEL_PATH}" ] || [ ! -d "${MODEL_PATH}" ]; then echo "[tp2-mw-start] missing MODEL_PATH=${MODEL_PATH}" >&2; exit 1; fi
 if [ -z "${PT_PATH}" ] || [ ! -f "${PT_PATH}" ]; then echo "[tp2-mw-start] missing PT_PATH=${PT_PATH}" >&2; exit 1; fi
-if [ -z "${BACKBONE_DIR}" ] || [ ! -d "${BACKBONE_DIR}" ]; then echo "[tp2-mw-start] missing BACKBONE_DIR=${BACKBONE_DIR}" >&2; exit 1; fi
 if [ "${GPUS_PER_WORKER}" -ne 2 ]; then echo "[tp2-mw-start] TP2 requires GPUS_PER_WORKER=2" >&2; exit 1; fi
 
 pids=()
@@ -110,9 +106,9 @@ visible_devices_for_worker() {
 echo "[tp2-mw-start] project=${PROJECT_DIR}"
 echo "[tp2-mw-start] model=${MODEL_PATH}"
 echo "[tp2-mw-start] pt=${PT_PATH}"
-echo "[tp2-mw-start] backbone=${BACKBONE_DIR}"
+echo "[tp2-mw-start] canonical=${O5_CANONICAL_PATH} acceleration=${O5_ACCELERATION_PATH}"
 echo "[tp2-mw-start] workers=${NUM_WORKERS} gpus_per_worker=${GPUS_PER_WORKER} total_gpus=$((NUM_WORKERS * GPUS_PER_WORKER))"
-echo "[tp2-mw-start] llm_cache=${O5_LLM_CACHE} spmd_heartbeat=${O5_SPMD_HEARTBEAT_INTERVAL}"
+echo "[tp2-mw-start] legacy_llm_cache_metadata=${O5_LLM_CACHE}"
 echo "[tp2-mw-start] deployment_mode=${O5_DEPLOY_MODE:-tp2} llm_graph=${O5_LLM_GRAPH:-1}"
 echo "[tp2-mw-start] gateway=https://${GATEWAY_HOST}:${GATEWAY_PORT} internal=:${GATEWAY_INTERNAL_PORT}"
 
@@ -132,14 +128,12 @@ for ((i=0; i<NUM_WORKERS; i++)); do
     backend_url="http://${BACKEND_HOST}:${backend_port}"
     worker_endpoint="${WORKER_HOST}:${worker_port}"
     visible_devices="$(visible_devices_for_worker "${i}")"
-    master_port=$((TORCHRUN_MASTER_BASE_PORT + i))
 
     backend_urls+=("${backend_url}")
     worker_endpoints+=("${worker_endpoint}")
 
-    echo "[tp2-mw-start] backend ${i}: cuda_visible=${visible_devices} master_port=${master_port} url=${backend_url}"
+    echo "[tp2-mw-start] backend ${i}: cuda_visible=${visible_devices} url=${backend_url}"
     CUDA_VISIBLE_DEVICES="${visible_devices}" \
-    O5_TORCHRUN_MASTER_PORT="${master_port}" \
     "${PROJECT_DIR}/core/deploy/launch_tp2.sh" \
         --host "${BACKEND_HOST}" --port "${backend_port}" \
         --model-path "${MODEL_PATH}" --pt-path "${PT_PATH}" \

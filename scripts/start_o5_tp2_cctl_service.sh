@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
+: "${O5_CANONICAL_PATH:?set to the external HF source directory}"
+: "${O5_ACCELERATION_PATH:?set to the external accel source directory}"
 
 PROJECT_DIR="${PROJECT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 MODEL_PATH="${MODEL_PATH:-${O5_CANONICAL_PATH:-}}"
 PT_PATH="${O5_CHECKPOINT_PATH:-${PT_PATH:-}}"
-BACKBONE_DIR="${BACKBONE_DIR:-${O5_BACKBONE_DIR:-}}"
 VENV_DIR="${VENV_DIR:-${PROJECT_DIR}/.venv}"
 
 BACKEND_HOST="${BACKEND_HOST:-127.0.0.1}"
@@ -22,7 +23,6 @@ FRPC_BIN="${FRPC_BIN:-frpc}"
 FRPC_CONFIG="${FRPC_CONFIG:-}"
 GATEWAY_HTTPS="${GATEWAY_HTTPS:-1}"
 O5_LLM_CACHE="${O5_LLM_CACHE:-32768}"
-O5_SPMD_HEARTBEAT_INTERVAL="${O5_SPMD_HEARTBEAT_INTERVAL:-30}"
 FC_MODEL_FAMILY="${FC_MODEL_FAMILY:-o5}"
 CHECKPOINT_PROFILE_ID="${CHECKPOINT_PROFILE_ID:-unprofiled}"
 # worker-only：不在本 job 起 Gateway（Gateway 与控制面板在开发机上）。worker 绑 WORKER_HOST
@@ -36,10 +36,7 @@ cd "${PROJECT_DIR}"
 
 export PYTHONPATH="${PROJECT_DIR}:${PYTHONPATH:-}"
 export TOKENIZERS_PARALLELISM="${TOKENIZERS_PARALLELISM:-false}"
-export O5_BACKBONE_DIR="${BACKBONE_DIR}"
 export O5_LLM_CACHE
-export O5_SPMD_HEARTBEAT_INTERVAL
-export TORCHRUN="${VENV_DIR}/bin/torchrun"
 
 PYTHON="${VENV_DIR}/bin/python"
 export PYTHON
@@ -50,7 +47,6 @@ GATEWAY_REGISTRY_URL="http://127.0.0.1:${GATEWAY_INTERNAL_PORT}/internal/workers
 if [ ! -x "${PYTHON}" ]; then echo "[tp2-start] missing python: ${PYTHON}" >&2; exit 1; fi
 if [ -z "${MODEL_PATH}" ] || [ ! -d "${MODEL_PATH}" ]; then echo "[tp2-start] missing MODEL_PATH=${MODEL_PATH}" >&2; exit 1; fi
 if [ -z "${PT_PATH}" ] || [ ! -f "${PT_PATH}" ]; then echo "[tp2-start] missing PT_PATH=${PT_PATH}" >&2; exit 1; fi
-if [ -z "${O5_CANONICAL_PATH:-}" ] && { [ -z "${BACKBONE_DIR}" ] || [ ! -d "${BACKBONE_DIR}" ]; }; then echo "[tp2-start] missing BACKBONE_DIR=${BACKBONE_DIR}" >&2; exit 1; fi
 if [ "${WORKER_ONLY}" = "1" ] && { [ -z "${WORKER_ADVERTISE_HOST}" ] || [ -z "${WORKER_READY_DIR}" ]; }; then
     echo "[tp2-start] WORKER_ONLY=1 requires WORKER_ADVERTISE_HOST and WORKER_READY_DIR" >&2; exit 1
 fi
@@ -79,10 +75,10 @@ wait_http() {
 }
 
 echo "[tp2-start] project=${PROJECT_DIR}"
-echo "[tp2-start] commit=$(git rev-parse HEAD) canonical=${O5_CANONICAL_PATH:-vendored} acceleration=${O5_ACCELERATION_PATH:-none}"
+echo "[tp2-start] commit=$(git rev-parse HEAD) canonical=${O5_CANONICAL_PATH} acceleration=${O5_ACCELERATION_PATH:-none}"
 echo "[tp2-start] model=${MODEL_PATH}"
 echo "[tp2-start] pt=${PT_PATH}"
-echo "[tp2-start] backbone=${BACKBONE_DIR} llm_cache=${O5_LLM_CACHE} spmd_heartbeat=${O5_SPMD_HEARTBEAT_INTERVAL}"
+echo "[tp2-start] legacy_llm_cache_metadata=${O5_LLM_CACHE}"
 if [ "${GATEWAY_HTTPS}" = "1" ]; then
     gateway_scheme="https"
     gateway_args=(--https --ssl-certfile certs/cert.pem --ssl-keyfile certs/key.pem)

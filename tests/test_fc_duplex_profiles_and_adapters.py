@@ -1,4 +1,4 @@
-"""统一 FC DeploymentProfile 与双 ModelAdapter 的 CPU 契约测试。"""
+"""外部 O5 FC DeploymentProfile 与 ModelAdapter 的 CPU 契约测试。"""
 
 from __future__ import annotations
 
@@ -11,12 +11,10 @@ import pytest
 from pydantic import ValidationError
 
 from core.fc_duplex.model_adapter import (
-    O45FcDuplexModelAdapter,
     O5FcDuplexModelAdapter,
     create_fc_duplex_model_adapter,
 )
 from core.fc_duplex.profiles import (
-    O45FcDeploymentProfile,
     O5FcDeploymentProfile,
     apply_fc_deployment_profile_environment,
     load_fc_deployment_profile,
@@ -81,21 +79,6 @@ def _unit_policy() -> O5UnitPolicy:
     )
 
 
-def test_o45_profile_has_fixed_sdk_target_and_rows() -> None:
-    """O45 Profile 必须固定正式 SDK、target 与 required rows。"""
-
-    profile = O45FcDeploymentProfile(
-        profile_id="o45-test",
-        model_path="/model/o45",
-        pt_path="/checkpoint/o45.pt",
-        unit_policy=_unit_policy(),
-    )
-
-    assert profile.sdk_version == "0.0.6"
-    assert profile.tokenizer_target == "o45_fc"
-    assert profile.required_model_rows == 151772
-
-
 def test_o5_profile_has_fixed_tp2_graph_contract() -> None:
     """O5 Profile 必须绑定 O5 target、248168 rows 与 TP2 Graph。"""
 
@@ -134,7 +117,6 @@ def test_o5_single_opt_profile_requires_one_gpu_and_no_backbone() -> None:
     ("deployment_mode", "tp_size", "backbone_dir"),
     [
         ("tp2", 1, "/checkpoint/o5-backbone"),
-        ("tp2", 2, None),
         ("single_eager", 2, None),
         ("single_opt", 2, None),
     ],
@@ -172,17 +154,17 @@ def test_profile_rejects_cross_model_target() -> None:
         )
 
 
-def test_load_profile_uses_discriminated_union(tmp_path: Path) -> None:
+def test_load_profile_uses_o5_profile(tmp_path: Path) -> None:
     """JSON loader 应按 model_family 返回具体 Profile 类型。"""
 
     profile_path = tmp_path / "profile.json"
     profile_path.write_text(
         json.dumps(
             {
-                "profile_id": "o45-json",
-                "model_family": "o45",
-                "model_path": "/model/o45",
-                "pt_path": "/checkpoint/o45.pt",
+                "profile_id": "o5-json",
+                "model_family": "o5",
+                "model_path": "/model/o5",
+                "pt_path": "/checkpoint/o5.pt",
                 "unit_policy": _unit_policy().model_dump(mode="json"),
             }
         ),
@@ -195,7 +177,7 @@ def test_load_profile_uses_discriminated_union(tmp_path: Path) -> None:
         check_sdk_version=False,
     )
 
-    assert isinstance(profile, O45FcDeploymentProfile)
+    assert isinstance(profile, O5FcDeploymentProfile)
 
 
 @pytest.fixture(autouse=True)
@@ -305,15 +287,6 @@ def test_o5_single_profile_removes_stale_backbone_environment(
     assert "O5_BACKBONE_DIR" not in __import__("os").environ
 
 
-def test_o45_adapter_exposes_matching_tokenizer_and_resume() -> None:
-    """O45 Adapter 应使用 O45_FC tokenizer 并保留 Resume。"""
-
-    adapter = O45FcDuplexModelAdapter(_FakeModel(O5TokenizerID.O45_FC))
-
-    assert adapter.protocol_tokenizer.target == "o45_fc"
-    assert adapter.resume_boundary_status() == {"status": "available"}
-
-
 def test_o5_adapter_exposes_matching_tokenizer_and_defers_resume() -> None:
     """O5 MVP Adapter 使用 O5 tokenizer，并显式推迟 Stateless Resume。"""
 
@@ -343,10 +316,9 @@ def test_o5_adapter_accepts_existing_private_sdk_tokenizer_slot() -> None:
 def test_adapter_factory_never_guesses_model_family() -> None:
     """Factory 只接受 DeploymentProfile 已明确声明的模型族。"""
 
-    model = _FakeModel(O5TokenizerID.O45_FC)
-    adapter = create_fc_duplex_model_adapter(model=model, model_family="o45")
-
-    assert isinstance(adapter, O45FcDuplexModelAdapter)
+    model = _FakeModel(O5TokenizerID.O5)
+    with pytest.raises(ValueError, match="unsupported FC model_family"):
+        create_fc_duplex_model_adapter(model=model, model_family="o45")
 
 
 def test_unit_cost_accumulator_sums_per_phase_and_resets():

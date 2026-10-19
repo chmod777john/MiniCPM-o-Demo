@@ -11,7 +11,6 @@ from typing import Any
 
 import pytest
 
-from core.fc_duplex.model_adapter import O45FcDuplexModelAdapter
 from core.fc_duplex.protocol_errors import PROTOCOL_VIOLATIONS, ConstrainedDecodingError, ModelProtocolError
 from core.fc_duplex.system_input import FcSystemContentInput
 from core.processors.unified import FcDuplexView
@@ -19,12 +18,12 @@ from core.schemas.fc_duplex import FcDuplexPrepareRequest, FcNonSpokenGenerateRe
 from py_backend.server import _fatal_reason
 
 # 复用现有 View 测试里的 CPU fake model（不加载权重）
-from tests.test_fc_duplex_view_streaming_text import _FakeFcModel
+from tests.test_fc_duplex_view_streaming_text import _FakeFcModel, _FixtureAdapter
 
 
 def _view(model: _FakeFcModel) -> FcDuplexView:
-    adapter = O45FcDuplexModelAdapter(model)
-    assert adapter.drops_unclassified_non_spoken_tokens is False   # O45 默认：违例即报错
+    adapter = _FixtureAdapter(model)
+    assert adapter.drops_unclassified_non_spoken_tokens is False   # fixture 默认：违例即报错
     view = FcDuplexView(adapter)
     view.prepare(FcDuplexPrepareRequest(system=FcSystemContentInput()))
     return view
@@ -119,7 +118,7 @@ def test_violation_under_constrained_decoding_is_infra_error() -> None:
     model = _FakeFcModel()
     model.non_spoken_results = [{"token_ids": _ids(model, "<think_end>")}]
     view = _view(model)
-    # 假模型走的是 O45 adapter（不支持 constrained、会直接拒）；这里只测 view 的错误分类，
+    # 假模型只提供结果；这里只测 view 的错误分类，
     # 把 adapter 换成「吃掉 policy 后照常生成」的样子，等价于 O5 模型侧放过了一个违例 token。
     orig = view._adapter.streaming_non_spoken_generate
     view._adapter.streaming_non_spoken_generate = lambda **kw: orig(**{**kw, "decoding_policy": "raise_protocol_error"})

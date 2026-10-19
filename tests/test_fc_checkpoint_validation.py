@@ -8,13 +8,12 @@ from pathlib import Path
 import torch
 import torch.distributed.checkpoint as dcp
 
-from core.fc_duplex.profiles import O45FcDeploymentProfile, O5FcDeploymentProfile
+from core.fc_duplex.profiles import O5FcDeploymentProfile
 from minicpm_o5_sdk import O5UnitPolicy
 from tools.checkpoint.convert_mcore_to_pt import (
     _runtime_key,
     convert_model_only_dcp_to_pt,
 )
-from tools.checkpoint.extract_o5_tp2_backbone import build_o5_text_config
 from tools.checkpoint.validate_fc_checkpoint import validate_fc_checkpoint
 
 
@@ -40,55 +39,24 @@ def _write_checkpoint(path: Path, rows: int) -> None:
     )
 
 
-def test_o45_checkpoint_rows_match_sdk005(tmp_path: Path) -> None:
-    """O45 checkpoint 的 embedding/lm_head 必须都是 151772 行。"""
-
-    pt_path = tmp_path / "o45.pt"
-    _write_checkpoint(pt_path, 151772)
-    model_path = tmp_path / "o45-model"
-    model_path.mkdir()
-    profile = O45FcDeploymentProfile(
-        profile_id="o45-valid",
-        model_path=str(model_path),
-        pt_path=str(pt_path),
-        unit_policy=_unit_policy(),
-    )
-
-    report = validate_fc_checkpoint(profile)
-
-    assert report.valid is True
-    assert report.embedding_rows == 151772
-
-
-def test_o5_checkpoint_and_backbone_match_sdk005(tmp_path: Path) -> None:
-    """O5 完整 PT 与 TP2 backbone 必须共同使用 248168 rows。"""
+def test_o5_full_checkpoint_matches_required_rows(tmp_path: Path) -> None:
+    """O5 完整 PT 必须使用 248168 rows；独立 backbone 不再参与校验。"""
 
     pt_path = tmp_path / "o5.pt"
     _write_checkpoint(pt_path, 248168)
     model_path = tmp_path / "o5-model"
     model_path.mkdir()
-    backbone = tmp_path / "o5-backbone"
-    backbone.mkdir()
-    (backbone / "config.json").write_text(
-        json.dumps({"vocab_size": 248168}),
-        encoding="utf-8",
-    )
-    (backbone / "model.safetensors.index.json").write_text(
-        json.dumps({"metadata": {}, "weight_map": {}}),
-        encoding="utf-8",
-    )
     profile = O5FcDeploymentProfile(
         profile_id="o5-valid",
         model_path=str(model_path),
         pt_path=str(pt_path),
-        backbone_dir=str(backbone),
         unit_policy=_unit_policy(),
     )
 
     report = validate_fc_checkpoint(profile)
 
     assert report.valid is True
-    assert report.backbone_vocab_size == 248168
+    assert report.backbone_vocab_size is None
 
 
 def test_o5_rejects_legacy_005a1_rows(tmp_path: Path) -> None:
@@ -98,21 +66,10 @@ def test_o5_rejects_legacy_005a1_rows(tmp_path: Path) -> None:
     _write_checkpoint(pt_path, 248174)
     model_path = tmp_path / "o5-model"
     model_path.mkdir()
-    backbone = tmp_path / "o5-backbone"
-    backbone.mkdir()
-    (backbone / "config.json").write_text(
-        json.dumps({"vocab_size": 248174}),
-        encoding="utf-8",
-    )
-    (backbone / "model.safetensors.index.json").write_text(
-        json.dumps({"metadata": {}, "weight_map": {}}),
-        encoding="utf-8",
-    )
     profile = O5FcDeploymentProfile(
         profile_id="o5-invalid-a1",
         model_path=str(model_path),
         pt_path=str(pt_path),
-        backbone_dir=str(backbone),
         unit_policy=_unit_policy(),
     )
 
@@ -174,33 +131,3 @@ def test_mcore_model_only_dcp_converts_to_runtime_pt(tmp_path: Path) -> None:
     assert "llm.model.embed_tokens.weight" in state
     assert "optimizer.state" not in state
     assert _runtime_key("model.foo") == "foo"
-
-
-def test_o5_backbone_config_strips_multimodal_remote_code_fields() -> None:
-    """TP2 backbone 必须保存纯 text config，不能继续引用外部 modeling。"""
-
-    config = build_o5_text_config(
-        {
-            "auto_map": {"AutoConfig": "configuration_minicpmo.MiniCPMOConfig"},
-            "model_type": "minicpmo",
-            "text_config": {"vocab_size": 999999},
-            "vision_config": {"hidden_size": 1},
-            "hidden_size": 2048,
-            "num_hidden_layers": 40,
-            "num_attention_heads": 16,
-            "num_key_value_heads": 2,
-            "head_dim": 256,
-            "num_experts": 256,
-            "num_experts_per_tok": 8,
-            "moe_intermediate_size": 512,
-            "shared_expert_intermediate_size": 512,
-        },
-        expected_rows=248168,
-    )
-    serialized = config.to_dict()
-
-    assert config.model_type == "qwen3_5_moe_text"
-    assert config.vocab_size == 248168
-    assert "auto_map" not in serialized
-    assert "text_config" not in serialized
-    assert "vision_config" not in serialized

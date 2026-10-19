@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
+: "${O5_CANONICAL_PATH:?set to the external HF source directory}"
 
 PROJECT_DIR="${PROJECT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
-MODEL_PATH="${MODEL_PATH:-}"
-PT_PATH="${PT_PATH:-}"
+MODEL_PATH="${MODEL_PATH:-${O5_CANONICAL_PATH}}"
+PT_PATH="${O5_CHECKPOINT_PATH:-${PT_PATH:-}}"
 VENV_DIR="${VENV_DIR:-${PROJECT_DIR}/.venv}"
 
 BACKEND_HOST="${BACKEND_HOST:-127.0.0.1}"

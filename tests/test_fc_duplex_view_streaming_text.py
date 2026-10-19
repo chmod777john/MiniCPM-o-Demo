@@ -6,7 +6,7 @@ from typing import Any
 
 import pytest
 
-from core.fc_duplex.model_adapter import O45FcDuplexModelAdapter
+from core.fc_duplex.model_adapter import O5FcDuplexModelAdapter
 from core.fc_duplex.system_input import FcSystemContentInput
 from core.fc_duplex.system_prefill import FcModelPrepareResult
 from core.processors.unified import (
@@ -26,6 +26,17 @@ from minicpm_o5_sdk import (
 )
 from py_backend.fc_duplex_runtime import FcDuplexSessionRuntime
 from core.processors.pytorch_backend import PyTorchBackend
+
+
+class _FixtureAdapter(O5FcDuplexModelAdapter):
+    """Protocol-only fixture: retain the SDK token IDs and resume assertions.
+
+    No O45 model implementation is loaded; the fake accepts arbitrary kwargs.
+    Production O5 still declares supports_stateless_resume=False.
+    """
+
+    tokenizer_target = "o45_fc"
+    supports_stateless_resume = True
 
 
 class _FakeCapability:
@@ -113,7 +124,7 @@ def test_view_uses_fixed_tool_call_ids_and_fails_when_exhausted() -> None:
     """评测生成器应按顺序分配固定内部 ID，并在耗尽时立即失败。"""
 
     model = _FakeFcModel()
-    view = FcDuplexView(O45FcDuplexModelAdapter(model))  # type: ignore[arg-type]
+    view = FcDuplexView(_FixtureAdapter(model))  # type: ignore[arg-type]
     view.prepare(
         FcDuplexPrepareRequest(system=FcSystemContentInput()),
         tool_call_id_generator=FixedToolCallIdGenerator(["eval_call_001"]),
@@ -134,7 +145,7 @@ def test_view_default_tool_call_id_generator_is_unchanged() -> None:
     """普通 View Session 应继续生成 fc_call_* 内部 ID。"""
 
     model = _FakeFcModel()
-    view = FcDuplexView(O45FcDuplexModelAdapter(model))  # type: ignore[arg-type]
+    view = FcDuplexView(_FixtureAdapter(model))  # type: ignore[arg-type]
     view.prepare(FcDuplexPrepareRequest(system=FcSystemContentInput()))
 
     call_id = view.tool_call_manager.register_tool_call(
@@ -202,7 +213,7 @@ def test_non_spoken_text_delta_crosses_primitive_calls_without_replacement() -> 
             "closed_spans": [{"type": "think", "text": "龘"}],
         },
     ]
-    view = FcDuplexView(O45FcDuplexModelAdapter(model))  # type: ignore[arg-type]
+    view = FcDuplexView(_FixtureAdapter(model))  # type: ignore[arg-type]
     view.prepare(FcDuplexPrepareRequest(system=FcSystemContentInput()))
 
     started = view.streaming_non_spoken_generate(FcNonSpokenGenerateRequest())
@@ -241,7 +252,7 @@ def test_spoken_stream_keeps_pending_text_across_units_until_turn_eos() -> None:
             "spoken_turn_eos": True,
         },
     ]
-    view = FcDuplexView(O45FcDuplexModelAdapter(model))  # type: ignore[arg-type]
+    view = FcDuplexView(_FixtureAdapter(model))  # type: ignore[arg-type]
     view.prepare(FcDuplexPrepareRequest(system=FcSystemContentInput()))
 
     first = view.streaming_spoken_generate(FcSpokenGenerateRequest())
@@ -273,7 +284,7 @@ def test_view_marks_non_roundtrippable_safe_delta_as_non_resumable() -> None:
             "spoken_turn_eos": True,
         }
     ]
-    view = FcDuplexView(O45FcDuplexModelAdapter(model))  # type: ignore[arg-type]
+    view = FcDuplexView(_FixtureAdapter(model))  # type: ignore[arg-type]
     view.prepare(FcDuplexPrepareRequest(system=FcSystemContentInput()))
 
     result = view.streaming_spoken_generate(FcSpokenGenerateRequest())
@@ -307,7 +318,7 @@ def test_spoken_repeated_speak_across_units_reuses_turn_stream() -> None:
             "spoken_turn_eos": True,
         },
     ]
-    view = FcDuplexView(O45FcDuplexModelAdapter(model))  # type: ignore[arg-type]
+    view = FcDuplexView(_FixtureAdapter(model))  # type: ignore[arg-type]
     view.prepare(FcDuplexPrepareRequest(system=FcSystemContentInput()))
 
     first = view.streaming_spoken_generate(FcSpokenGenerateRequest())
@@ -336,7 +347,7 @@ def test_spoken_listen_before_turn_eos_is_public_warning() -> None:
             "spoken_ids": [listen],
         },
     ]
-    view = FcDuplexView(O45FcDuplexModelAdapter(model))  # type: ignore[arg-type]
+    view = FcDuplexView(_FixtureAdapter(model))  # type: ignore[arg-type]
     view.prepare(FcDuplexPrepareRequest(system=FcSystemContentInput()))
     view.streaming_spoken_generate(FcSpokenGenerateRequest())
 
@@ -361,7 +372,7 @@ def test_budget_reached_preserves_think_stream_for_direct_closer() -> None:
             "closed_spans": [{"type": "think", "text": "完整"}],
         },
     ]
-    view = FcDuplexView(O45FcDuplexModelAdapter(model))  # type: ignore[arg-type]
+    view = FcDuplexView(_FixtureAdapter(model))  # type: ignore[arg-type]
     view.prepare(FcDuplexPrepareRequest(system=FcSystemContentInput()))
 
     first = view.streaming_non_spoken_generate(FcNonSpokenGenerateRequest())
@@ -392,7 +403,7 @@ def test_pending_bpe_crosses_budget_without_warning_or_replacement() -> None:
             "closed_spans": [{"type": "think", "text": "龘"}],
         },
     ]
-    view = FcDuplexView(O45FcDuplexModelAdapter(model))  # type: ignore[arg-type]
+    view = FcDuplexView(_FixtureAdapter(model))  # type: ignore[arg-type]
     view.prepare(FcDuplexPrepareRequest(system=FcSystemContentInput()))
     first = view.streaming_non_spoken_generate(FcNonSpokenGenerateRequest())
 
@@ -417,7 +428,7 @@ def test_unclassified_non_spoken_token_is_warned_and_dropped_for_o5() -> None:
     model.non_spoken_results = [
         {"token_ids": tokenizer.encode_ordinary("未分类文本")}
     ]
-    adapter = O45FcDuplexModelAdapter(model)
+    adapter = _FixtureAdapter(model)
     adapter.drops_unclassified_non_spoken_tokens = True
     view = FcDuplexView(adapter)
     view.prepare(FcDuplexPrepareRequest(system=FcSystemContentInput()))
@@ -451,7 +462,7 @@ def test_pending_bpe_at_explicit_end_emits_warning_instead_of_runtime_error() ->
             "closed_spans": [{"type": "think", "text": "\ufffd"}],
         },
     ]
-    view = FcDuplexView(O45FcDuplexModelAdapter(model))  # type: ignore[arg-type]
+    view = FcDuplexView(_FixtureAdapter(model))  # type: ignore[arg-type]
     view.prepare(FcDuplexPrepareRequest(system=FcSystemContentInput()))
     view.streaming_non_spoken_generate(FcNonSpokenGenerateRequest())
 

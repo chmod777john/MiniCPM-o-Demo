@@ -56,7 +56,7 @@ class PyTorchBackend:
         compile: bool = False,
         chat_vocoder: str = "token2wav",
         attn_implementation: str = "auto",
-        fc_model_family: Literal["o45", "o5"] = "o5",
+        fc_model_family: Literal["o5"] = "o5",
     ):
         self.model_path = model_path
         self.gpu_id = gpu_id
@@ -70,8 +70,6 @@ class PyTorchBackend:
 
         self.status = "loading"
         self.processor = None
-        self.spmd_is_driver = False
-        self.spmd_is_worker = False
 
         # Duplex 暂停超时监控 task
         self._duplex_timeout_task: Optional[asyncio.Task] = None
@@ -99,30 +97,8 @@ class PyTorchBackend:
         self.status = "ready"
         logger.info(f"[GPU {self.gpu_id}] Model loaded successfully")
 
-        self._install_spmd_method_wrappers()
-
         # 检查模型各组件的 device 分布
         self._log_device_map()
-
-    def _get_spmd_noop(self) -> Any:
-        model = getattr(self.processor, "model", None)
-        return getattr(model, "_spmd_noop", None)
-
-    def _install_spmd_method_wrappers(self) -> None:
-        """Mark driver backends that need idle SPMD heartbeat no-op calls.
-
-        TP2 synchronization is intentionally confined to the LLM/graph runner
-        boundary.  Backend chat/duplex/FC APIs should remain single-rank business
-        logic and must not be mirrored wholesale.
-        """
-        if self._get_spmd_noop() is not None:
-            self.spmd_is_driver = True
-            self.spmd_is_worker = False
-
-    def call_spmd_noop(self) -> None:
-        noop = self._get_spmd_noop()
-        if noop is not None:
-            noop()
 
     def _log_device_map(self) -> None:
         """打印模型各关键组件的 device，用于确认是否全部在 GPU 上"""

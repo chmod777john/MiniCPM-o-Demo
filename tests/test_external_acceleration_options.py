@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 source = ROOT / "core/deploy/modes.py"
 functions = [node for node in ast.parse(source.read_text()).body
              if isinstance(node, ast.FunctionDef) and node.name in {"_env_flag", "_enable_engine"}]
-ns = dict(os=os, Any=Any, Dict=Dict, external_enabled=lambda: True)
+ns = dict(os=os, Any=Any, Dict=Dict)
 exec(compile(ast.Module(functions, type_ignores=[]), str(source), "exec"), ns)
 
 calls = []

@@ -3,7 +3,6 @@
 用户定的规则（2026-10-10）：
 - 落在哪个 Unit：与工具结果共用一个队列、按到达顺序，进入下一个被处理的音频 Unit；
 - 回执：``response.unit.started`` 新增 ``standalone_events``，回显被该 Unit 吃掉的 event_id；
-- O45 已停止维护：O45 收到 standalone 直接报错，不做续传。
 """
 
 from __future__ import annotations
@@ -14,7 +13,7 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
-from core.fc_duplex.model_adapter import O45FcDuplexModelAdapter, O5FcDuplexModelAdapter
+from core.fc_duplex.model_adapter import O5FcDuplexModelAdapter
 from core.processors.unified import FcDuplexView
 from core.schemas.fc_duplex import (
     FcDuplexPrefillRequest,
@@ -107,18 +106,6 @@ def test_view_keeps_legacy_tool_responses_field_working() -> None:
         FcDuplexPrefillRequest(tool_responses=[FcToolResponse(call_id=call, content="晴")])
     )
     assert [e["type"] for e in model.prefill_events[-1]] == ["tool_response"]
-
-
-def test_o45_rejects_standalone_event_explicitly() -> None:
-    """O45 已停止维护：收到 standalone 要报明确原因，而不是渲染层的「缺 call_id」。"""
-
-    model = _CapturingModel(O5TokenizerID.O45_FC)
-    view = FcDuplexView(O45FcDuplexModelAdapter(model))  # type: ignore[arg-type]
-    with pytest.raises(NotImplementedError, match="O45.*standalone_event"):
-        view.streaming_prefill(
-            FcDuplexPrefillRequest(input_events=[FcStandaloneEvent(content="x")])
-        )
-    assert model.prefill_events == []
 
 
 # ---------------------------------------------------------------- runtime

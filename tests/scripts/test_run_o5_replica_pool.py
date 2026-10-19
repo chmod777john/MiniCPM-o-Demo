@@ -20,14 +20,6 @@ from scripts.run_o5_replica_pool import (
 )
 
 
-def _write_backbone(backbone_dir: Path) -> None:
-    """创建满足静态校验的最小 TP2 backbone。"""
-
-    backbone_dir.mkdir()
-    (backbone_dir / "config.json").write_text("{}", encoding="utf-8")
-    (backbone_dir / "model.safetensors.index.json").write_text("{}", encoding="utf-8")
-
-
 def _internal_settings(tmp_path: Path) -> O5ApiRuntimeSettings:
     runtime_python = tmp_path / "venv" / "bin" / "python"
     runtime_python.parent.mkdir(parents=True)
@@ -139,31 +131,27 @@ def test_single_opt_plan_is_session_bound_and_uses_requested_cache(
     assert [replica.worker_port for replica in plan.replicas] == [22410, 22411]
 
 
-def test_single_mode_rejects_backbone(tmp_path: Path) -> None:
-    """单卡模式传 backbone 属于配置错误，应直接拒绝。"""
+def test_external_mode_rejects_backbone(tmp_path: Path) -> None:
+    """外部模式不使用 backbone，显式传入时拒绝。"""
 
     backbone = tmp_path / "backbone"
-    _write_backbone(backbone)
     settings = ReplicaPoolSettings(
         pt_path=_pt(tmp_path),
-        backbone_dir=backbone,
         deployment_mode="single_opt",
         gpu_groups=((0,),),
         runtime_dir=tmp_path / "runtime",
         llm_cache=32768,
+        backbone_dir=backbone,
     )
-    with pytest.raises(ValueError, match="单卡模式不使用 backbone"):
+    with pytest.raises(ValueError, match="omit --backbone-dir"):
         prepare_runtime_plan(settings=settings, internal=_internal_settings(tmp_path))
 
 
-def test_tp2_plan_keeps_backbone_and_two_gpu_contract(tmp_path: Path) -> None:
-    """TP2 副本池应使用显式给出的 backbone。"""
+def test_tp2_plan_uses_full_pt_and_two_gpu_contract(tmp_path: Path) -> None:
+    """TP2 副本池使用完整 PT，不要求独立 backbone。"""
 
-    backbone = tmp_path / "backbone"
-    _write_backbone(backbone)
     settings = ReplicaPoolSettings(
         pt_path=_pt(tmp_path),
-        backbone_dir=backbone,
         deployment_mode="tp2",
         gpu_groups=((0, 1), (2, 3)),
         runtime_dir=tmp_path / "tp2-runtime",
@@ -175,7 +163,7 @@ def test_tp2_plan_keeps_backbone_and_two_gpu_contract(tmp_path: Path) -> None:
 
     assert profile["deployment_mode"] == "tp2"
     assert profile["tp_size"] == 2
-    assert profile["backbone_dir"] == str(backbone)
+    assert profile["backbone_dir"] is None
     assert [replica.master_port for replica in plan.replicas] == [29500, 29501]
 
 

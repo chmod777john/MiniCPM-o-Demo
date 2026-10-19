@@ -8,12 +8,11 @@ import types
 from pathlib import Path
 
 
-def enabled():
-    return bool(os.environ.get("O5_CANONICAL_PATH"))
-
-
 def canonical_module(name):
-    root = Path(os.environ["O5_CANONICAL_PATH"]).expanduser().resolve()
+    configured = os.environ.get("O5_CANONICAL_PATH")
+    if not configured:
+        raise ValueError("O5_CANONICAL_PATH is required: set it to the external HF source directory")
+    root = Path(configured).expanduser().resolve()
     for filename in ("configuration_minicpmo.py", "modeling_minicpmo.py", "processing_minicpmo.py"):
         if not (root / filename).is_file():
             raise FileNotFoundError(root / filename)
@@ -37,7 +36,10 @@ def canonical_module(name):
 
 
 def checkpoint_path(cfg):
-    return os.environ.get("O5_CHECKPOINT_PATH") or cfg.get("pt_path")
+    path = os.environ.get("O5_CHECKPOINT_PATH") or cfg.get("pt_path")
+    if not path:
+        raise ValueError("O5_CHECKPOINT_PATH or pt_path is required for the full O5 checkpoint")
+    return path
 
 
 def checkpoint_state(path):

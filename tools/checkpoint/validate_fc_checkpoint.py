@@ -1,8 +1,7 @@
 """校验 SDK 0.0.5 FC checkpoint 与部署 Profile 的硬兼容性。
 
-该工具只读取完整 PT 和 O5 TP2 backbone 元数据，不加载模型到 GPU。它在服务启动前
-确认 embedding/lm_head rows、SDK target 和 backbone config 一致，避免把错误权重组合
-推进到昂贵的 TP2 启动阶段。
+该工具只读取完整 PT，不加载模型到 GPU。检查 embedding/lm_head rows、SDK target
+和 checkpoint hash；外部 HF/accel 不使用独立的 TP2 backbone。
 """
 
 from __future__ import annotations
@@ -18,7 +17,6 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from core.fc_duplex.profiles import (
     FcDeploymentProfile,
-    O5FcDeploymentProfile,
     load_fc_deployment_profile,
 )
 
@@ -72,7 +70,7 @@ def load_checkpoint_state_dict(pt_path: str | Path) -> dict[str, Any]:
 def validate_fc_checkpoint(
     profile: FcDeploymentProfile,
 ) -> FcCheckpointValidationReport:
-    """校验 Profile 引用的完整 PT 与可选 O5 backbone。
+    """校验 Profile 引用的完整 PT。
 
     参数:
         profile: 已通过 schema、路径和 SDK 版本校验的部署 Profile。
@@ -115,22 +113,6 @@ def validate_fc_checkpoint(
         )
 
     backbone_vocab_size: int | None = None
-    if (
-        isinstance(profile, O5FcDeploymentProfile)
-        and profile.deployment_mode == "tp2"
-    ):
-        if profile.backbone_dir is None:
-            raise ValueError("O5 TP2 Profile 缺少 backbone_dir")
-        config_path = Path(profile.backbone_dir) / "config.json"
-        backbone_config = json.loads(config_path.read_text(encoding="utf-8"))
-        backbone_vocab_size = int(backbone_config["vocab_size"])
-        if backbone_vocab_size != profile.required_model_rows:
-            errors.append(
-                "backbone vocab_size mismatch: "
-                f"expected={profile.required_model_rows}, "
-                f"actual={backbone_vocab_size}"
-            )
-
     sha_verified: bool | None = None
     if profile.checkpoint_sha256 is not None:
         actual_sha256 = _sha256_file(Path(profile.pt_path))

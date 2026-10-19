@@ -1,8 +1,4 @@
-"""O45/O5 模型 primitive 的统一 Adapter。
-
-共享 ``FcDuplexView`` 只依赖本模块的 Protocol。O45 与 O5 的 modeling、checkpoint
-加载、TP2 和 LLM Graph 差异都必须停留在 Adapter 以下。
-"""
+"""Bridge external O5 HF primitives to the Demo FC session interface."""
 
 from __future__ import annotations
 
@@ -18,8 +14,8 @@ from core.fc_duplex.system_prefill import FcModelPrepareResult
 class FcDuplexModelAdapter(Protocol):
     """共享 View 所需的最小模型能力。"""
 
-    model_family: Literal["o45", "o5"]
-    tokenizer_target: Literal["o45_fc", "o5"]
+    model_family: Literal["o5"]
+    tokenizer_target: Literal["o5"]
     supports_stateless_resume: bool
     drops_unclassified_non_spoken_tokens: bool
 
@@ -75,8 +71,8 @@ class FcDuplexModelAdapter(Protocol):
 class _BasePassthroughFcDuplexModelAdapter:
     """把既有 unified model 的 ``fc_duplex_*`` 方法适配为共享接口。"""
 
-    model_family: Literal["o45", "o5"]
-    tokenizer_target: Literal["o45_fc", "o5"]
+    model_family: Literal["o5"]
+    tokenizer_target: Literal["o5"]
     supports_stateless_resume: bool
 
     def __init__(self, model: Any) -> None:
@@ -132,7 +128,7 @@ class _BasePassthroughFcDuplexModelAdapter:
 
         kwargs = {}
         if input_mode != "audio":
-            # O45 已停止维护,只有 O5 认 input_mode;audio 时不传,保持 O45 调用形状不变
+            # Audio is the HF default; Omni is passed explicitly.
             kwargs["input_mode"] = input_mode
         return dict(
             self._model.fc_duplex_prepare(
@@ -215,45 +211,6 @@ class _BasePassthroughFcDuplexModelAdapter:
         self._model.fc_duplex_cleanup()
 
 
-class O45FcDuplexModelAdapter(_BasePassthroughFcDuplexModelAdapter):
-    """O45_FC target 的单卡模型 Adapter。"""
-
-    model_family: Literal["o45"] = "o45"
-    tokenizer_target: Literal["o45_fc"] = "o45_fc"
-    supports_stateless_resume = True
-    drops_unclassified_non_spoken_tokens = False
-
-    def streaming_spoken_generate(self, **kwargs: Any) -> dict[str, Any]:
-        """O45 只有一种 pad 形态，模型签名里没有 ``tts_pad_protocol``。
-
-        上层（``core/processors/unified.py``）对所有模型无条件传这个参数，所以必须在这里
-        吃掉；否则 O45 部署每个 Session 第一个 unit 就 ``unexpected keyword argument``
-        （同类问题在 O5 外层包装上已经实际发生过一次，见 a8cc956）。
-        """
-
-        protocol = kwargs.pop("tts_pad_protocol", "legacy")
-        if protocol != "legacy":
-            raise ValueError(
-                f"O45 模型不支持 tts_pad_protocol={protocol!r}，只有 legacy 一种 pad 形态"
-            )
-        _drop_decoding_policy(kwargs)
-        return super().streaming_spoken_generate(**kwargs)
-
-    def streaming_non_spoken_generate(self, **kwargs: Any) -> dict[str, Any]:
-        """同上：O45 模型签名里没有 ``decoding_policy``，必须在这里吃掉。"""
-
-        _drop_decoding_policy(kwargs)
-        return super().streaming_non_spoken_generate(**kwargs)
-
-
-def _drop_decoding_policy(kwargs: dict[str, Any]) -> None:
-    """O45 没有协议状态机，只支持 raise_protocol_error（即不干预解码）。"""
-
-    policy = kwargs.pop("decoding_policy", "raise_protocol_error")
-    if policy != "raise_protocol_error":
-        raise ValueError(f"O45 模型不支持 decoding_policy={policy!r}，只有 raise_protocol_error")
-
-
 class O5FcDuplexModelAdapter(_BasePassthroughFcDuplexModelAdapter):
     """O5 target 的 MoE/TP2/LLM Graph 模型 Adapter。"""
 
@@ -267,20 +224,18 @@ class O5FcDuplexModelAdapter(_BasePassthroughFcDuplexModelAdapter):
 def create_fc_duplex_model_adapter(
     *,
     model: Any,
-    model_family: Literal["o45", "o5"],
+    model_family: Literal["o5"],
 ) -> FcDuplexModelAdapter:
     """按部署 Profile 显式创建一个模型 Adapter。
 
     参数:
         model: 已完成 checkpoint 加载的 unified model。
-        model_family: 部署 Profile 明确声明的 ``o45`` 或 ``o5``。
+        model_family: 部署 Profile 明确声明的 ``o5``。
 
     返回:
         与模型族匹配的强类型 Adapter。
     """
 
-    if model_family == "o45":
-        return O45FcDuplexModelAdapter(model)
     if model_family == "o5":
         return O5FcDuplexModelAdapter(model)
     raise ValueError(f"unsupported FC model_family: {model_family}")

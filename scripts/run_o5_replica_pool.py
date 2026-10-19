@@ -37,7 +37,6 @@ from core.fc_duplex.profiles import O5FcDeploymentProfile
 from scripts.run_o5_api import (
     DEFAULT_INTERNAL_SETTINGS_PATH,
     O5ApiRuntimeSettings,
-    _is_backbone_dir,
 )
 
 
@@ -51,18 +50,18 @@ class ReplicaPoolSettings(BaseModel):
 
     参数:
         pt_path: 完整 O5 PT（``.pt`` state_dict）。
-        backbone_dir: TP2 使用的 HF sharded backbone；单卡模式必须为 None。
+        backbone_dir: 已废弃；所有模式均使用完整 PT，必须为 None。
         deployment_mode: 单卡优化、单卡 eager 或双卡 TP2。
         gpu_groups: 每个模型副本独占的 GPU 分组（``CUDA_VISIBLE_DEVICES`` 编号）。
         runtime_dir: 本次运行的配置、日志、cache 与 ready marker 根目录（必须不存在）。
-        llm_cache: 每个 Session 的 LLM StaticCache 位置上限；超出时 Session 直接失败。
+        llm_cache: 旧部署的缓存元数据；外部 accel 通过自身配置管理缓存。
         remote_gateway: 远端 Gateway 内部注册地址（``http://host:port``）；None 表示本机起 Gateway。
         advertise_host: 注册给 Gateway 的本机 Worker 地址；本机 Gateway 时为 127.0.0.1。
         gateway_port: 本机 Gateway 公共端口。
         gateway_internal_port: 本机 Gateway Worker registry 端口。
         backend_base_port: 第一个 Backend 端口。
         worker_base_port: 第一个 Worker 端口。
-        master_base_port: 第一个 TP2 torchrun rendezvous 端口。
+        master_base_port: 历史计划元数据；单进程 accel 不使用 rendezvous。
         placement: 本机 Gateway 的新会话放置策略（``spread`` / ``pack``），见 ``config.ServiceSectionConfig.placement``；
             只对本机起的 Gateway 生效。
         recording_dir: API 往返数据录制根目录；None = 不录制。指定后本机 Gateway 把每个
@@ -267,16 +266,8 @@ def _validate_group_width(
 def _validate_model_assets(settings: ReplicaPoolSettings) -> None:
     if not settings.pt_path.is_file():
         raise FileNotFoundError(f"pt_path 不存在或不是文件: {settings.pt_path}")
-    if settings.deployment_mode == "tp2":
-        if settings.backbone_dir is None:
-            raise ValueError("tp2 模式必须提供 --backbone-dir")
-        if not _is_backbone_dir(settings.backbone_dir):
-            raise FileNotFoundError(
-                "backbone 缺少 config.json 或 model.safetensors.index.json: "
-                f"{settings.backbone_dir}"
-            )
-    elif settings.backbone_dir is not None:
-        raise ValueError("单卡模式不使用 backbone，禁止传 --backbone-dir")
+    if settings.backbone_dir is not None:
+        raise ValueError("External HF/accel loads the full PT; omit --backbone-dir")
 
 
 def _ensure_ports_available(ports: Sequence[int]) -> None:
@@ -337,11 +328,6 @@ def prepare_runtime_plan(
         unit_policy=None,
         non_spoken_scheduling=None,
         deployment_mode=settings.deployment_mode,
-        backbone_dir=(
-            str(settings.backbone_dir.resolve())
-            if settings.backbone_dir is not None
-            else None
-        ),
         tp_size=_GROUP_WIDTH[settings.deployment_mode],
         llm_cache=settings.llm_cache,
         spmd_heartbeat_interval_sec=internal.spmd_heartbeat_interval_sec,
@@ -515,10 +501,7 @@ def _base_environment(
             if host not in entries:
                 entries.append(host)
         environment[name] = ",".join(entries)
-    if plan.backbone_dir is not None:
-        environment["O5_BACKBONE_DIR"] = str(plan.backbone_dir)
-    else:
-        environment.pop("O5_BACKBONE_DIR", None)
+    environment.pop("O5_BACKBONE_DIR", None)
     return environment
 
 
@@ -544,11 +527,6 @@ def serve(
         ),
         *[replica.backend_port for replica in plan.replicas],
         *[replica.worker_port for replica in plan.replicas],
-        *(
-            [replica.master_port for replica in plan.replicas]
-            if plan.mode == "tp2"
-            else []
-        ),
     ]
     _ensure_ports_available(all_ports)
 
@@ -599,9 +577,7 @@ def serve(
                         str(gpu) for gpu in replica.gpu_group
                     ),
                     "TORCHINDUCTOR_CACHE_DIR": str(replica.replica_dir / "cache"),
-                    "O5_TORCHRUN_MASTER_PORT": str(replica.master_port),
-                    "MASTER_PORT": str(replica.master_port),
-                    "TORCHRUN": str(internal.runtime_python.parent / "torchrun"),
+                    "PYTHON": str(internal.runtime_python),
                 }
             )
             common_backend_args = [

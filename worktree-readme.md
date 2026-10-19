@@ -1,23 +1,8 @@
-# Minimal simplex Demo follow-up
+# External-only Demo adapter
 
-- Created: 2026-10-14 UTC.
-- Owner: Codex subagent `/root/hf_minimal_simplex_rewrite`.
-- Base branch: `o5-fc-dev-external-hf-20261013-hf-chat-20261014`.
-- Base commit: `d036b7a6`.
-- Candidate branch: `o5-fc-dev-external-hf-20261013-hf-chat-20261014-minimal-simplex`.
-- Purpose: pair with minimal HF simplex; remove simplex length_penalty exposure and bridge; connect desktop cancellation to the current realtime API and isolate late replies.
-- Scope: simplex page/parameter/view/backend files; no ordinary/FC duplex algorithms or shared video/share files owned by another agent.
-- Evidence: `/user/weihongliang/analysis-runs/20261014-hf-simplex-minimal/`.
-- Validation: authorized CPU and agent-dev GPU/API probes; exact results recorded separately. Fixed packaged images are not changed.
-
-
-## Demo upstream refresh candidate — 2026-10-19T08:08:22.751801+00:00
-
-- Owner: `/root/demo_refresh`.
-- Base branch: `demo-adapter-fc`.
-- Base commit: `e760421992b36459fb3e724be38d7caa9cb83551`.
-- Candidate branch: `demo-adapter-fc-upstream-refresh-20261019`.
-- Purpose: merge pinned `o5-fc-dev@e0f2ada084d395a00d1956957d345e82b8a5f8f7` while retaining external HF/accel and ordinary/simplex/mobile/deployment features.
-- Scope: this worktree only; no formal branch update, remote push, service changes, builds, or tests.
-- Handoff: candidate merge commit plus `/user/weihongliang/analysis-runs/20261019-o5fc-upstream-refresh/demo/REPORT.md`.
-- Earlier provenance in this file is retained as history.
+Created 2026-10-19 UTC by Codex/root from demo-adapter-fc@b1ac65015e9283f6bb9482ee25463dd98ad3ca3e.
+User authorized removing vendored O5/O45 model implementations, old fallback loading/acceleration paths and dependent entries.
+Scope: this Demo worktree; preserve external HF/accel model semantics, FC/API/application behavior.
+Avoid: live frozen 9007/9009 deployments, shared environments, HF/accel source. No GPU task allocated.
+Completion: coherent external-only source tree, static dependency review, committed change; fast-forward formal demo-adapter-fc.
+No new tests or inference runs requested for this cleanup. Existing tests that address deleted implementations must be removed or adapted.

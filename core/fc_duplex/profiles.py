@@ -1,4 +1,4 @@
-"""O45/O5 双工 FC 部署 Profile。
+"""O5 双工 FC 部署 Profile。
 
 部署 Profile 是模型选择的唯一入口。调用方不传模型参数；backend 启动时加载一个
 Profile，并据此选择 tokenizer target、checkpoint、ModelAdapter 与部署引擎。
@@ -10,7 +10,7 @@ import json
 import os
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
-from typing import Annotated, Literal, Union
+from typing import Literal
 
 from minicpm_o5_sdk import O5UnitPolicy
 from pydantic import (
@@ -24,7 +24,7 @@ from pydantic import (
 
 
 class _BaseFcDeploymentProfile(BaseModel):
-    """两个模型部署时共享的严格配置。"""
+    """外部 O5 HF 部署的严格配置。"""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -34,7 +34,7 @@ class _BaseFcDeploymentProfile(BaseModel):
         description="训练与推理共同使用的正式 MiniCPMO5 SDK 版本。",
     )
     model_path: str = Field(min_length=1, description="模型 config/tokenizer/processor 资产目录。")
-    pt_path: str = Field(min_length=1, description="完整 O45/O5 PyTorch state_dict 文件。")
+    pt_path: str = Field(min_length=1, description="完整 O5 PyTorch state_dict 文件。")
     checkpoint_sha256: str | None = Field(
         default=None,
         description="完整 checkpoint 的可选 SHA256；正式部署应填写。",
@@ -103,32 +103,22 @@ class _BaseFcDeploymentProfile(BaseModel):
         return value
 
 
-class O45FcDeploymentProfile(_BaseFcDeploymentProfile):
-    """O45 单卡双工 FC 部署配置。"""
-
-    model_family: Literal["o45"] = "o45"
-    tokenizer_target: Literal["o45_fc"] = "o45_fc"
-    required_model_rows: Literal[151772] = 151772
-    modeling_package: Literal["modeling.o45"] = "modeling.o45"
-    deployment_mode: Literal["single_eager", "single_opt"] = "single_eager"
-
-
 class O5FcDeploymentProfile(_BaseFcDeploymentProfile):
     """O5 MoE 单卡或 TP2 双工 FC 部署配置。"""
 
     model_family: Literal["o5"] = "o5"
     tokenizer_target: Literal["o5"] = "o5"
     required_model_rows: Literal[248168] = 248168
-    modeling_package: Literal["modeling.o5"] = "modeling.o5"
+    modeling_package: Literal["modeling.external_o5_facade"] = "modeling.external_o5_facade"
     deployment_mode: Literal["single_eager", "single_opt", "tp2"] = "tp2"
     backbone_dir: str | None = Field(
         default=None,
         min_length=1,
-        description="TP2 使用的 HF sharded safetensors LLM backbone；单卡模式不需要。",
+        description="历史部署元数据；外部 HF/accel 不加载独立 backbone。",
     )
     backbone_manifest_sha256: str | None = Field(
         default=None,
-        description="backbone manifest 的可选 SHA256；正式部署应填写。",
+        description="历史 backbone manifest 元数据；外部加载器不使用或校验它。",
     )
     tp_size: Literal[1, 2] = 2
     llm_graph: Literal[True] = True
@@ -156,7 +146,7 @@ class O5FcDeploymentProfile(_BaseFcDeploymentProfile):
 
     @model_validator(mode="after")
     def validate_deployment_topology(self) -> "O5FcDeploymentProfile":
-        """校验部署模式、TP 大小和 backbone 的组合关系。
+        """校验部署模式和 GPU 数量。
 
         返回:
             已校验的 Profile。
@@ -165,8 +155,6 @@ class O5FcDeploymentProfile(_BaseFcDeploymentProfile):
         if self.deployment_mode == "tp2":
             if self.tp_size != 2:
                 raise ValueError("tp2 模式必须使用 tp_size=2")
-            if self.backbone_dir is None and not os.environ.get("O5_CANONICAL_PATH"):
-                raise ValueError("tp2 模式必须提供 backbone_dir")
         elif self.tp_size != 1:
             raise ValueError("O5 单卡模式必须使用 tp_size=1")
         return self
@@ -186,11 +174,7 @@ class O5FcDeploymentProfile(_BaseFcDeploymentProfile):
         return _BaseFcDeploymentProfile.validate_sha256(value)
 
 
-FcDeploymentProfile = Annotated[
-    Union[O45FcDeploymentProfile, O5FcDeploymentProfile],
-    Field(discriminator="model_family"),
-]
-"""Backend 启动时唯一允许的 FC 部署 Profile 联合类型。"""
+FcDeploymentProfile = O5FcDeploymentProfile
 
 _PROFILE_ADAPTER = TypeAdapter(FcDeploymentProfile)
 
@@ -209,7 +193,7 @@ def load_fc_deployment_profile(
         check_sdk_version: 是否要求当前环境安装正式 ``0.0.6``。
 
     返回:
-        按 ``model_family`` 解析出的 O45 或 O5 Profile。
+        O5 外部 HF Profile。
 
     异常:
         FileNotFoundError: Profile 或声明的模型资产不存在。
@@ -275,15 +259,9 @@ def apply_fc_deployment_profile_environment(
     if profile.reference_audio_path is not None:
         os.environ["FC_REFERENCE_AUDIO_PATH"] = profile.reference_audio_path
     if isinstance(profile, O5FcDeploymentProfile):
-        if profile.backbone_dir is not None:
-            os.environ["O5_BACKBONE_DIR"] = profile.backbone_dir
-        else:
-            os.environ.pop("O5_BACKBONE_DIR", None)
+        os.environ.pop("O5_BACKBONE_DIR", None)
         os.environ["O5_LLM_CACHE"] = str(profile.llm_cache)
         os.environ["O5_LLM_GRAPH"] = "1"
-        os.environ["O5_SPMD_HEARTBEAT_INTERVAL"] = str(
-            profile.spmd_heartbeat_interval_sec
-        )
         os.environ["O5_ATTN_IMPLEMENTATION"] = profile.attn_implementation
 
 
@@ -332,27 +310,6 @@ def _validate_profile_paths(profile: FcDeploymentProfile) -> None:
         raise FileNotFoundError(
             f"reference_audio_path 不存在或不是文件: {profile.reference_audio_path}"
         )
-    if (
-        isinstance(profile, O5FcDeploymentProfile)
-        and profile.deployment_mode == "tp2"
-        and not os.environ.get("O5_CANONICAL_PATH")
-    ):
-        if profile.backbone_dir is None:
-            raise ValueError("tp2 Profile 缺少 backbone_dir")
-        backbone_dir = Path(profile.backbone_dir)
-        if not backbone_dir.is_dir():
-            raise FileNotFoundError(
-                f"backbone_dir 不存在或不是目录: {backbone_dir}"
-            )
-        required_files = (
-            backbone_dir / "config.json",
-            backbone_dir / "model.safetensors.index.json",
-        )
-        missing = [str(path) for path in required_files if not path.is_file()]
-        if missing:
-            raise FileNotFoundError(
-                "O5 TP2 backbone 缺少必要 HF 文件: " + ", ".join(missing)
-            )
 
 
 def _validate_sdk_version(expected_version: str) -> None:

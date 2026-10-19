@@ -159,20 +159,3 @@ def test_gateway_leaves_other_frames_untouched() -> None:
 
 
 # ---------------------------------------------------------------- 真实调用链的签名(不加载模型)
-
-
-def test_input_mode_passes_through_every_real_layer() -> None:
-    """input_mode 必须穿过 backend → view → adapter → 模型外层 → capability 每一层。
-
-    上面的测试都用假 backend,漏过了模型外层 ``MiniCPMO.fc_duplex_prepare`` 少一个参数
-    (GPU 上第一次跑才暴露)。这里只对真实函数签名做静态检查,不构造模型。
-    """
-
-    import inspect
-
-    from core.fc_duplex.model_adapter import O5FcDuplexModelAdapter
-    from core.processors.pytorch_backend import PyTorchBackend  # noqa: F401  (存在性)
-    from modeling.o5.modeling_minicpmo_unified import FcDuplexCapability, MiniCPMO
-
-    for fn in (MiniCPMO.fc_duplex_prepare, FcDuplexCapability.prepare, O5FcDuplexModelAdapter.prepare):
-        assert "input_mode" in inspect.signature(fn).parameters, fn.__qualname__

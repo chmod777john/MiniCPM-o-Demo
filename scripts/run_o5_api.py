@@ -38,7 +38,7 @@ class O5ApiLaunchSettings(BaseModel):
     """部署使用者可以感知的全部启动设置。
 
     参数:
-        model_path: 包含完整 PT 和 TP2 backbone 的模型目录。
+        model_path: 包含完整 PT 的模型目录。
         storage_dir: 日志、Session、cache 与内部运行文件的统一目录。
         port: Gateway 对外监听端口。
         check_only: 是否只校验和生成运行文件而不启动服务。
@@ -91,7 +91,7 @@ class O5ModelAssets(BaseModel):
     model_id: str = Field(min_length=1)
     model_dir: Path
     pt_path: Path
-    backbone_dir: Path
+    backbone_dir: Path | None = None
 
 
 class PreparedO5ApiRuntime(BaseModel):
@@ -181,57 +181,8 @@ def _discover_pt_path(model_dir: Path) -> Path:
     return candidates[0].resolve()
 
 
-def _is_backbone_dir(path: Path) -> bool:
-    """判断目录是否包含 O5 TP2 backbone 的必要 HF 文件。
-
-    参数:
-        path: 待检查目录。
-
-    返回:
-        同时存在 config 和 safetensors index 时返回 True。
-    """
-
-    return (
-        path.is_dir()
-        and (path / "config.json").is_file()
-        and (path / "model.safetensors.index.json").is_file()
-    )
-
-
-def _discover_backbone_dir(model_dir: Path) -> Path:
-    """发现模型目录内唯一的 TP2 backbone。
-
-    参数:
-        model_dir: 已确认存在的模型目录。
-
-    返回:
-        标准 ``backbone`` 或唯一满足 HF 契约的一级子目录。
-    """
-
-    canonical = model_dir / "backbone"
-    if _is_backbone_dir(canonical):
-        return canonical.resolve()
-
-    candidates = sorted(
-        path
-        for path in model_dir.iterdir()
-        if path.is_dir() and _is_backbone_dir(path)
-    )
-    if not candidates:
-        raise FileNotFoundError(
-            "模型目录缺少 TP2 backbone；期望 backbone/ 或唯一包含 "
-            "config.json 与 model.safetensors.index.json 的一级子目录"
-        )
-    if len(candidates) > 1:
-        raise ValueError(
-            "模型目录找到多个 backbone，启动器不会猜测: "
-            + ", ".join(str(path) for path in candidates)
-        )
-    return candidates[0].resolve()
-
-
 def discover_o5_model_assets(model_path: Path) -> O5ModelAssets:
-    """从一个模型目录解析完整 PT 和 TP2 backbone。
+    """从一个模型目录解析完整 PT。
 
     参数:
         model_path: 用户提供的模型目录。
@@ -241,7 +192,7 @@ def discover_o5_model_assets(model_path: Path) -> O5ModelAssets:
 
     异常:
         FileNotFoundError: 模型目录或必要资产不存在。
-        ValueError: PT 或 backbone 不唯一。
+        ValueError: PT 不唯一。
     """
 
     model_dir = model_path.expanduser().resolve()
@@ -252,7 +203,6 @@ def discover_o5_model_assets(model_path: Path) -> O5ModelAssets:
         model_id=_sanitize_model_id(model_dir.name),
         model_dir=model_dir,
         pt_path=_discover_pt_path(model_dir),
-        backbone_dir=_discover_backbone_dir(model_dir),
     )
 
 
@@ -303,7 +253,7 @@ def prepare_o5_api_runtime(
     参数:
         launch: 使用者可感知的外层启动设置。
         internal: Demo 维护者管理的内部固定设置。
-        assets: 从模型目录解析出的 PT 与 backbone。
+        assets: 从模型目录解析出的 完整 PT。
 
     返回:
         可直接投影为服务环境变量的运行描述。
@@ -328,7 +278,6 @@ def prepare_o5_api_runtime(
         pt_path=str(assets.pt_path),
         unit_policy=internal.unit_policy,
         non_spoken_scheduling=internal.non_spoken_scheduling,
-        backbone_dir=str(assets.backbone_dir),
         llm_cache=internal.llm_cache,
         spmd_heartbeat_interval_sec=internal.spmd_heartbeat_interval_sec,
         attn_implementation=internal.attn_implementation,
@@ -512,7 +461,7 @@ def build_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "model_path",
         type=Path,
-        help="包含完整 PT 和 TP2 backbone 的模型目录",
+        help="包含完整 PT 的模型目录",
     )
     parser.add_argument(
         "--storage-dir",
