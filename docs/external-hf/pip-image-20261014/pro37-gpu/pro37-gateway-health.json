@@ -1,1 +1,0 @@
-{"role": "gateway", "responses": {"http://127.0.0.1:8006/health": 200, "http://127.0.0.1:8007/health": 200, "http://127.0.0.1:8006/mobile/": 200, "http://127.0.0.1:8006/mobile-omni/": 200, "http://127.0.0.1:8006/omni": 200}}

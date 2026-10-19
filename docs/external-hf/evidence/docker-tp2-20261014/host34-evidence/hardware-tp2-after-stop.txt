@@ -1,4 +1,0 @@
-index, name, memory.used [MiB]
-0, NVIDIA RTX PRO 6000 Blackwell Server Edition, 3 MiB
-1, NVIDIA RTX PRO 6000 Blackwell Server Edition, 3 MiB
-gpu_uuid, pid, used_gpu_memory [MiB]

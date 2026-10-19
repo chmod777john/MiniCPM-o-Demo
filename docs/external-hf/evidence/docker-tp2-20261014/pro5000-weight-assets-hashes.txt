@@ -1,2 +1,0 @@
-0789c953677dc8ea71b6085543e1a946ae64bddecd2f6b911ac6380376ef01ff  /data/weihongliang/canonical-fc-astra-20260927/checkpoints/job_1054182_iter_0001275.pt
-ASSETS_EXISTS False

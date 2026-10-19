@@ -1,2 +1,0 @@
-[image] launch child
-ENTRYPOINT_CPU_LIFECYCLE_PASS: prelaunch, disappeared groups, escalation, launch race

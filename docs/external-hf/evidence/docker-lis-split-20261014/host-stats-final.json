@@ -1,2 +1,0 @@
-{"BlockIO":"0B / 0B","CPUPerc":"0.05%","Container":"o5-lis-split-gateway-20261014","ID":"0a3159e8de8e","MemPerc":"0.02%","MemUsage":"74.74MiB / 354GiB","Name":"o5-lis-split-gateway-20261014","NetIO":"803kB / 802kB","PIDs":"6"}
-{"BlockIO":"0B / 4.13MB","CPUPerc":"0.11%","Container":"o5-lis-split-worker-20261014","ID":"7d8ba48ade27","MemPerc":"1.14%","MemUsage":"4.043GiB / 354GiB","Name":"o5-lis-split-worker-20261014","NetIO":"2.15MB / 480kB","PIDs":"20"}

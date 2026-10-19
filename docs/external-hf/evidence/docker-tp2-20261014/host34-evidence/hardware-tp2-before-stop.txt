@@ -1,6 +1,0 @@
-index, uuid, name, memory.used [MiB], driver_version
-0, GPU-cf8dc4a7-5f43-12a7-4ef4-1ce9ac7bf629, NVIDIA RTX PRO 6000 Blackwell Server Edition, 65379 MiB, 580.159.03
-1, GPU-81c9b771-1b2d-d321-9bc1-4139f131e33e, NVIDIA RTX PRO 6000 Blackwell Server Edition, 24797 MiB, 580.159.03
-gpu_uuid, pid, used_gpu_memory [MiB]
-GPU-cf8dc4a7-5f43-12a7-4ef4-1ce9ac7bf629, 515151, 65368 MiB
-GPU-81c9b771-1b2d-d321-9bc1-4139f131e33e, 515151, 24786 MiB

@@ -1,9 +1,0 @@
-{
-  "pass": true,
-  "start_epoch": 1791963754.5347106,
-  "end_epoch": 1791963786.456903,
-  "successful_registration_during_active_session": [
-    "2026-10-14T07:42:40.841397815Z 2026-10-14 07:42:40,841 [INFO:    ] uvicorn.access: 172.28.0.2:58866 - \"PUT /internal/workers/worker-0 HTTP/1.1\" 200 OK",
-    "2026-10-14T07:43:00.866409042Z 2026-10-14 07:43:00,866 [INFO:    ] uvicorn.access: 172.28.0.2:48186 - \"PUT /internal/workers/worker-0 HTTP/1.1\" 200 OK"
-  ]
-}
