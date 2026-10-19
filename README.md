@@ -1,89 +1,161 @@
-# MiniCPM-o Demo Runtime
+# MiniCPM-o Demo Adapter
 
-这个仓库用于启动 MiniCPM-o 推理 demo 服务。所有 Python 依赖都应安装在项目目录内的虚拟环境中，不要全局安装。
+本分支使用 **HF + accel + Demo adapter** 三份物料运行 O5，支持普通单工、音视频双工及 FC 双工。模型推理由外部 HF 提供，加速由外部 accel 以 patch 方式接入；本仓库负责 API、会话、页面和必要的接口桥接。
 
-## 安装
+## 1. 准备三份物料
 
-使用 Python 3.10+，在仓库根目录创建项目内虚拟环境：
+| 物料 | 分支 | 职责 | 启动时指定 |
+|---|---|---|---|
+| HF | `fc` | 3D-RoPE 模型与普通 / FC 推理逻辑 | `O5_CANONICAL_PATH` |
+| accel | `hf-fc-accel` | 卡型适配、双卡并行、Graph、合并 prefill 等加速 | `O5_ACCELERATION_PATH` |
+| Demo（本仓库） | `demo-adapter-fc` | backend、worker、gateway、页面与桥接 | `PROJECT_DIR` |
 
-```bash
-bash install.sh
+三份物料的配套 commit 记录在 [materials.lock.json](materials.lock.json)。部署时按这份组合准备代码，并记录实际使用的三个 commit；其中 `last_runtime_validation` 和 `post_cleanup_validation` 分别说明运行验收与清理后的检查范围。
+
+目录可以分别放置，例如：
+
+```text
+/path/to/o5/
+├── hf/                 # HF fc 分支，含 config/tokenizer/processor 资产
+├── accel/              # hf-fc-accel 分支
+├── demo/               # 本仓库
+├── weights/model.pt    # 完整 O5 checkpoint
+└── token2wav_causal_vocoder/
 ```
 
-这个命令会创建 `.venv`，从 `requirements.txt` 安装基础运行环境，并检查主要依赖是否可用。基础环境不依赖可选 CUDA 扩展；如果没有 FlashAttention2，attention 会走 PyTorch 自带的 SDPA 路径。
+HF、accel 通过路径加载。HF 目录需要包含 `configuration_minicpmo.py`、`modeling_minicpmo.py`、`processing_minicpmo.py`、`fc/` 及配套资产。模型使用完整 `.pt` 权重；声码器资产另外准备。
 
-如果需要把可选加速依赖安装到同一个 `.venv`：
+## 2. Python 环境
 
-```bash
-bash install.sh --with-accel
-```
+所有 Python 依赖安装到项目内的 venv。环境需要与 GPU 和 accel 配套，下面是现有环境记录中的关键版本，**不是完整安装清单**：
 
-可选加速依赖写在 `requirements-accel.txt`：
+| 组件 | A100 环境 | Pro5000 Docker 环境 |
+|---|---|---|
+| Python | 3.10 | 3.10 |
+| torch | `2.11.0+cu128` | `2.14.0+cu130` |
+| transformers | `5.13.0` | `5.13.0` |
+| flash-attn | `2.8.3` | `2.8.3.post1` |
+| minicpm-o5-sdk | `0.0.6` | `0.0.6` |
+| minicpmo-utils | `1.0.7` causal 版本 | `1.0.7` causal 版本 |
 
-- `flash-attn`
-- `causal-conv1d`
+`minicpmo-utils` 使用配套的 causal wheel。它的部分依赖元数据与运行栈不同，安装方式应遵循环境锁定清单。根目录 `install.sh` / `requirements.txt` 仍是上游的另一套依赖版本，不能直接用于复现上表环境。
 
-安装这些依赖后，可以配置模型使用 `flash_attention_2`，并启用 Qwen MoE fast path。没有这些依赖时，同一份代码仍应能通过基础 PyTorch 路径运行。
+Pro5000 的固定包、源码和安装方式见 [Docker pip 构建说明](docker/external-hf/pip/README.md) 与 [版本清单](docker/external-hf/requirements-pro5000.lock)。以下启动示例假定已准备好对应环境。
 
-安装时可用的环境变量：
+## 3. 双卡启动 API 服务
 
-```bash
-PYTHON=python3.10 bash install.sh
-MAX_JOBS=16 bash install.sh --with-accel
-```
-
-## 启动 demo 服务
-
-准备模型代码目录和 checkpoint：
+下面以 A100 双卡为例。将所有 `/path/to/...` 替换为实际绝对路径：
 
 ```bash
-source .venv/bin/activate
-export MODEL_PATH=/path/to/model-code-and-tokenizer
-export PT_PATH=/path/to/checkpoint.pt
+export PROJECT_DIR=/path/to/o5/demo
+export VENV_DIR="$PROJECT_DIR/.venv"
+export O5_CANONICAL_PATH=/path/to/o5/hf
+export O5_ACCELERATION_PATH=/path/to/o5/accel
+export O5_CHECKPOINT_PATH=/path/to/o5/weights/model.pt
+export O5_ASSETS_DIR=/path/to/o5/token2wav_causal_vocoder
+
+export CUDA_VISIBLE_DEVICES=0,1
+export O5_DEPLOY_MODE=tp2
+export O5_MOE_PARALLEL=tp
+export O5_ACCELERATION_HARDWARE=a100
+export O5_ATTN_IMPLEMENTATION=sdpa
+export DUPLEX_SLOT_PROTOCOL=1
+
+export O5_LLM_GRAPH=1
+export O5_TTS_GRAPH=1
+export O5_VOCODER_GRAPH=1
+export CANONICAL_UNIT_PREFILL_BATCH=1
+export O5_COMPACT_LOGITS=1
+export O5_TTS_FA2_WHOLE_DECODE=1
+export O5_CANVAS_WINDOW_EXACT_CHAIN=1
 ```
 
-启动 backend。backend 负责加载模型和执行推理：
+其他卡型应使用对应环境和 accel 配置；`O5_ACCELERATION_HARDWARE=auto` 可用于自动识别。普通双工的 `DUPLEX_SLOT_PROTOCOL` 需要与 checkpoint 匹配：slot 词表由 SDK 动态提供，权重的 embedding / lm_head 必须覆盖所需 token。
+
+在项目目录保存运行配置，例如 `run-config.json`，其中路径也要替换：
+
+```json
+{
+  "model": {
+    "model_path": "/path/to/o5/hf",
+    "pt_path": "/path/to/o5/weights/model.pt",
+    "deployment_mode": "tp2",
+    "attn_implementation": "sdpa"
+  },
+  "audio": {
+    "ref_audio_path": "/path/to/reference-16k.wav",
+    "chat_vocoder": "token2wav"
+  },
+  "service": {
+    "compile": false,
+    "data_dir": "/path/to/o5/demo/data"
+  }
+}
+```
+
+参考音频使用 16 kHz 单声道 WAV。`MODEL_PATH` 默认取 `O5_CANONICAL_PATH`，也可以单独指向模型 config / processor 资产目录。`service.compile` 保持 `false`，上述加速由 accel 接管。
+
+启动服务：
 
 ```bash
-PYTHONPATH=. python -m py_backend.server \
-  --host 127.0.0.1 \
-  --port 22510 \
-  --model-path "$MODEL_PATH" \
-  --pt-path "$PT_PATH" \
-  --gpu-id 0
+cd "$PROJECT_DIR"
+export O5_DEMO_CONFIG_PATH="$PROJECT_DIR/run-config.json"
+export GATEWAY_PORT=8009
+export GATEWAY_INTERNAL_PORT=8010
+export BACKEND_PORT=22510
+export WORKER_PORT=22410
+export GATEWAY_HTTPS=1
+export GATEWAY_API_ONLY=0
+export ENABLE_FRP=0
+bash scripts/start_o5_tp2_cctl_service.sh
 ```
 
-另开一个终端，启动 worker。worker 作为 gateway 和 backend 之间的运行时入口：
+脚本会启动 gateway、backend、worker，等待就绪并自动注册 worker，退出时清理它启动的子进程。日志默认在 `run-logs/o5_tp2_cctl/`。脚本名中的 `cctl` 不代表会申请集群资源；应在已分配 GPU 的机器或容器中执行。双卡模型由外部 accel 在一个 backend 进程中管理。
+
+HTTPS 使用 `certs/cert.pem` 和 `certs/key.pem`，请准备浏览器信任的证书，或通过 TLS 反向代理访问。仅调试 HTTP API 时可设 `GATEWAY_HTTPS=0`；浏览器麦克风 / 摄像头需要安全上下文。
+
+### FC 部署参数
+
+FC 还需要绑定 checkpoint 对应的 `unit_policy`、`non_spoken_scheduling` 和 `tts_pad_protocol`。使用部署方提供的 Profile，在启动上述服务前设置：
 
 ```bash
-source .venv/bin/activate
-PYTHONPATH=. python worker.py \
-  --host 127.0.0.1 \
-  --port 22410 \
-  --gpu-id 0 \
-  --backend-server-url http://127.0.0.1:22510
+export FC_DEPLOYMENT_PROFILE=/path/to/fc-profile.json
 ```
 
-再开一个终端，启动 gateway。gateway 提供浏览器页面和 WebSocket 入口：
+Profile 中的模型路径、权重和部署模式应与本次部署一致。字段定义见 [profiles.py](core/fc_duplex/profiles.py)。Gallery 页面从所选 API 的 `/v1/info` 读取模型默认参数，preset 主要描述 system 与参考音频。FC 协议见 [Realtime API v5](docs/fc-duplex/semantic-realtime-api-v5.md)。
+
+## 4. 打开页面
+
+普通页面由上面的 gateway 提供：
+
+| 页面 | 路径 |
+|---|---|
+| 首页 | `/` |
+| 单工 | `/turnbased` |
+| 普通音频双工 | `/audio_duplex` |
+| 普通视频双工 | `/omni` |
+| 移动端 | `/mobile/`、`/mobile-omni/` |
+
+例如本机访问 `https://localhost:8009/`。从源码部署移动端时，先在 `frontend/mobile` 中执行 `bun install --frozen-lockfile` 和 `bun run build:static`；工具版本与开发方式见 [移动端 README](frontend/mobile/README.md)。
+
+### 独立 FC Demo Gallery
+
+`demos/` 下的应用由 `demo_server.py` 单独提供页面与应用接口，通过 API 使用模型。在另一个终端执行（重新设置本终端的 `PROJECT_DIR` 和 `VENV_DIR`）：
 
 ```bash
-source .venv/bin/activate
-PYTHONPATH=. python gateway.py \
-  --host 0.0.0.0 \
-  --port 8009 \
-  --internal-port 8010 \
-  --https \
-  --ssl-certfile certs/cert.pem \
-  --ssl-keyfile certs/key.pem
+export PROJECT_DIR=/path/to/o5/demo
+export VENV_DIR="$PROJECT_DIR/.venv"
+cd "$PROJECT_DIR"
+export DEMO_DEFAULT_API=https://your-api-host:8009/e/default
+export DEMO_API_ENDPOINTS='[{"name":"O5","url":"https://your-api-host:8009/e/default"}]'
+export DEMO_AUDIO_ROOTS=/path/to/reference-audio-directory
+"$VENV_DIR/bin/python" demo_server.py --host 0.0.0.0 --port 8012 --https \
+  --ssl-certfile certs/cert.pem --ssl-keyfile certs/key.pem
 ```
 
-最后把 worker 注册到 gateway：
+访问 `https://your-demo-host:8012/demos`。API 地址必须能从浏览器访问；`DEMO_AUDIO_ROOTS` 是 Demo 服务允许读取参考音频的目录，多个目录用冒号分隔。应用组织与各 Demo 配置见 [demos/README.md](demos/README.md)。
 
-```bash
-curl -X PUT \
-  -H 'content-type: application/json' \
-  --data '{"endpoint":"127.0.0.1:22410","gpu_group":"local-gpu-0","labels":{"model":"o5","runtime":"local"}}' \
-  http://127.0.0.1:8010/internal/workers/local-o5-worker
-```
+## 5. 其他部署方式
 
-然后访问 gateway 地址，例如 `https://127.0.0.1:8009/`。浏览器麦克风和摄像头 API 通常要求 HTTPS；如果只做后端调试，也可以把 gateway 改为 `--http`。
+- **单卡**：使用 `scripts/start_o5_cctl_service.sh`，设置 `O5_DEPLOY_MODE=single_eager` 或 `single_opt`，并同步调整运行配置；本地启动设 `ENABLE_FRP=0`。`single_eager` 直接运行外部 HF，`single_opt` 可通过 `O5_ACCELERATION_PATH` 接入 accel。显存需能容纳完整模型和运行缓存。
+- **Docker**：按 [固定 pip 安装说明](docker/external-hf/pip/README.md) 准备环境输入；[assemble_sources.py](docker/external-hf/assemble_sources.py) 从三个干净 checkout 打包源代码和页面资产，并记录实际 commit 与文件哈希到 `materials/source-manifest.json`。打包前自行选定配套版本，脚本不会自动切换到 `materials.lock.json` 指定的 commit。权重与声码器资产按部署配置挂载。
