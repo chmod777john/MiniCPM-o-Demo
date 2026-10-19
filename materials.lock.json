@@ -10,7 +10,7 @@
   },
   "demo": {
     "branch": "demo-adapter-fc",
-    "version_source": "Git revision of this checkout; HF and accel are pinned above."
+    "commit": "a2650d42965bddc488e5bb43da7caf5f1ea2c2b6"
   },
   "last_runtime_validation": {
     "date_utc": "2026-10-19",
