@@ -1,0 +1,71 @@
+{
+  "schema_version": 1,
+  "name": "o5fc-upstream-refresh-20261019",
+  "date_utc": "2026-10-19",
+  "status": "source-integrated-runtime-unverified",
+  "upstream": {
+    "branch": "o5-fc-dev",
+    "commit": "e0f2ada084d395a00d1956957d345e82b8a5f8f7"
+  },
+  "materials": {
+    "hf": {
+      "branch": "fc",
+      "commit": "db7541095e458bf71269a49fafea508369556574",
+      "base_commit": "19e87201fb5f094df134a84171a35715bc6e5a69"
+    },
+    "accel": {
+      "branch": "hf-fc-accel",
+      "commit": "337ac3e84b69dde135efaad7f4113bc244fe7bd4",
+      "changed": false
+    },
+    "demo": {
+      "branch": "demo-adapter-fc",
+      "implementation_commit": "79c08878016f35aa63360ef35ff857fd6275011c",
+      "base_commit": "e760421992b36459fb3e724be38d7caa9cb83551",
+      "note": "This manifest is committed after implementation commit; subsequent documentation-only commit does not change runtime sources."
+    }
+  },
+  "scope": {
+    "hf": [
+      "upstream TTS spoken_turn_eos and terminal text_eos",
+      "FC Omni via existing HF canvas image-spec interface",
+      "updated extraction recipe and provenance"
+    ],
+    "demo": [
+      "merge pinned upstream API v5 and gallery/uicard updates",
+      "preserve external HF/accel and ordinary/simplex/mobile routing"
+    ],
+    "accel": "reuse unchanged source; no new runtime compatibility claim"
+  },
+  "source_evidence": {
+    "hf_managed_outputs_reproduced": 7,
+    "hf_upstream_methods": 39,
+    "hf_methods_identical_ast": 28,
+    "hf_methods_documented_adaptations": 9,
+    "hf_service_warm_methods_removed": 2,
+    "demo_upstream_changed_files": 71,
+    "demo_conflict_files": [
+      "gateway.py",
+      "scripts/start_fc_service.py"
+    ],
+    "demo_upstream_only_files_byte_identical": 66
+  },
+  "runtime_validation": {
+    "tests_run": false,
+    "gpu_inference_run": false,
+    "api_probe_run": false,
+    "numerical_or_performance_claim": false
+  },
+  "deployment": {
+    "services_changed": false,
+    "images_rebuilt": false,
+    "lis_assets_replaced": false,
+    "checkpoint_changed": false
+  },
+  "constraints": [
+    "FC Omni requires canvas-configured assets",
+    "exactly one frame per Omni unit, no slicing, fixed processed geometry within session",
+    "no new FC sliding-window capability is claimed",
+    "deferred merged-feed cost_video is not isolated GPU kernel timing"
+  ]
+}
