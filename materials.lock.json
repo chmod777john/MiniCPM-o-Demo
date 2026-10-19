@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "hf": {
+    "branch": "fc",
+    "commit": "528cb102868278f276d99a562a67c8912eee8996"
+  },
+  "accel": {
+    "branch": "hf-fc-accel",
+    "commit": "9c6f33619b7580b96fdd211d3fc736a75909398e"
+  },
+  "demo": {
+    "branch": "demo-adapter-fc",
+    "version_source": "Git revision of this checkout; HF and accel are pinned above."
+  },
+  "last_runtime_validation": {
+    "date_utc": "2026-10-19",
+    "demo_commit": "b1ac65015e9283f6bb9482ee25463dd98ad3ca3e",
+    "uses_pinned_hf_and_accel": true,
+    "job_id": 1296620,
+    "scope": "9009 public API smoke: ordinary audio/video duplex; no long-context or performance qualification."
+  },
+  "post_cleanup_validation": {
+    "demo_commit": "abe96e0a7cc211c0727d4ef22700dc8c927cb1d3",
+    "scope": "Static checks only after vendored inference and documentation removal; runtime not rerun."
+  }
+}
