@@ -16,7 +16,7 @@ Demo 是模型能力的测量仪器，不是补偿器。**禁止**为了展示�
 | | API | Demo |
 |---|---|---|
 | 代码 | `gateway.py`、`gateway_modules/`、`control_plane/`、`worker.py`、`py_backend/`、`core/`、`modeling/`、`clients/` | `demo_server.py`、`demo_gallery/`、`demos/`、`static/demo-gallery/` |
-| 协议 | 对外只认 **v4**（`docs/fc-duplex/semantic-realtime-api-v4.md`）：音频只收 base64 WAV，不收服务端路径；预算、调度、tts_pad 是 Session 参数，Worker 模板只给默认值（`/v1/info` 的 `model.session_defaults`） | 页面上选 API 端点，按 v4 直连；会话前查 `<端点>/v1/info`；音频路径由 Demo 服务读成 base64 |
+| 协议 | 对外现行 **v5**（`docs/fc-duplex/semantic-realtime-api-v5.md`）：端点会话分 **audio**（`?mode=audio`，不带帧）与 **omni**（`?mode=omni`，每个 Unit 恰好一帧 JPEG，按 SDK user_video slot + canvas_v6 位置喂入），帧数不符直接以 `input_mode_error` 结束、不兜底；音频只收 base64 WAV，不收服务端路径；预算、调度、tts_pad 是 Session 参数，Worker 模板只给默认值（`/v1/info` 的 `model.session_defaults`）。v4 客户端照常可用，等同 audio | 页面上选 API 端点与 audio/omni 模式，按 v5 直连；会话前查 `<端点>/v1/info`；音频路径由 Demo 服务读成 base64 |
 | v3 | 只在评测副本池里保留（`scripts/run_o5_replica_pool.py` 设 `FC_API_ACCEPT_V3=1`，评测锁步客户端不动） | — |
 
 ## 部署
@@ -32,6 +32,8 @@ deploy 资源池：每个 Worker 一个 cctl job（2×A100 TP2，scripts/o5_work
 - **起停 Worker、扩容、驱逐、强制关闭、换模型：在控制面板 `https://47.95.219.248:7029/control` 上操作**，
   不要手工 `cctl job create`。面板状态与 Worker 运行目录在 `/user/sunweiyue/runtime/o5_api_control_plane/`。
 - 两个 env 文件（含面板密码、subagent 的 Claude Code 配置）在 `/user/sunweiyue/runtime/o5_api_deploy/`，600 权限，不进仓库。
+- **新起的 Worker（添加 / 扩容 / 在失败 Worker 上重新起）一律按模板当前保存的内容**；Worker 记录里的模板快照只表示
+  它实际跑的是什么。改模板不影响在跑的 Worker，面板把它们标成「旧版模板」，要换就扩容新副本再驱逐旧的。
 - 重启 API Gateway 不影响在跑的 Worker job：重启后从面板状态与就绪文件把它们重新登记回端点（进行中的会话会断）。
 - 两个进程都用 `setsid nohup … &` 脱离会话启动，日志分别在 `o5_api_control_plane/gateway.log`、`o5_api_deploy/demo_server.log`。
 

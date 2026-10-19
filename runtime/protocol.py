@@ -5,8 +5,11 @@ from __future__ import annotations
 from typing import Dict, List
 
 
-API_PROTOCOL_VERSION = "4"
-"""公开 Realtime API 的现行协议版本（见 docs/fc-duplex/semantic-realtime-api-v4.md）。"""
+API_PROTOCOL_VERSION = "5"
+"""公开 Realtime API 的现行协议版本（见 docs/fc-duplex/semantic-realtime-api-v5.md）。"""
+
+API_INPUT_MODES = ("audio", "omni")
+"""端点会话的两种输入模式,由 URL ``?mode=`` 决定:audio 只送音频;omni 每个 Unit 必须带一帧视频。"""
 
 DEFAULT_WORKER_CAPABILITIES: List[str] = [
     "chat",

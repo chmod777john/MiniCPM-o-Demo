@@ -16,11 +16,29 @@
       <a class="gallery-back" href="/demos" title="返回 Demo Gallery">←</a>
       <h1 id="pageTitle">{{DEMO_TITLE}}</h1>
       <span id="modeBadge" class="mode-tag">Realtime API</span>
+      <!-- 输入模式(协议 v5):开始会话前选定,会话中锁定。omni = 音频 + 每秒一帧摄像头画面。 -->
+      <div id="inputModeSwitch" class="input-mode-switch" role="radiogroup" aria-label="输入模式">
+        <button type="button" class="input-mode-btn" data-input-mode="audio" role="radio"
+                title="只发送麦克风音频">🎙 Audio</button>
+        <button type="button" class="input-mode-btn" data-input-mode="omni" role="radio"
+                title="音频 + 每秒一帧摄像头画面(需要摄像头权限)">📷 Omni</button>
+      </div>
     </div>
     <div class="header-right">
       <span id="wsState" class="ws-state">idle</span>
     </div>
   </header>
+
+  <!-- ============ 摄像头预览(omni 模式):悬浮小窗,所有 Demo 共用 ============ -->
+  <div id="cameraTile" class="camera-tile" hidden>
+    <video id="cameraPreview" autoplay muted playsinline></video>
+    <div class="camera-tile-bar">
+      <span id="cameraInfo" class="camera-info">摄像头</span>
+      <button id="cameraFlip" type="button" class="camera-btn" title="切换前后摄像头">⟲</button>
+      <button id="cameraMirror" type="button" class="camera-btn" title="镜像">⇋</button>
+      <button id="cameraCollapse" type="button" class="camera-btn" title="收起 / 展开">▾</button>
+    </div>
+  </div>
 
   <!-- ============ Main grid: left (1fr) | right (2fr) ============ -->
   <div class="main">
@@ -48,12 +66,16 @@
       <section class="panel settings-panel">
         <div class="panel-title">Session</div>
         <!-- Demo 与 API 是两个服务：这里选要连的 API 端点（https://<host>:<port>/e/<端点名>）。 -->
+        <!-- 两步选模型：API 地址（https://<host>:<port>，可改）→ 从它的端点列表里选一个端点（一个端点 = 一个模型，会话实际连它）。 -->
         <div class="api-endpoint-row">
-          <label for="apiEndpoint">API endpoint</label>
-          <input id="apiEndpoint" list="apiEndpointOptions" type="text" spellcheck="false"
-                 placeholder="https://host:port/e/&lt;端点名&gt;" />
-          <datalist id="apiEndpointOptions"></datalist>
-          <button id="applyApiEndpoint" class="ctrl-btn tiny" type="button">Use</button>
+          <label for="apiService">API</label>
+          <input id="apiService" type="text" spellcheck="false" placeholder="https://host:port" />
+          <button id="applyApiService" class="ctrl-btn tiny" type="button">Use</button>
+        </div>
+        <p id="apiServiceStatus" class="hint api-endpoint-status" hidden></p>
+        <div class="api-endpoint-row">
+          <label for="apiEndpointSelect">Model</label>
+          <select id="apiEndpointSelect"></select>
         </div>
         <p id="apiEndpointStatus" class="hint api-endpoint-status"></p>
         <ul class="kv">
@@ -179,7 +201,7 @@
     </div>
 
     <!-- ===== Right column: demo stage (top) + conversation row (bottom) ===== -->
-    <div class="col-right">
+    <div class="col-right" id="colRight">
 
       <section class="panel stage-panel">
         <div class="panel-title">
@@ -191,18 +213,22 @@
       </section>
 
       <div class="conv-row">
-        <section class="panel conv-panel">
-          <div class="panel-title">AI Speech</div>
+        <section class="panel conv-panel" data-collapsible="speech">
+          <div class="panel-title">
+            AI Speech
+            <button class="panel-title-action panel-collapse" type="button" data-collapse-toggle="speech" aria-expanded="true">收起 ▴</button>
+          </div>
           <div class="scroll-body">
             <div id="aiSpeech" class="speech-stream">
               <div class="placeholder">AI 还没开口</div>
             </div>
           </div>
         </section>
-        <section class="panel ns-panel">
+        <section class="panel ns-panel" data-collapsible="ns">
           <div class="panel-title">
             Think / Tool-Call
             <span class="hint">Per-Unit token ledger · budget audit</span>
+            <button class="panel-title-action panel-collapse" type="button" data-collapse-toggle="ns" aria-expanded="true">收起 ▴</button>
           </div>
           <div class="scroll-body">
             <div id="nonSpokenStream" class="ns-stream">

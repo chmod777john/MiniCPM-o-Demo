@@ -1982,6 +1982,10 @@ class FcDuplexView:
             cost_apm_ms=(
                 data["cost_apm"] * 1000 if data.get("cost_apm") is not None else None
             ),
+            cost_video_ms=(
+                data["cost_video"] * 1000 if data.get("cost_video") is not None else None
+            ),
+            n_video_tokens=int(data.get("n_video_tokens") or 0),
         )
 
     def _spoken_result(self, data: dict) -> FcSpokenGenerateResult:
@@ -2200,6 +2204,7 @@ class FcDuplexView:
             system_content=system_content,
             tts_prompt_audio_path=tts_prompt_audio_path,
             generate_audio=request.generate_audio,
+            input_mode=request.input_mode,
         )
         self._protocol_tokenizer = None
         self._stream_seq = 0

@@ -79,7 +79,7 @@ Health:    http://<host>:8009/health
 
 这个启动器面向「本机起一个 API 自用」。对外部署（多端点、多 Worker、控制面板动态扩缩容）
 见仓库根 `CLAUDE.md`「部署」与 `scripts/start_api_gateway.sh`；对外协议见
-[`fc-duplex/semantic-realtime-api-v4.md`](fc-duplex/semantic-realtime-api-v4.md)。
+[`fc-duplex/semantic-realtime-api-v5.md`](fc-duplex/semantic-realtime-api-v5.md)。
 
 Demo 不在 API 里：Demo 是独立服务（`demo_server.py`，见 [`../demos/README.md`](../demos/README.md)），
 页面上填 API 端点即可连任意一个部署。

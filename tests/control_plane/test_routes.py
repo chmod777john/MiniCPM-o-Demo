@@ -82,7 +82,7 @@ def test_panel_page_and_public_docs(client: TestClient) -> None:
     assert client.get("/control/static/panel.js").status_code == 200
     assert client.get("/control/static/../routes.py").status_code == 404
     docs = client.get("/api-docs")
-    assert docs.status_code == 200 and "Realtime API v4" in docs.text and "<table>" in docs.text
+    assert docs.status_code == 200 and "Realtime API v5" in docs.text and "<table>" in docs.text
 
 
 def test_public_overview_needs_no_password_and_leaks_nothing_internal(client: TestClient, tmp_path: Path) -> None:

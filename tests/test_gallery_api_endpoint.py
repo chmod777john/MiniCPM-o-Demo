@@ -55,6 +55,63 @@ console.log(JSON.stringify({{ s: {{ ...s, model: undefined }}, empty: empty.stat
                               "speaking": "10", "unitSec": 1.0}
 
 
+@needs_node
+def test_endpoints_discovered_from_overview_merge_with_configured() -> None:
+    overview = {"public_base": "https://pub:7029", "endpoints": [
+        {"name": "m1", "model": "tpl-a", "available": 2, "queue_length": 1, "workers": [{}, {}, {}]},
+        {"name": "empty", "model": None, "available": 0, "queue_length": 0, "workers": []},
+    ]}
+    got = run_node(f"""
+const m = await import({json.dumps(repo_module_url('static/demo-gallery/core/api-endpoint.js'))});
+const found = m.endpointsFromOverview({json.dumps(overview)}, 'https://ignored:1');
+const noBase = m.endpointsFromOverview({{ endpoints: [{{ name: 'x', workers: [] }}] }}, 'https://svc:2/');
+const merged = m.mergeEndpointOptions(found, [{{ name: 'm1-old', url: 'https://pub:7029/e/m1/' }},
+                                             {{ name: 'manual', url: 'https://other:1/e/z' }}, {{ name: 'bad', url: 'nope' }}]);
+console.log(JSON.stringify({{ found, noBase, merged }}));
+""")
+    assert got["found"] == [
+        {"name": "m1", "url": "https://pub:7029/e/m1", "label": "m1 · tpl-a · 可用 2/3 · 排队 1", "available": 2},
+        {"name": "empty", "url": "https://pub:7029/e/empty", "label": "empty · 未部署模型 · 没有 Worker", "available": 0},
+    ]
+    assert got["noBase"][0]["url"] == "https://svc:2/e/x"
+    # 发现到的在前；同一地址（规范化后）只留发现到的那条；不合法的地址丢掉
+    assert [(o["name"], o["url"]) for o in got["merged"]] == [
+        ("m1", "https://pub:7029/e/m1"), ("empty", "https://pub:7029/e/empty"), ("manual", "https://other:1/e/z")]
+    assert got["merged"][2]["available"] is None
+
+
+def test_default_api_service(monkeypatch) -> None:
+    from demo_gallery.runtime import gallery_runtime
+
+    monkeypatch.setenv("DEMO_API_ENDPOINTS", json.dumps([{"name": "a", "url": "https://h:1/e/a"}]))
+    monkeypatch.delenv("DEMO_API_SERVICE", raising=False)
+    monkeypatch.setenv("DEMO_DEFAULT_API", "https://g:2/e/c")
+    assert gallery_runtime()["default_api_service"] == "https://g:2"
+    monkeypatch.delenv("DEMO_DEFAULT_API")
+    assert gallery_runtime()["default_api_service"] == "https://h:1"
+    monkeypatch.setenv("DEMO_API_SERVICE", "https://x:3/")
+    assert gallery_runtime()["default_api_service"] == "https://x:3"
+
+
+@needs_node
+def test_api_service_address_is_parsed() -> None:
+    got = run_node(f"""
+const m = await import({json.dumps(repo_module_url('static/demo-gallery/core/api-endpoint.js'))});
+const out = {{}};
+for (const raw of ['https://h:7029', 'https://h:7029/', 'https://h:7029/overview', 'https://h:7029/e/m1',
+                   'wss://h:7029/e/m1/v1/realtime?mode=audio', 'https://h:7029/e/m1/v1/info']) out[raw] = m.parseApiService(raw);
+let bad = [];
+for (const raw of ['', 'h:7029']) {{ try {{ m.parseApiService(raw); }} catch (e) {{ bad.push(raw); }} }}
+console.log(JSON.stringify({{ out, bad }}));
+""")
+    plain = {"service": "https://h:7029", "endpoint": None}
+    with_ep = {"service": "https://h:7029", "endpoint": "https://h:7029/e/m1"}
+    assert got["out"] == {"https://h:7029": plain, "https://h:7029/": plain, "https://h:7029/overview": plain,
+                          "https://h:7029/e/m1": with_ep, "wss://h:7029/e/m1/v1/realtime?mode=audio": with_ep,
+                          "https://h:7029/e/m1/v1/info": with_ep}
+    assert got["bad"] == ["", "h:7029"]
+
+
 def _wav(path: Path, *, sr: int = 16000, channels: int = 1, fmt: str = "WAV") -> bytes:
     data = np.zeros((1600, channels) if channels > 1 else 1600, dtype=np.float32)
     sf.write(path, data, sr, format=fmt)

@@ -37,6 +37,7 @@ class FcDuplexModelAdapter(Protocol):
         system_content: O5SystemContent,
         tts_prompt_audio_path: str | None,
         generate_audio: bool | None,
+        input_mode: str = "audio",
     ) -> FcModelPrepareResult:
         """按 v3 canonical contract 初始化一个 FC Duplex Session。"""
 
@@ -125,14 +126,20 @@ class _BasePassthroughFcDuplexModelAdapter:
         system_content: O5SystemContent,
         tts_prompt_audio_path: str | None,
         generate_audio: bool | None,
+        input_mode: str = "audio",
     ) -> FcModelPrepareResult:
         """调用模型 FC v3 prepare primitive。"""
 
+        kwargs = {}
+        if input_mode != "audio":
+            # O45 已停止维护,只有 O5 认 input_mode;audio 时不传,保持 O45 调用形状不变
+            kwargs["input_mode"] = input_mode
         return dict(
             self._model.fc_duplex_prepare(
                 system_content=system_content,
                 tts_prompt_audio_path=tts_prompt_audio_path,
                 generate_audio=generate_audio,
+                **kwargs,
             )
         )
 

@@ -119,7 +119,8 @@ def _fake_worker_app(name: str) -> FastAPI:
                 frame = json.loads(raw)
                 if frame.get("type") == "session.init":
                     await ws.send_json({"type": "session.created", "session_id": f"s_{name}_{time.time_ns()}",
-                                        "worker": name})
+                                        "worker": name,
+                                        "input_mode": (frame.get("payload") or {}).get("input_mode")})
                 elif frame.get("type") == "session.close":
                     await ws.send_json({"type": "session.closed", "reason": "client"})
                     return
@@ -171,8 +172,8 @@ def _register(client: TestClient, endpoint: str, worker_id: str, port: int, **mo
     client.portal.call(go)
 
 
-def _open(client: TestClient, endpoint: str):
-    ws = client.websocket_connect(f"/e/{endpoint}/v1/realtime?mode=audio")
+def _open(client: TestClient, endpoint: str, mode: str = "audio"):
+    ws = client.websocket_connect(f"/e/{endpoint}/v1/realtime?mode={mode}")
     return ws.__enter__(), ws
 
 
@@ -267,7 +268,9 @@ def test_info_is_public_and_hides_worker_addresses(gw: TestClient) -> None:
         r = gw.get("/e/alpha/v1/info")
         assert r.status_code == 200 and r.headers["access-control-allow-origin"] == "*"
         body = r.json()
-        assert body["protocol_version"] == "4" and body["available_workers"] == 1
+        assert body["protocol_version"] == "5" and body["available_workers"] == 1
+        assert body["realtime_paths"] == {"audio": "/e/alpha/v1/realtime?mode=audio",
+                                          "omni": "/e/alpha/v1/realtime?mode=omni"}
         assert body["models"] == [{"model": {"profile_id": "model-a",
                                              "session_defaults": {"tts_pad_protocol": "revised"}},
                                    "workers": 1, "available": 1}]
@@ -324,3 +327,29 @@ def test_disconnect_while_queued_releases_the_ticket(gw: TestClient) -> None:
             time.sleep(0.1)
         assert gateway.endpoint_registry.get("alpha").queue_length == 0
         cm1.__exit__(None, None, None)
+
+
+@pytest.mark.parametrize("query", ["", "?mode=video", "?mode=chat", "?mode=Omni"])
+def test_endpoint_only_accepts_audio_or_omni(gw: TestClient, query: str) -> None:
+    """v5:端点会话只有 audio / omni;缺省或旧的 video / chat 都直接拒绝,不默认成哪一种。"""
+
+    from starlette.websockets import WebSocketDisconnect as StarletteDisconnect
+
+    gw.portal.call(gateway.endpoint_registry.create, "alpha")
+    with pytest.raises(StarletteDisconnect) as info:
+        with gw.websocket_connect(f"/e/alpha/v1/realtime{query}") as ws:
+            ws.receive_json()
+    assert info.value.code == 1008
+
+
+@pytest.mark.parametrize("mode", ["audio", "omni"])
+def test_url_mode_is_stamped_into_session_init(gw: TestClient, mode: str) -> None:
+    with _FakeWorker("A") as a:
+        _register(gw, "alpha", "wa", a.port)
+        ws, cm = _open(gw, "alpha", mode=mode)
+        ws.send_json({"type": "session.init", "payload": {"protocol_version": "5"}})
+        created = _until(ws, "session.created")[-1]
+        assert created["input_mode"] == mode
+        ws.send_json({"type": "session.close"})
+        _until(ws, "session.closed")
+        cm.__exit__(None, None, None)

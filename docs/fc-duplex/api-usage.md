@@ -3,8 +3,8 @@
 本文面向需要调用已启动 O5 API 的使用者和 Agent，只解释请求、事件和推理产物。
 不涉及模型部署、计算资源申请、模型来源、Ground Truth 对拍或能力评价。
 
-对外调用的协议说明见 [`semantic-realtime-api-v4.md`](semantic-realtime-api-v4.md)
-（现行版本 v4；事件细节沿用 [`semantic-realtime-api-v2.md`](semantic-realtime-api-v2.md)）。
+对外调用的协议说明见 [`semantic-realtime-api-v5.md`](semantic-realtime-api-v5.md)
+（现行版本 v5；事件细节沿用 [`semantic-realtime-api-v2.md`](semantic-realtime-api-v2.md)）。
 本文是这个仓库自带推理脚本的使用教程，不重复定义协议。
 
 ## 1. 最短调用路径

@@ -20,6 +20,13 @@
 //   可选 reset()、onThinkBegin/onThinkDelta/onThinkEnd/onToolCallDone
 //   可选 onUnitStarted(event)       每个被处理的 Unit 的 response.unit.started（含 tool_events /
 //                                   standalone_events 回执），用于展示事件落在哪个 Unit
+//   可选 onSpokenDelta(event, text) 每条 response.spoken.delta 及从中解出的文本（可能为空串）
+//   可选 onSpokenEnd(event)         每条 response.spoken.end（reason: listen / turn_eos …）
+//   可选 onToolCallBegin(event)、onToolCallDelta(event, text)  工具调用参数逐 token 生成的过程
+//   可选 prepareSystem(segments)    建会话前的最后一步：收到当前 system segments 的副本，返回（可 async）
+//                                   真正发出去的 segments。只做确定性的、与训练口径一致的变换
+//                                   （如把 system 正文里的会话时间刷新成当前时间）；shell 会把结果
+//                                   写回 system 编辑区，页面上看到的就是实际发送的
 //
 // ⚠️ 场景**不得**改 stageEl 的 class 来解除 shell 给的布局（这类补丁已废弃）。
 //    布局写在 demo 自己的 CSS 里，选择器以 [data-demo="<id>"] 开头。
@@ -52,6 +59,11 @@ export function normalizeScene(scene, { demoId, title }) {
     onThinkEnd: bind(scene.onThinkEnd, NOOP),
     onToolCallDone: bind(scene.onToolCallDone, NOOP),
     onUnitStarted: bind(scene.onUnitStarted, NOOP),
+    onSpokenDelta: bind(scene.onSpokenDelta, NOOP),
+    onSpokenEnd: bind(scene.onSpokenEnd, NOOP),
+    onToolCallBegin: bind(scene.onToolCallBegin, NOOP),
+    onToolCallDelta: bind(scene.onToolCallDelta, NOOP),
+    prepareSystem: bind(scene.prepareSystem, (segments) => segments),
   };
   for (const key of ['pageTitle', 'panelTitle']) {
     if (typeof normalized[key] !== 'string' || !normalized[key]) {

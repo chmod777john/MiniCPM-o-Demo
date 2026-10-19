@@ -3,7 +3,7 @@
 # Demo Gallery：怎么新加 / 修改一个 Demo
 
 **Demo 与 API 是两件事。** Demo 服务（`demo_server.py`）只有页面与各 Demo 自己的后端，不加载模型；
-页面上选一个 API 端点，浏览器按协议 v4 直接连它（`docs/fc-duplex/semantic-realtime-api-v4.md`）。
+页面上选一个 API 端点与 audio / omni 模式，浏览器按协议 v5 直接连它（`docs/fc-duplex/semantic-realtime-api-v5.md`）。
 Demo 侧代码**不许 import API 侧任何模块**（`core/`、`py_backend/`、`gateway*`、`control_plane/`…），
 有守卫测试 `tests/test_api_demo_boundary.py`。
 
@@ -44,7 +44,7 @@ static/demo-gallery/        前端 core（shell、realtime client、通用组件
 4. **写 `web/<id>.css`**：每条顶层选择器以 `[data-demo="<id>"]` 开头。
 5. **测试 + 浏览器自检**（见下文「交付前自检」）。
 
-现成范例：`demos/board/`（工具调用 + 搜图 + 额外静态目录）、`demos/rejection/`（纯 think 解析）、`demos/standalone/`（向模型注入 standalone_event、展示 Unit 回执，不带工具）、`demos/subagent/`（工具调用交给 Claude Code，每会话独立工作区；部署要求见下文「部署 subagent」）。
+现成范例：`demos/board/`（工具调用 + 搜图 + 额外静态目录）、`demos/rejection/`（纯 think 解析）、`demos/standalone/`（向模型注入 standalone_event、展示 Unit 回执，不带工具）、`demos/subagent/`（工具调用交给 Claude Code，每会话独立工作区；部署要求见下文「部署 subagent」）、`demos/uicard/`（ui_card 训练口径：天气 / 地图 / 搜索工具真实执行、show_card 画卡片；key 走 `UICARD_TOOLS_CONFIG`，见该目录 README）。
 做类似功能时先照抄它们的写法。
 
 ## [MUST] 硬约束

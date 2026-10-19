@@ -171,6 +171,8 @@ class FcDuplexSessionRuntime:
         self._unit_cost_ms: Dict[str, float] = {}
         self._resume_identity: Dict[str, Any] = {}
         self._protocol_version: str = "4"
+        # 会话输入模式:audio 每个 Unit 不得带帧;omni 每个 Unit 必须恰好 1 帧(见 _validate_unit_frames)
+        self._input_mode: str = "audio"
         self._emit_debug_events = (
             os.environ.get("FC_DUPLEX_DEBUG_EVENTS", "0") == "1"
         )
@@ -201,14 +203,15 @@ class FcDuplexSessionRuntime:
         """
 
         protocol_version = params.get("protocol_version")
-        accepted = ("4", "3") if v3_path_audio_enabled() else ("4",)
+        accepted = ("5", "4", "3") if v3_path_audio_enabled() else ("5", "4")
         if protocol_version not in accepted:
             raise RuntimeError(
-                "FC Semantic Realtime API requires protocol_version='4' "
+                "FC Semantic Realtime API requires protocol_version='5' "
                 "(audio as base64 WAV; server paths are not accepted); "
                 f"received {protocol_version!r}"
             )
         self._protocol_version = str(protocol_version)
+        self._input_mode = _resolve_input_mode(params, protocol_version=self._protocol_version)
         legacy_keys = {
             "system_prompt",
             "instructions",
@@ -237,7 +240,7 @@ class FcDuplexSessionRuntime:
             )
 
         raw_tts_prompt = params.get("tts_prompt_audio")
-        if protocol_version == "4":
+        if protocol_version in ("5", "4"):
             # 对外协议：音频只收 base64，落到本机内容哈希缓存后转成内部路径 DTO。
             system_input = FcSystemContentV4Input.model_validate(params.get("system")).materialize()
             tts_prompt_input = (
@@ -254,6 +257,7 @@ class FcDuplexSessionRuntime:
             system=system_input,
             tts_prompt_audio=tts_prompt_input,
             generate_audio=params.get("generate_audio"),
+            input_mode=self._input_mode,
         )
 
         config = _first_dict(params.get("config"), params.get("duplex"), params.get("fc_duplex"))
@@ -342,6 +346,7 @@ class FcDuplexSessionRuntime:
             tts_prompt_audio=prepare_request.tts_prompt_audio,
             generate_audio=prepare_request.generate_audio,
             fixed_tool_call_ids=self._fixed_tool_call_ids,
+            input_mode=self._input_mode,
         )
         self._system_prefill = _system_prefill_audit(prepare_result)
         resume_identity_fn = getattr(self.backend, "fc_duplex_resume_identity", None)
@@ -398,6 +403,7 @@ class FcDuplexSessionRuntime:
             "non_spoken_scheduling": self._non_spoken_scheduling,
             "decoding_policy": self._decoding_policy,
             "checkpoint_profile_id": self._checkpoint_profile_id,
+            "input_mode": self._input_mode,
         }
 
     @property
@@ -619,6 +625,7 @@ class FcDuplexSessionRuntime:
         audio_base64 = _extract_audio_base64(payload)
         if not audio_base64:
             raise RuntimeError("fc_duplex input requires audio")
+        _validate_unit_frames(self._input_mode, _extract_frame_base64_list(payload))
         input_id = str(payload.get("input_id") or "")
         if not input_id:
             raise RuntimeError("fc_duplex input requires input_id")
@@ -700,6 +707,7 @@ class FcDuplexSessionRuntime:
         self._accumulate_unit_cost("prefill", getattr(prefill, "cost_prefill_ms", None))
         self._accumulate_unit_cost("audio", getattr(prefill, "cost_audio_ms", None))
         self._accumulate_unit_cost("apm", getattr(prefill, "cost_apm_ms", None))
+        self._accumulate_unit_cost("video", getattr(prefill, "cost_video_ms", None))
         await self._emit_unit_input_events(
             prefill,
             unit_index=unit_index,
@@ -1593,6 +1601,45 @@ class FcDuplexSessionRuntime:
             self._internal_to_api[internal_id] = api_id
             self._api_to_internal[api_id] = internal_id
         return api_id
+
+
+class InputModeError(RuntimeError):
+    """会话输入模式不合规:URL 与 payload 冲突、audio 带帧、omni 缺帧或多帧。"""
+
+
+def _resolve_input_mode(params: Dict[str, Any], *, protocol_version: str) -> str:
+    """确定会话输入模式。
+
+    v5:必须有 ``payload.input_mode``(端点网关按 URL ``?mode=`` 写入),取值 audio / omni;
+    网关发现客户端自填的值与 URL 冲突时写的是 ``input_mode_conflict``,这里直接报错。
+    v4 / v3:只有音频,恒为 audio(评测客户端仍发 v4)。
+    """
+
+    conflict = params.get("input_mode_conflict")
+    if conflict:
+        raise InputModeError(
+            f"session.init 的 input_mode={conflict.get('payload')!r} 与连接地址 mode={conflict.get('url')!r} 不一致"
+        )
+    mode = params.get("input_mode")
+    if protocol_version != "5":
+        if mode not in (None, "audio"):
+            raise InputModeError(f"protocol_version={protocol_version} 只支持 audio,收到 input_mode={mode!r}")
+        return "audio"
+    if mode not in ("audio", "omni"):
+        raise InputModeError(
+            f"protocol_version=5 需要 input_mode 为 audio / omni(连接地址 ?mode=audio|omni),收到 {mode!r}"
+        )
+    return mode
+
+
+def _validate_unit_frames(input_mode: str, frames: Optional[list]) -> None:
+    """一个 input.append 的视频帧必须符合会话模式。不做兜底:不合规就让会话以错误结束。"""
+
+    count = len(frames or [])
+    if input_mode == "audio" and count:
+        raise InputModeError(f"audio 模式不接受视频帧,本次 input.append 带了 {count} 帧;要传视频请用 ?mode=omni")
+    if input_mode == "omni" and count != 1:
+        raise InputModeError(f"omni 模式每个 input.append 必须恰好带 1 帧视频(input.video_frames),本次 {count} 帧")
 
 
 def fc_duplex_enabled(params: Dict[str, Any]) -> bool:

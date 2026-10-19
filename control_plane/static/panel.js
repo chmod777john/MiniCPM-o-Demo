@@ -75,6 +75,44 @@ function pathView(path) {
     <button class="small" data-copy="${esc(path)}" title="复制完整路径">复制</button></div>`;
 }
 
+// ---------------------------------------------------------------- 模板版本
+// 每个 Worker 存着启动时的模板快照；新起的 Worker 一律按模板当前内容。后端给出两者差异 template_changes：
+// null = 模板已删除，[] = 一致，否则是改过的字段列表。
+
+const FIELD_LABELS = {
+  model_dir: 'checkpoint 目录',
+  tts_pad_protocol: '默认 tts_pad',
+  non_spoken_budget_while_listening: '听时预算',
+  non_spoken_budget_while_speaking: '说时预算',
+  non_spoken_scheduling: '调度',
+  llm_cache: 'LLM cache',
+  gpus: 'GPU 数',
+};
+
+function findWorker(id) {
+  return lastState?.endpoints.flatMap((e) => e.workers).find((w) => w.worker_id === id);
+}
+
+function isOutdated(worker) {
+  return Array.isArray(worker.template_changes) && worker.template_changes.length > 0;
+}
+
+function changeLines(worker) {
+  return (worker.template_changes || [])
+    .map((c) => `${FIELD_LABELS[c.field] || c.field}：${c.worker} → ${c.current}`).join('\n');
+}
+
+function templateBadge(worker) {
+  if (worker.template_changes === null) {
+    return `<span class="tag warn" title="模板 ${esc(worker.template.name)} 已删除；这个 Worker 仍按删除前的内容运行，但不能再按它扩容 / 重新起">模板已删除</span>`;
+  }
+  if (!isOutdated(worker)) return '';
+  const title = ACTIVE.has(worker.phase)
+    ? `模板 ${worker.template.name} 在这个 Worker 启动后改过，它仍按旧内容运行（不会自动更新）：\n${changeLines(worker)}\n\n要换成新版：扩容一个新副本，再驱逐这个`
+    : `模板 ${worker.template.name} 在这个 Worker 启动后改过：\n${changeLines(worker)}\n\n重新起会按模板当前内容`;
+  return `<span class="tag warn" title="${esc(title)}">旧版模板</span>`;
+}
+
 // ---------------------------------------------------------------- Worker 卡片
 
 function workerCard(worker, endpoint, endpoints, mainTemplate) {
@@ -85,10 +123,13 @@ function workerCard(worker, endpoint, endpoints, mainTemplate) {
   const releasing = worker.phase === 'draining' || worker.phase === 'stopping';
   const otherTemplate = worker.template.name !== mainTemplate
     ? `<div class="w-line">模型 <b>${esc(worker.template.name)}</b> ${ttsTag(worker.template.tts_pad_protocol)}</div>` : '';
+  const badge = templateBadge(worker);
+  const templateGone = worker.template_changes === null;
+  const scaleBlocked = templateGone ? `disabled title="模板 ${esc(worker.template.name)} 已删除，在端点下选现有模板添加"` : '';
 
   let actions = '';
   if (!active) {
-    actions = `<button class="small" data-scale="${id}" title="用同一模板在本端点再起一个">用同一模板再起一个</button>
+    actions = `<button class="small" data-scale="${id}" ${scaleBlocked || `title="按模板 ${esc(worker.template.name)} 当前保存的内容在本端点再起一个"`}>按模板重新起一个</button>
       <button class="small" data-forget="${id}">删除记录</button>`;
   } else if (releasing) {
     actions = worker.phase === 'draining'
@@ -99,7 +140,7 @@ function workerCard(worker, endpoint, endpoints, mainTemplate) {
       ? `<span class="menu-label">移动到其他端点（等会话结束后切换，job 不重启）</span>${others.map((e) => `<button data-move="${id}" data-to="${esc(e.name)}">→ ${esc(e.name)}</button>`).join('')}`
       : '<span class="menu-label">没有其他端点可移动</span>';
     actions = `
-      <button class="small primary" data-scale="${id}" title="用同一模板在本端点再起一个副本">＋ 扩容</button>
+      <button class="small primary" data-scale="${id}" ${scaleBlocked || `title="按模板 ${esc(worker.template.name)} 当前保存的内容在本端点再起一个副本"`}>＋ 扩容</button>
       <button class="small" data-drain="${id}" title="${starting ? '取消启动' : '不再派新会话，手上的会话结束后停 job'}">${starting ? '取消启动' : '驱逐'}</button>
       ${starting ? '' : `<button class="small danger" data-force="${id}" title="立刻打断会话并停 job">强制关闭</button>`}
       <details class="more" data-key="more-${id}"><summary>更多 ▾</summary><div class="menu">${moveItems}</div></details>`;
@@ -111,6 +152,7 @@ function workerCard(worker, endpoint, endpoints, mainTemplate) {
     <div class="w-line">${esc(s.detail)}</div>
     ${starting ? steps(worker) : ''}
     ${otherTemplate}
+    ${badge ? `<div class="w-line">${badge}</div>` : ''}
     ${worker.error ? `<div class="w-err">${esc(worker.error)}</div>` : ''}
     <div class="w-sub">
       ${worker.job_id ? `<a class="job-link" href="${esc(worker.job_url)}" target="_blank" rel="noopener" title="在 Cybertron 打开这个 job（新标签页）">job ${esc(worker.job_id)} ↗</a>${worker.job_status ? `<span>${esc(worker.job_status)}</span>` : ''}` : ''}
@@ -200,17 +242,21 @@ function renderSummary(state) {
 
 function renderTemplates(state) {
   const usage = new Map();
+  const outdated = new Map();         // 模板名 → 按旧版内容在跑的 Worker 数
   for (const e of state.endpoints) {
     for (const w of e.workers) {
       if (!ACTIVE.has(w.phase)) continue;
       const key = w.template.name;
       usage.set(key, [...(usage.get(key) || []), e.name]);
+      if (isOutdated(w)) outdated.set(key, (outdated.get(key) || 0) + 1);
     }
   }
   $('#templates').innerHTML = state.templates.length ? `<div class="tpl-list">${state.templates.map((t) => {
     const used = usage.get(t.name) || [];
+    const stale = outdated.get(t.name) || 0;
     const usedText = used.length
       ? `使用中：${[...new Set(used)].map((ep) => `${esc(ep)} ×${used.filter((x) => x === ep).length}`).join('，')}`
+        + (stale ? `（其中 ${stale} 个仍是旧版，不会自动更新）` : '')
       : '未使用';
     return `<div class="tpl">
       <div class="tpl-top"><span class="tpl-name">${esc(t.name)}</span>${ttsTag(t.tts_pad_protocol)}</div>
@@ -254,13 +300,13 @@ async function api(path, init = {}) {
   return body;
 }
 
-function toast(text, isError = false) {
+function toast(text, isError = false, ms = null) {
   const el = $('#toast');
   el.textContent = text;
   el.className = `toast${isError ? ' error' : ''}`;
   el.hidden = false;
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => { el.hidden = true; }, isError ? 6000 : 2500);
+  toastTimer = setTimeout(() => { el.hidden = true; }, ms ?? (isError ? 6000 : 2500));
 }
 
 let pending = 0;                     // 进行中的操作数；> 0 时不重画，免得「处理中」按钮被刷回可点
@@ -329,7 +375,7 @@ document.addEventListener('click', (event) => {
   if (!el || el.disabled) return;
   const d = el.dataset;
   if (d.copy) { navigator.clipboard?.writeText(d.copy); toast('已复制'); }
-  if (d.scale) act(`workers/${d.scale}/scale`, { method: 'POST' }, null, '已提交：新 Worker 正在启动', el);
+  if (d.scale) scale(d.scale, el);
   if (d.drain) act(`workers/${d.drain}/drain`, { method: 'POST' }, `驱逐 ${d.drain}？\n\n不再给它派新会话；手上的会话正常结束后自动停掉 job。`, '已开始驱逐', el);
   if (d.force) act(`workers/${d.force}/force`, { method: 'POST' }, `强制关闭 ${d.force}？\n\n正在进行的会话会被立刻打断（客户端收到 worker_removed），然后停掉 job。`, '已强制关闭', el);
   if (d.move) act(`workers/${d.move}/move`, { method: 'POST', body: JSON.stringify({ endpoint: d.to }) },
@@ -339,6 +385,18 @@ document.addEventListener('click', (event) => {
   if (d.delTemplate) act(`templates/${d.delTemplate}`, { method: 'DELETE' }, `删除模板 ${d.delTemplate}？\n\n已起的 Worker 不受影响。`, '模板已删除', el);
   if (d.editTemplate) fillTemplateForm(d.editTemplate);
 });
+
+/** 扩容 / 重新起：后端按模板当前内容起。在跑的 Worker 若是旧版，先确认，免得端点里不知不觉混进两个版本。 */
+function scale(id, button) {
+  const worker = findWorker(id);
+  const outdated = worker && isOutdated(worker);
+  const confirmText = outdated && ACTIVE.has(worker.phase)
+    ? `模板 ${worker.template.name} 在 ${id} 启动后改过，新副本将按模板当前内容启动：\n\n${changeLines(worker)}\n\n`
+      + `${id} 本身不会变，端点里会同时有新旧两个版本。继续？`
+    : null;
+  const doneText = outdated ? '已提交：新 Worker 按模板当前内容启动' : '已提交：新 Worker 正在启动';
+  act(`workers/${id}/scale`, { method: 'POST' }, confirmText, doneText, button);
+}
 
 document.addEventListener('submit', (event) => {
   const form = event.target;
@@ -379,8 +437,13 @@ $('#template-form').addEventListener('submit', async (event) => {
   const form = event.target;
   const data = Object.fromEntries(new FormData(form).entries());
   for (const key of ['non_spoken_budget_while_listening', 'non_spoken_budget_while_speaking']) data[key] = Number(data[key]);
-  const ok = await act(`templates/${encodeURIComponent(data.name)}`, { method: 'PUT', body: JSON.stringify(data) }, null, '模板已保存', event.submitter);
-  if (ok) form.reset();
+  const ok = await act(`templates/${encodeURIComponent(data.name)}`, { method: 'PUT', body: JSON.stringify(data) }, null, null, event.submitter);
+  if (!ok) return;
+  form.reset();
+  // act 已刷新过状态：数一下按旧内容在跑的 Worker
+  const stale = (lastState?.endpoints || []).flatMap((e) => e.workers)
+    .filter((w) => ACTIVE.has(w.phase) && w.template.name === data.name && isOutdated(w)).length;
+  toast(stale ? `模板已保存。${stale} 个在跑的 Worker 仍是旧版，不会自动更新；要换就扩容新副本再驱逐旧的` : '模板已保存', false, stale ? 8000 : null);
 });
 
 refresh();

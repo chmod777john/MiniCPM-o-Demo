@@ -6,10 +6,13 @@
 #   DEMO_PORT                本机 HTTPS 端口（再由 frpc 暴露到公网），默认 10032
 #   DEMO_API_ENDPOINTS       页面可选的 API 端点 JSON：[{"name":"f9t4","url":"https://<host>:<port>/e/f9t4"}]
 #   DEMO_DEFAULT_API         首次打开时选中的端点（缺省取列表第一个）
+#   DEMO_API_SERVICE         首次打开时的 API 服务地址（https://<host>:<port>，页面上可改）；页面读其 /overview/api/state
+#                            把全部端点（一个端点 = 一个模型）列进下拉框。缺省取 DEMO_DEFAULT_API 所在的服务
 #   DEMO_DEFAULT_PRESET      首次打开时的 preset id
 #   DEMO_AUDIO_ROOTS         允许读取参考音频的目录（: 分隔）；不设则不读任何音频
 #   DEMO_BOARD_CASE_FOLDER   board 默认 system 取自的训练数据目录
 #   SUBAGENT_CLAUDE_BIN / SUBAGENT_CLAUDE_SETTINGS  subagent 后台 Claude Code（不设则 subagent 503）
+#   UICARD_TOOLS_CONFIG      uicard 工具的 key 配置文件（SERP / Tavily / 高德；不设则这些工具给模型回「未配置」错误）
 set -euo pipefail
 
 ENV_FILE="${1:?usage: $0 <env file>}"

@@ -38,6 +38,24 @@ _POLL_INTERVALS: Dict[WorkerPhase, float] = {
 _POLL_ERROR_PREFIX = "cctl job get"
 
 
+# 模板里不影响 Worker 运行的字段：改了它们不算「旧版」
+_TEMPLATE_COSMETIC_FIELDS = {"name", "note"}
+
+
+def template_changes(snapshot: WorkerTemplate, current: Optional[WorkerTemplate]) -> Optional[List[Dict[str, Any]]]:
+    """Worker 启动时的模板快照与模板当前内容的差异。
+
+    返回 ``None`` 表示模板已被删除；空列表表示一致（Worker 是按模板当前内容跑的）；
+    否则每项 ``{"field", "worker", "current"}``，面板据此标「旧版模板」并在扩容前提示。
+    """
+
+    if current is None:
+        return None
+    old, new = snapshot.model_dump(mode="json"), current.model_dump(mode="json")
+    return [{"field": key, "worker": old.get(key), "current": new.get(key)}
+            for key in new if key not in _TEMPLATE_COSMETIC_FIELDS and old.get(key) != new.get(key)]
+
+
 class ControlPlaneError(ValueError):
     """可展示给面板用户的操作错误（参数不对、状态不允许）。"""
 
@@ -175,12 +193,21 @@ class ControlPlane:
             return self._new_worker(endpoint, template)
 
     async def scale_up(self, worker_id: str) -> WorkerRecord:
-        """扩容：用该 Worker 的模板，在同一端点再起一个副本。"""
+        """扩容 / 重新起：在同一端点按该 Worker 所用模板**当前保存的内容**再起一个。
+
+        不复用 Worker 记录里的模板快照：快照只说明「这个 Worker 实际跑的是什么」。模板改过之后
+        （例如修正了 checkpoint 目录），在失败的 Worker 上重新起若还用快照，会原样重试一份已知会坏的配置。
+        """
 
         async with self._lock:
             source = self._worker(worker_id)
             self._endpoint(source.endpoint)
-            return self._new_worker(source.endpoint, source.template)
+            template = self.state.templates.get(source.template.name)
+            if template is None:
+                raise ControlPlaneError(
+                    f"模板 {source.template.name} 已删除，不能再按它起 Worker；在端点下选一个现有模板添加"
+                )
+            return self._new_worker(source.endpoint, template)
 
     async def drain(self, worker_id: str) -> WorkerRecord:
         """驱逐：不再派新会话，手上的会话结束后停 job。还没就绪的 Worker 直接撤销。"""
@@ -506,6 +533,7 @@ class ControlPlane:
     def _worker_view(self, record: WorkerRecord, now: float) -> Dict[str, Any]:
         view = record.model_dump(mode="json")
         view["phase_since"] = record.phase_since
+        view["template_changes"] = template_changes(record.template, self.state.templates.get(record.template.name))
         cluster = getattr(getattr(self.jobs, "settings", None), "cluster", None) or JobSettings().cluster
         view["job_url"] = job_url(record.job_id, cluster) if record.job_id is not None else None
         pool = self.registry.get(record.endpoint)

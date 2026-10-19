@@ -27,7 +27,7 @@ from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconn
 from core.processors.backend_factory import create_backend
 from py_backend.media import decode_audio_base64, decode_frame_base64_list
 from py_backend.voice import resolve_duplex_voice_refs
-from py_backend.fc_duplex_runtime import FcDuplexSessionRuntime, fc_duplex_enabled
+from py_backend.fc_duplex_runtime import FcDuplexSessionRuntime, InputModeError, fc_duplex_enabled
 from core.fc_duplex_resume import FcDuplexResumeError
 from core.fc_duplex.protocol_errors import ConstrainedDecodingError, ModelProtocolError
 from py_backend.chat_util import (
@@ -198,6 +198,9 @@ def _fatal_reason(error: BaseException) -> tuple[str, Dict[str, Any]]:
     diagnostic 里带违例类型和模型最近生成的原文，供定位。
     """
 
+    if isinstance(error, InputModeError):
+        # 客户端没按会话模式传帧(audio 带帧 / omni 缺帧、多帧)或 URL 与 payload 冲突:客户端错误,不重试
+        return "input_mode_error", {"message": str(error)}
     if isinstance(error, ModelProtocolError):
         return "model_protocol_error", error.diagnostic()
     if isinstance(error, ConstrainedDecodingError):

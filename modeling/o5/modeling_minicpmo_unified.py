@@ -54,6 +54,18 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _tts_condition_legacy() -> bool:
+    """是否回到 2026-10-16 之前的 TTS condition 口径(漏 spoken_turn_eos 与轮末 text_eos)。
+
+    返回:
+        ``O5_TTS_CONDITION_LEGACY=1`` 时为 True;默认 False,即与训练对齐的口径。
+
+    只为在同一个 Worker 上对同一段 token/hidden 做轮末音频 A/B 留的开关,正式部署不要设。
+    """
+
+    return os.environ.get("O5_TTS_CONDITION_LEGACY", "0") == "1"
+
+
 class ProcessorMode(Enum):
     CHAT = "chat"
     STREAMING = "streaming"
@@ -568,11 +580,13 @@ class MiniCPMO(BaseMiniCPMO):
         system_content: "O5SystemContent",
         tts_prompt_audio_path: str | None,
         generate_audio: bool | None,
+        input_mode: str = "audio",
     ) -> FcModelPrepareResult:
         return self._require_fc_duplex().prepare(
             system_content=system_content,
             tts_prompt_audio_path=tts_prompt_audio_path,
             generate_audio=generate_audio,
+            input_mode=input_mode,
         )
 
     def fc_duplex_streaming_prefill(
@@ -890,6 +904,60 @@ class FcDuplexCapability:
         self.decoder.feed(embeds)
         return int(embeds.shape[0])
 
+    def _feed_video_frame(self, frame) -> int:
+        """按 SDK user_video slot 喂一帧,返回视觉 token 数。
+
+        序列 ``<user_video_slot> <image> [N 个视觉 hidden] </image> </user_video_slot>``
+        (SDK ``tokenization/slots/user_video.py``)。``<image>…</image>`` 作为一个整组喂入,
+        位置走 canvas_v6(``canvas_stream.py``);两个 slot token 是普通文本位置。
+
+        预处理不切片(``max_slice_nums=1``):保纵横比缩放到面积约 448²、两边取整到 56 的倍数,
+        与 SDK ``vision_tokens.compute_vision_resized_size`` / 训练侧 ``find_best_resize`` 一致。
+        N 必须等于 merger 实际输出的 hidden 数,整段会话每帧相同,否则直接报错 ——
+        训练侧遇到数量不符会静默截断/补零,推理侧不能这样。
+        """
+
+        processed = self.processor.process_image([frame], max_slice_nums=1)
+        pixel_values = processed["pixel_values"]
+        if len(pixel_values) != 1 or len(pixel_values[0]) != 1:
+            raise ValueError(f"一帧应只产生 1 张 source 图(不切片),实际 {[len(x) for x in pixel_values]}")
+        expected_tokens = int(processed["source_image_visual_tokens"][0][0])
+        tgt = processed["tgt_sizes"][0][0]
+        vit_h, vit_w = int(tgt[0]), int(tgt[1])
+        data = {
+            "pixel_values": [[torch.as_tensor(pixel_values[0][0], device=self.device)]],
+            "tgt_sizes": [torch.as_tensor(np.asarray([[vit_h, vit_w]]), device=self.device)],
+        }
+        vision_hidden = self.model.get_vision_embedding(data)[0][0]
+        n_tokens = int(vision_hidden.shape[0])
+        if n_tokens != expected_tokens:
+            raise RuntimeError(
+                f"视觉 hidden 数 {n_tokens} 与口径算出的 placeholder 数 {expected_tokens} 不符"
+                f"(ViT 网格 {vit_h}x{vit_w})"
+            )
+        from .canvas_stream import compute_llm_grid
+
+        grid = compute_llm_grid(n_tokens, vit_h, vit_w)
+        geometry = (n_tokens, grid)
+        if self._video_frame_geometry is None:
+            self._video_frame_geometry = geometry
+        elif self._video_frame_geometry != geometry:
+            raise ValueError(
+                f"同一会话的视频帧尺寸不能变:首帧 {self._video_frame_geometry},本帧 {geometry};"
+                "请固定采集分辨率"
+            )
+
+        self._feed_ids([self.sid(self.K.USER_VIDEO_SLOT_START)])
+        image_start = self.decoder.embed_token(self.sid(self.K.IMAGE_START))
+        image_end = self.decoder.embed_token(self.sid(self.K.IMAGE_END))
+        group = torch.cat([image_start, vision_hidden.to(image_start.dtype), image_end], dim=0)
+        self.output_ids.append(self.sid(self.K.IMAGE_START))
+        self.output_ids.extend([self.sid(self.K.IMAGE_PLACEHOLDER)] * n_tokens)
+        self.output_ids.append(self.sid(self.K.IMAGE_END))
+        self.decoder.feed(group, canvas_image_grid=grid)
+        self._feed_ids([self.sid(self.K.USER_VIDEO_SLOT_END)])
+        return n_tokens
+
     def _constrained_for(self, decoding_policy: str) -> Optional[_ConstrainedDecoding]:
         if decoding_policy not in DECODING_POLICIES:
             raise ValueError(f"decoding_policy 只能是 {DECODING_POLICIES}，得到 {decoding_policy!r}")
@@ -1027,6 +1095,9 @@ class FcDuplexCapability:
         self._think_buf, self._tool_call_buf = [], []
         self._constrained: Optional[_ConstrainedDecoding] = None
         self._tts_pad_protocol = "legacy"
+        self._input_mode = "audio"
+        # omni 会话第一帧确定的 (视觉 token 数, LLM 网格);之后每帧必须相同(SDK 口径:整条样本每帧 N 相同)
+        self._video_frame_geometry: Optional[tuple[int, tuple[int, int]]] = None
         self.tts_text_start_pos = 0
         self.tts_past_key_values = None
         self.token2wav_buffer = []
@@ -1128,25 +1199,45 @@ class FcDuplexCapability:
         )
         self.cleanup()
 
-    def _tts_condition(self, results):
+    def _tts_condition(self, results, end_of_turn: bool = False):
+        """拼一个 output unit 的 TTS condition。
+
+        参数:
+            results: 本 unit 收进 condition 的 ``(token_id, hidden, turn_eos)``;
+                收哪些 token 见 ``streaming_spoken_generate``。
+            end_of_turn: 本 unit 是否是这一轮话的最后一个 unit(LLM 出了
+                ``<|spoken_turn_eos|>``)。
+
+        返回:
+            ``[1, L, hidden]`` 的 condition embedding。
+
+        形态与训练侧 ``interleaved_forward`` 对齐(Megatron-LM-huawei
+        ``components/tts_backbone/minicpm_tts_bicodec/modeling_minicpmtts.py:1341-1354``):
+        每个 unit 都以 ``audio_bos`` 收尾,**只有一轮话的最后一个 unit** 在 ``audio_bos``
+        之前多一个独立的 ``text_eos``(「本轮文字已全部给完」)。普通双工流式路径
+        ``modeling/o5/utils.py:874`` 是同一形态。
+        """
+
         tts = self.model.tts
-        if not results:
-            bos = tts.emb_text(torch.tensor(
-                [tts.audio_bos_token_id], device=tts.emb_text.weight.device, dtype=torch.long
-            ))
-            return bos.unsqueeze(0)
-        tokens = torch.tensor([x[0] for x in results], device=tts.emb_text.weight.device)
-        hidden = torch.cat([x[1].squeeze(0) for x in results], dim=0)
-        hidden = tts.projector_semantic(hidden)
-        if getattr(tts.config, "normalize_projected_hidden", False):
-            hidden = self.model._normalize_projected(hidden, tts.projector_semantic_norm)
-        else:
-            hidden = F.normalize(hidden, p=2, dim=-1)
-        merged = tts.emb_text(tokens) + hidden
-        bos = tts.emb_text(torch.tensor(
-            [tts.audio_bos_token_id], device=tts.emb_text.weight.device, dtype=torch.long
-        ))
-        return torch.cat([merged, bos], dim=0).unsqueeze(0)
+        device = tts.emb_text.weight.device
+
+        def _emb(token_id: int) -> torch.Tensor:
+            return tts.emb_text(torch.tensor([token_id], device=device, dtype=torch.long))
+
+        parts = []
+        if results:
+            tokens = torch.tensor([x[0] for x in results], device=device)
+            hidden = torch.cat([x[1].squeeze(0) for x in results], dim=0)
+            hidden = tts.projector_semantic(hidden)
+            if getattr(tts.config, "normalize_projected_hidden", False):
+                hidden = self.model._normalize_projected(hidden, tts.projector_semantic_norm)
+            else:
+                hidden = F.normalize(hidden, p=2, dim=-1)
+            parts.append(tts.emb_text(tokens) + hidden)
+        if end_of_turn and not _tts_condition_legacy():
+            parts.append(_emb(tts.config.text_eos_token_id))
+        parts.append(_emb(tts.audio_bos_token_id))
+        return torch.cat(parts, dim=0).unsqueeze(0)
 
     def _spoken_audio(self, results, end_of_turn: bool) -> dict:
         empty = {
@@ -1164,7 +1255,7 @@ class FcDuplexCapability:
                 prompt_wav_path=self.tts_prompt_audio_path
             )
         prep = time.time()
-        condition = self._tts_condition(results)
+        condition = self._tts_condition(results, end_of_turn)
         prep_cost = time.time() - prep
         tts_start = time.time()
         new_tokens, old_kv = self.model.tts.generate_chunk(
@@ -1239,10 +1330,14 @@ class FcDuplexCapability:
         system_content: "O5SystemContent",
         tts_prompt_audio_path: str | None,
         generate_audio: bool | None,
+        input_mode: str = "audio",
     ) -> FcModelPrepareResult:
+        if input_mode not in ("audio", "omni"):
+            raise ValueError(f"input_mode 只能是 audio / omni,实际为 {input_mode!r}")
         self._prepare_sequence += 1
         resize_info = self._resize_embeddings()
         self._reset_streaming_state()
+        self._input_mode = input_mode
         self._tools = list(system_content.tools)
         if generate_audio is not None:
             self.generate_audio = bool(generate_audio)
@@ -1276,13 +1371,19 @@ class FcDuplexCapability:
             "generate_audio": self.generate_audio,
             "tts_prompt_audio_path": self.tts_prompt_audio_path,
             "has_system_audio": plan.audio_segment_count > 0,
+            "input_mode": self._input_mode,
         }
 
     def streaming_prefill(
         self, audio_waveform=None, frame_list=None, tool_responses=None,
         sample_rate=16000, max_slice_nums=1
     ):
-        del frame_list, sample_rate, max_slice_nums
+        del sample_rate, max_slice_nums
+        frames = list(frame_list or [])
+        if self._input_mode == "audio" and frames:
+            raise ValueError("audio 模式的会话不接受视频帧;要传视频请用 omni 模式")
+        if self._input_mode == "omni" and len(frames) != 1:
+            raise ValueError(f"omni 模式每个 Unit 必须恰好 1 帧视频,实际 {len(frames)} 帧")
         if self._current_unit_open:
             self.finalize_unit()
         info = {
@@ -1295,6 +1396,10 @@ class FcDuplexCapability:
         prefill_start = time.time()
         self._feed_ids([self.sid(self.K.UNIT_START)])
         self._current_unit_open = True
+        if frames:
+            video_start = time.time()
+            info["n_video_tokens"] = self._feed_video_frame(frames[0])
+            info["cost_video"] = time.time() - video_start
         if audio_waveform is not None and len(audio_waveform):
             self._feed_ids([self.sid(self.K.USER_AUDIO_SLOT_START)])
             audio_start = time.time()
@@ -1335,6 +1440,7 @@ class FcDuplexCapability:
         is_listen = is_speaking = turn_eos = terminated = is_pad = False
         reason = term_id = None
         tts_pad_id = self.sid(self.K.TTS_PAD)
+        spoken_turn_eos_id = self.sid(self.K.SPOKEN_TURN_EOS)
         terms = {
             self.sid(self.K.SPOKEN_SLOT_EOS): "spoken_slot_eos",
             self.sid(self.K.SPOKEN_TURN_EOS): "spoken_turn_eos",
@@ -1361,12 +1467,20 @@ class FcDuplexCapability:
             if not self.is_special(tid):
                 text_ids.append(tid)
             logits, hidden = self.decoder.feed(self.decoder.embed_token(tid), return_logits=True)
-            # pad 格是**要出声**的（turn 中间那一秒的真实波形）：训练侧
-            # minicpm-o `multimodal_common/dataset/o5_agent_duplex/tts.py` 的
-            # condition_special_ids = {spoken_turn_eos, tts_pad} 把 pad 显式留在 TTS condition 里。
-            # 只按 `is_speaking and not is_special` 收的话 pad 永远进不来，于是 pad 格一秒音频都不出，
-            # 与训练不一致。
-            if (is_speaking and not self.is_special(tid)) or tid == tts_pad_id:
+            # 训练侧 minicpm-o `multimodal_common/dataset/o5_agent_duplex/tts.py` 的
+            # condition_special_ids = {spoken_turn_eos, tts_pad}：TTS condition = 正文 payload
+            # + 这两个 special，不含 speak / spoken_slot_eos / slot wrapper。这里按同一口径收：
+            # - pad 格是**要出声**的（turn 中间那一秒的真实波形），只按
+            #   `is_speaking and not is_special` 收的话 pad 永远进不来，pad 格一秒音频都不出；
+            # - spoken_turn_eos 已经 feed 进 LLM、hidden 也拿到了。训练时它是本轮最后一个
+            #   condition token（「这轮话到此结束」+ 该位置上 LLM 汇出的上下文），漏掉它，
+            #   轮末那块音频就没有训练时的收尾条件；terminal-only 的 `speak → spoken_turn_eos`
+            #   更会让 condition 退化成只剩一个 audio_bos。
+            if (
+                (is_speaking and not self.is_special(tid))
+                or tid == tts_pad_id
+                or (tid == spoken_turn_eos_id and not _tts_condition_legacy())
+            ):
                 tts_results.append((tid, hidden, turn_eos))
             if tid in terms:
                 terminated, reason, term_id = True, terms[tid], tid

@@ -5,6 +5,9 @@ Demo 与 API 只通过协议耦合：模型是谁、口径如何，由页面在�
 
 - ``DEMO_API_ENDPOINTS``：页面下拉里可选的 API 端点，JSON 列表 ``[{"name": "...", "url": "https://host:port/e/<端点>"}]``；
 - ``DEMO_DEFAULT_API``：页面首次打开时选中的端点 URL（缺省取列表第一个）；
+- ``DEMO_API_SERVICE``：页面首次打开时的 API 服务地址（``https://host:port``；页面上可改）。页面在浏览器里读它的
+  公开状态 ``<服务>/overview/api/state``，把全部端点（一个端点 = 一个模型）列进下拉框供选择。缺省取
+  ``DEMO_DEFAULT_API`` / 列表第一个端点所在的服务；
 - ``DEMO_DEFAULT_PRESET``：首次打开时的 preset id（不属于当前 demo 时由前端回退到 demo 自己的默认）。
 """
 
@@ -14,6 +17,7 @@ import json
 import logging
 import os
 from typing import Any
+from urllib.parse import urlsplit
 
 logger = logging.getLogger("demo_gallery")
 
@@ -33,6 +37,19 @@ def api_endpoints() -> list[dict[str, str]]:
     return endpoints
 
 
+def _origin(url: str) -> str:
+    parts = urlsplit(url.strip())
+    return f"{parts.scheme}://{parts.netloc}" if parts.scheme in ("http", "https") and parts.netloc else ""
+
+
+def default_api_service(endpoints: list[dict[str, str]], default_api: str) -> str:
+    for candidate in (os.environ.get("DEMO_API_SERVICE") or "", default_api, *(e["url"] for e in endpoints)):
+        origin = _origin(candidate)
+        if origin:
+            return origin
+    return ""
+
+
 def gallery_runtime() -> dict[str, Any]:
     """所有 demo 页面共用的 Demo 侧配置；每个 demo 的 ``/defaults`` 在此之上合并自己的字段。"""
 
@@ -41,5 +58,6 @@ def gallery_runtime() -> dict[str, Any]:
     return {
         "api_endpoints": endpoints,
         "default_api_endpoint": default_api or (endpoints[0]["url"] if endpoints else ""),
+        "default_api_service": default_api_service(endpoints, default_api),
         "default_quick_setting": os.environ.get("DEMO_DEFAULT_PRESET") or None,
     }
