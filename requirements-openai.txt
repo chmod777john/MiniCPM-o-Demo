@@ -1,0 +1,5 @@
+# CPU HTTP bridge only; model backend runs in its existing inference environment.
+fastapi>=0.128.0
+uvicorn>=0.40.0
+websockets>=16.0
+pillow>=10.4.0
