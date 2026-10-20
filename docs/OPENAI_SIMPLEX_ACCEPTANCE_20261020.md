@@ -2,6 +2,8 @@
 
 日期：2026-10-20 UTC。Owner：root。
 
+> 后续更正：本页的 AI2D2/8 来自旧的本地 VLMEvalKit7e9310a7。2026-10-20重新核对呼和浩特报告后，取得同事使用的 `ue2-integration-20260928` 分支当前3d3fcbfe；同样8条原始回答、不重新推理，原版 `dataset.evaluate(exact_matching)` 得到8/8。旧结果保留为版本差异证据，不能当作该分支下的结果。详见 `OPENAI_BENCHMARK_COVERAGE_20261020.md`。
+
 ## 结论与代码边界
 
 接口最小集已实现，真实 A100 TP2 调用和 AI2D 小样本链路已完成。所有实现变更位于 Demo 独立分支 `demo-adapter-fc-openai-simplex-20261020`；HF、accel 工作树均干净且 commit 未改变。正式 Demo 与 MAP 应用分支未合入本候选。
