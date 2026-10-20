@@ -229,6 +229,7 @@ class PyTorchBackend:
         generate_audio: bool = True,
         max_new_tokens: int = 256,
         do_sample: bool = True,
+        generation_options: Optional[Dict[str, Any]] = None,
     ) -> Iterator[StreamingChunk]:
         chat_view = self.processor.set_chat_mode()
         yield from chat_view.streaming_generate(
@@ -236,6 +237,7 @@ class PyTorchBackend:
             generate_audio=generate_audio,
             max_new_tokens=max_new_tokens,
             do_sample=do_sample,
+            generation_options=generation_options,
         )
 
     def chat_non_streaming_generate(
@@ -270,6 +272,8 @@ class PyTorchBackend:
         enable_thinking: bool = False,
         tts_ref_audio: Optional[np.ndarray] = None,
         do_sample: bool = True,
+        generation_options: Optional[Dict[str, Any]] = None,
+        return_completion_metadata: bool = False,
     ) -> Any:
         chat_view = self.processor.set_chat_mode()
         tts_config = TTSConfig(enabled=generate_audio, mode=TTSMode.AUDIO_ASSISTANT)
@@ -287,12 +291,14 @@ class PyTorchBackend:
                 messages=messages,
                 generation=GenerationConfig(
                     max_new_tokens=max_new_tokens,
+                    **(generation_options or {}),
                 ),
                 tts=tts_config,
                 image=ImageConfig(max_slice_nums=max_slice_nums),
                 use_tts_template=use_tts_template,
                 omni_mode=omni_mode,
                 enable_thinking=enable_thinking,
+                return_completion_metadata=return_completion_metadata,
             ),
             max_new_tokens=max_new_tokens,
             do_sample=do_sample,
@@ -306,6 +312,19 @@ class PyTorchBackend:
         if response.audio_data:
             wav_bytes = base64.b64decode(response.audio_data)
             waveform, _ = sf.read(io.BytesIO(wav_bytes), dtype="float32")
+        if return_completion_metadata:
+            stats = response.token_stats
+            if stats is None or response.finish_reason is None:
+                raise RuntimeError("The HF backend did not return completion metadata")
+            return {
+                "text": response.text, "waveform": waveform,
+                "completion_metadata": {
+                    "finish_reason": response.finish_reason,
+                    "usage": {"prompt_tokens": stats["input_tokens"],
+                              "completion_tokens": stats["generated_tokens"],
+                              "total_tokens": stats["input_tokens"] + stats["generated_tokens"]},
+                },
+            }
         return response.text, waveform
 
     def set_duplex_config(self, config: Optional[Dict[str, Any]]) -> None:

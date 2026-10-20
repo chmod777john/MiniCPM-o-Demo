@@ -196,6 +196,8 @@ class ChatRequest(BaseModel):
         False, 
         description="是否启用思考模式（显示推理过程）"
     )
+    return_completion_metadata: bool = False
+
     return_prompt: bool = Field(
         False,
         description="是否返回完整 prompt（调试用）"
@@ -273,6 +275,9 @@ class ChatResponse(BaseModel):
         description="音频采样率（固定 24000 Hz）"
     )
     
+    # 原生 HF 生成的终止原因，仅请求 completion metadata 时提供。
+    finish_reason: Optional[str] = None
+
     # 元信息
     tokens_generated: Optional[int] = Field(
         None, 
