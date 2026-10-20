@@ -38,3 +38,20 @@ Seeds4 and361 are the first seeds meeting specified input/question-type coverage
 ## Results
 
 In progress. Per-dataset exit codes, original status files, raw predictions, HTTP responses, timings and outputs will be added after the owned task completes. A successful API call is not proof that its answer is correct; a small-sample score is not a full benchmark claim.
+
+## Stage result at05:57 UTC
+
+All80 selected image benchmark requests returned nonempty HTTP200 responses: MMBench EN20, CN20, MMMU6, TextVQA6, DocVQA6, ChartQA6, OCRBench10, MathVista6. Seven image configurations finished the original judge and generated status/summary/meta; MathVista awaits failure/availability of the independent judge. The five-image MMMU request was observed in raw HTTP capture and succeeded. No runtime source changes were needed.
+
+| Dataset | API | Original observed grade | Inference seconds |
+|---|---:|---|---:|
+| MMBench EN V1.1 dev |20/20|Vanilla diagnostic17/20; original partial circular3/3|89.010|
+| MMBench CN V1.1 dev |20/20|Vanilla diagnostic17/20; original partial circular2/3|60.288|
+| MMMU dev/val |6/6|4/6|74.104|
+| TextVQA val |6/6|VQA score100|2.316|
+| DocVQA val |6/6|ANLS94.0476|3.615|
+| ChartQA test |6/6|Relaxed accuracy83.3333 (5/6)|2.343|
+| OCRBench |10/10|7 hits; original score7, full-set normalized0.7|3.830|
+| MathVista mini |6/6|Independent GPT judge unavailable; no valid grade|58.4 approx|
+
+These numbers are tiny-sample integration observations only. HTTP capture `gpu-run/http-transactions.jsonl` preserves complete returned text/usage/finish reason and request text; image bodies are represented by SHA256 and length, with original data and decoded images retained separately. This transparent ASGI capture wraps the unchanged app and does not rewrite requests or responses.
