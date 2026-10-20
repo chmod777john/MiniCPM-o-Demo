@@ -119,3 +119,50 @@ def test_facade_observes_native_result_without_modification():
         assert model._last_chat_token_stats["input_tokens"] == 42
         assert model._last_chat_token_stats["generated_tokens"] == len(tokens)
         assert model.seen["max_new_tokens"] == 3
+
+
+def test_websocket_turn_handshake_and_close():
+    import asyncio
+    import json
+    from websockets.asyncio.server import serve
+    events = []
+    async def run():
+        async def upstream(ws):
+            await ws.send(json.dumps({"type": "session.queued", "position": 1}))
+            await ws.send(json.dumps({"type": "session.queue_update", "position": 1}))
+            await ws.send(json.dumps({"type": "session.queue_done"}))
+            events.append(json.loads(await ws.recv()))
+            await ws.send(json.dumps({"type": "session.created", "session_id": "s"}))
+            events.append(json.loads(await ws.recv()))
+            await ws.send(json.dumps({"type": "response.done", "text": "A", "completion_metadata": {
+                "finish_reason": "stop", "usage": {"prompt_tokens": 4, "completion_tokens": 2, "total_tokens": 6}}}))
+            events.append(json.loads(await ws.recv()))
+            await ws.send(json.dumps({"type": "session.closed", "reason": "turn_completed"}))
+            await ws.close()
+            events.append("closed")
+        async with serve(upstream, "127.0.0.1", 0) as server:
+            port = server.sockets[0].getsockname()[1]
+            payload = translate(body(), "minicpm-o5")
+            response, metadata = await openai_app.run_chat(payload, Settings(upstream=f"ws://127.0.0.1:{port}/v1/realtime?mode=chat"))
+            assert response["text"] == "A" and metadata["finish_reason"] == "stop"
+        assert events[0] == {"type": "session.init", "payload": {}}
+        assert events[1] == {"type": "input.append", "input": payload}
+        assert events[2] == {"type": "session.close", "reason": "turn_completed"}
+        assert events[3] == "closed"
+    asyncio.run(run())
+
+
+def test_old_backend_metadata_is_not_fabricated():
+    import asyncio
+    import json
+    from websockets.asyncio.server import serve
+    async def run():
+        async def upstream(ws):
+            await ws.send(json.dumps({"type": "response.done", "text": "answer"}))
+            await ws.wait_closed()
+        async with serve(upstream, "127.0.0.1", 0) as server:
+            port = server.sockets[0].getsockname()[1]
+            with pytest.raises(APIError) as error:
+                await openai_app.run_chat({}, Settings(upstream=f"ws://127.0.0.1:{port}/v1/realtime?mode=chat"))
+            assert error.value.status == 502 and error.value.code == "upstream_contract_error"
+    asyncio.run(run())

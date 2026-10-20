@@ -142,6 +142,7 @@ def translate(body, model):
 async def run_chat(payload, settings):
     headers = {"Authorization": "Bearer " + settings.upstream_key} if settings.upstream_key else None
     initialized = submitted = False
+    completed = None
     async with connect(settings.upstream, additional_headers=headers, compression=None,
                        open_timeout=30, close_timeout=5, max_size=settings.max_body_bytes) as ws:
         async for raw in ws:
@@ -158,7 +159,12 @@ async def run_chat(payload, settings):
                 if metadata.get("finish_reason") not in {"stop", "length"} or not isinstance(metadata.get("usage"), dict):
                     raise APIError("Upstream lacks native chat metadata; deploy the matching Demo backend",
                                    status=502, code="upstream_contract_error")
-                return event, metadata
+                completed = (event, metadata)
+                # Release the backend session before the gateway assigns another request.
+                await ws.send(json.dumps({"type": "session.close", "reason": "turn_completed"}))
+            elif kind == "session.closed" and completed is not None:
+                await ws.wait_closed()
+                return completed
             elif kind in {"error", "session.failed", "session.closed"}:
                 error = event.get("error") or {}
                 code = error.get("code") if isinstance(error, dict) else None
