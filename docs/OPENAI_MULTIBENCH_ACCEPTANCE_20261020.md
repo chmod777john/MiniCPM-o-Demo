@@ -37,9 +37,9 @@ Seeds4 and361 are the first seeds meeting specified input/question-type coverage
 
 ## Results
 
-In progress. Per-dataset exit codes, original status files, raw predictions, HTTP responses, timings and outputs will be added after the owned task completes. A successful API call is not proof that its answer is correct; a small-sample score is not a full benchmark claim.
+Completed:92/92 new benchmark requests returned nonempty successful responses. Eight new dataset configurations completed the original judge and UE2 exports; MathVista inference completed but its independent judge is blocked. See final table below. A successful API call is not proof that its answer is correct; a small-sample score is not a full benchmark claim.
 
-## Stage result at05:57 UTC
+## Image-stage result (preserved history)
 
 All80 selected image benchmark requests returned nonempty HTTP200 responses: MMBench EN20, CN20, MMMU6, TextVQA6, DocVQA6, ChartQA6, OCRBench10, MathVista6. Seven image configurations finished the original judge and generated status/summary/meta; MathVista awaits failure/availability of the independent judge. The five-image MMMU request was observed in raw HTTP capture and succeeded. No runtime source changes were needed.
 
@@ -55,3 +55,62 @@ All80 selected image benchmark requests returned nonempty HTTP200 responses: MMB
 | MathVista mini |6/6|Independent GPT judge unavailable; no valid grade|58.4 approx|
 
 These numbers are tiny-sample integration observations only. HTTP capture `gpu-run/http-transactions.jsonl` preserves complete returned text/usage/finish reason and request text; image bodies are represented by SHA256 and length, with original data and decoded images retained separately. This transparent ASGI capture wraps the unchanged app and does not rewrite requests or responses.
+
+## Reproduction and evidence
+
+```sh
+# Finite owned model job; submit only when resources are available.
+cctl job create -f /user/weihongliang/analysis-runs/20261020-openai-multibench/gpu-run/job.json
+# The job starts unchanged services and executes every full run_eval.sh command:
+# gpu-run/run_suite.py; exact executed argv and wall time: gpu-run/suite-execution.json
+```
+
+`gpu-run/job_entry.sh` contains the exact model, TP2, runtime environment, isolated ports and HF/accel paths. `gpu-run/job.json`, `submission.json`, `diagnosis-live.json` identify resources and node10.156.1.177. Runtime baseline is76e895eb (printed by the task), even though later documentation commits were made while it ran; `runtime-version-check.json` confirms runtime source equality.
+
+`sample-manifest.json` fixes samples before inference. `prepare_data.py` reconstructs seed selection solely from question/input metadata and read-only official TSVs. `prepare_video.py` invokes the unchanged VideoMME.build_prompt on the selected videos, saving96frames in the owned LMUData cache. `video-input-files.json`/`video-frame-manifest.json` record source/video/frame hashes. GPU inference still runs the actual original framework and its own prompt path.
+
+`RESULTS.json` summarizes original status files; `gpu-run/framework-results/minicpm-o5/T*/` contains predictions, original judge outputs, and `status.json`. `gpu-run/framework-results/summary/` and the adjacent timestamped meta JSONs are the original run_eval.sh UE2 exports. Individual benchmark logs are in`gpu-run/logs/`. `evaluator-hashes.json` and`postrun-data-integrity.json` pin source/data and establish that shared TSVs were unchanged.
+
+Two outputs reached the configured2048-token limit: MMMU index9929 and MathVista index641; HTTP`finish_reason=length` was correctly recorded. Their raw answers remain untouched. The endpoint does not promise a full answer when the caller's token limit is exhausted.
+
+### MMBench group-count audit
+
+Both EN/CN samples have20rows from20distinct group IDs, with no repeated rotations and no complete four-rotation group. Only three selected rows are the base rotation (`index == index % 1e6`):3318,1392,3385. The original circular evaluator considers these three single-row groups, yielding EN3/3 and CN2/3; this does not measure complete circular consistency. The unchanged evaluator's `PRINT_VANILLA=1` diagnostic considers all20selected rows and yields17/20 for each language. `mmbench-group-coverage.json` records the audit.
+
+### External judge interruption and video continuation
+
+MathVista produced6/6 responses in the first GPU task. Its original independent judge health check did not return after11+minutes and no authorized judge configuration was available. At root's direction, owned task1303424 was stopped to avoid spending GPU time on that external wait. Its terminal platform state isKilled; the original MathVista status remains`eval`, accurately showing interruption. No judge result or completed summary is fabricated. Original health-check logs, predictions and `mathvista-interruption.json` document this gap.
+
+Video-only owned task1303538 starts the same unchanged runtime and runs only Video-MME; it does not repeat the80completed image requests. It prints Demo1c548e78, which adds documentation only over76e895eb. Runtime source remains identical.
+
+## Final acceptance table
+
+All sample IDs matched the manifest frozen before inference. No runtime source edits were necessary; no HF, accel or API code changed.
+
+| Benchmark/configuration | API success/failure | Original grade observed | Infer time | Original judge/export | Task |
+|---|---:|---|---:|---|---:|
+| AI2D_TEST (prior evidence reused) |15/0|14/15|107.641s|Complete|1303263|
+| MMBench_DEV_EN_V11 |20/0|Vanilla17/20; partial circular3/3, no complete rotation groups|89.010s|Complete|1303424|
+| MMBench_DEV_CN_V11 |20/0|Vanilla17/20; partial circular2/3, no complete rotation groups|60.288s|Complete|1303424|
+| MMMU_DEV_VAL |6/0|4/6; includes one/five images and MCQ/open questions|74.104s|Complete|1303424|
+| TextVQA_VAL |6/0|VQA score100|2.316s|Complete|1303424|
+| DocVQA_VAL |6/0|ANLS94.0476|3.615s|Complete|1303424|
+| ChartQA_TEST |6/0|Relaxed accuracy83.3333 (5/6)|2.343s|Complete|1303424|
+| OCRBench |10/0|7hits; stock raw score7, full-set normalized0.7|3.830s|Complete|1303424|
+| MathVista_MINI |6/0|No grade: independent judge unavailable|58.4s approx (inference log)|Inference saved; original eval interrupted|1303424|
+| Video-MME_8frame |12/0|5/12; stock rounded Overall Score41.7|5.818s|Complete|1303538|
+
+The new run has92benchmark calls plus9original framework API health probes,101HTTP transactions total, all200. Input counts observed in HTTP capture:79single-image questions, one5-image question,12eight-frame video questions, and9text-only probes. Together with the prior15AI2D cases, the evidence covers107benchmark requests, without re-running AI2D. There are no HTTP failures or empty model answers in these selected samples.
+
+Video uses real short/medium/long files, the original12task-type stratification, eight uniformly sampled frames, no subtitles/audio, and the original wrapper's448-pixel image size setting. Raw prediction and score tables confirm5correct of12; the stock report rounds0.41666 to0.417 before presenting41.7. This is video-as-multiple-images compatibility, not native video file upload/audio input or full video quality certification.
+
+The parameter/API coverage is shared text/image Chat Completions with nonstreaming output. Platform submission was direct`cctl → run_eval.sh`, matching the colleague's documented actual route. UltraEval2 platform`ue job submit`, database ingestion, notifications and UI were not tested.
+
+## Terminal resource state and follow-up
+
+- Task1303424:Killed at our request after preserving all80image outputs and seven complete judge results; no stale owned GPU service remains.
+- Task1303538:Succeeded. `video-run/CLEANUP.json`:suite0, service143 and HTTP wrapper-15 (deliberate final termination). All owned services exited and twoA100resources released.
+- No formal branch merge or push. Only this isolated candidate's documentation/worktree ownership changed.
+- Remaining external requirement:authorized independent MathVista judge endpoint/key. This can be completed CPU-only from saved predictions using the original evaluator; no further model inference is required.
+
+Final machine-readable evidence:`RESULTS.json`, `sample-manifest.json`, `mmbench-group-coverage.json`, `mathvista-interruption.json`, `video-frame-manifest.json`, and`evidence-sha256.json`. Commands:`gpu-run/suite-execution.json` and`video-run/suite-execution.json`; final platform states:`gpu-run/job-final.json`, `video-run/job-final.json`.
