@@ -8,7 +8,7 @@ transport-agnostic and reused by the backend protocol server before inference.
 from __future__ import annotations
 
 import base64
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
 import numpy as np
@@ -40,6 +40,8 @@ class WorkerChatRequest:
     use_tts_template: bool
     omni_mode: bool
     enable_thinking: bool
+    generation_options: dict = field(default_factory=dict)
+    return_completion_metadata: bool = False
 
 
 def parse_worker_chat_request_message(msg: Dict[str, Any]) -> WorkerChatRequest:
@@ -64,6 +66,24 @@ def parse_worker_chat_request_message(msg: Dict[str, Any]) -> WorkerChatRequest:
     if not isinstance(tts, dict):
         raise ChatRequestError("chat.request tts must be an object")
 
+    generation_options = {}
+    for name, lower, upper in (("temperature", 0.0, 2.0), ("top_p", 0.0, 1.0)):
+        if generation.get(name) is not None:
+            value = generation[name]
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or not lower <= value <= upper:
+                raise ChatRequestError(f"generation.{name} is out of range")
+            if name == "top_p" and value == 0:
+                raise ChatRequestError("generation.top_p must be positive")
+            generation_options[name] = float(value)
+    do_sample = bool(generation.get("do_sample", True))
+    if generation_options.get("temperature") == 0:
+        do_sample = False
+        # HF greedy generation does not consume a sampling temperature of zero.
+        generation_options.pop("temperature")
+
+    if payload.get("streaming", True) and payload.get("return_completion_metadata"):
+        raise ChatRequestError("Completion metadata currently requires streaming=false")
+
     max_slice_nums = None
     if image.get("max_slice_nums") is not None:
         max_slice_nums = int(image["max_slice_nums"])
@@ -84,13 +104,15 @@ def parse_worker_chat_request_message(msg: Dict[str, Any]) -> WorkerChatRequest:
         messages=payload.get("messages", []),
         streaming=bool(payload.get("streaming", True)),
         max_new_tokens=int(generation.get("max_new_tokens", 256)),
-        do_sample=bool(generation.get("do_sample", True)),
+        do_sample=do_sample,
         max_slice_nums=max_slice_nums,
         generate_audio=generate_audio,
         tts_ref_audio=tts_ref_audio,
         use_tts_template=bool(payload.get("use_tts_template", False) or generate_audio),
         omni_mode=bool(payload.get("omni_mode", False)),
         enable_thinking=bool(payload.get("enable_thinking", False)),
+        generation_options=generation_options,
+        return_completion_metadata=bool(payload.get("return_completion_metadata", False)),
     )
 
 

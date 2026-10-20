@@ -293,6 +293,7 @@ class ChatView(MiniCPMOProcessorMixin):
         generate_audio: bool = True,
         max_new_tokens: int = 256,
         do_sample: bool = True,
+        generation_options: Optional[Dict[str, Any]] = None,
     ):
         """基于已有 KV cache 做流式 generate（yield StreamingChunk）"""
         import base64
@@ -308,6 +309,7 @@ class ChatView(MiniCPMOProcessorMixin):
                 iter_gen = self._model.chat(
                     **inputs, stream=True, do_sample=do_sample,
                     generate_audio=generate_audio, max_new_tokens=max_new_tokens,
+                    **(generation_options or {}),
                 )
             else:
                 iter_gen = self._model.streaming_generate(
@@ -474,6 +476,13 @@ class ChatView(MiniCPMOProcessorMixin):
         return_prompt_flag = request.return_prompt if hasattr(request, 'return_prompt') else False
         prompt = None
 
+        # Forward explicitly requested sampling options without changing page defaults.
+        hf_options = {name: getattr(request.generation, name)
+                      for name in ("temperature", "top_p")
+                      if name in request.generation.model_fields_set}
+        if request.return_completion_metadata:
+            hf_options["collect_chat_metadata"] = True
+
         with torch.no_grad():
             result = self._model.chat(
                 msgs=msgs,
@@ -496,6 +505,7 @@ class ChatView(MiniCPMOProcessorMixin):
                 # and fails in rotary embedding. Keep chat on single-beam
                 # generation until beam expansion is made M-RoPE aware.
                 num_beams=1,
+                **hf_options,
             )
         
         # 处理返回值
@@ -542,6 +552,7 @@ class ChatView(MiniCPMOProcessorMixin):
         generated_tokens = chat_token_stats.get('generated_tokens', 0)
         
         return ChatResponse(
+            finish_reason=getattr(self._model, "_last_chat_finish_reason", None) if request.return_completion_metadata else None,
             text=text_content or "",
             audio_data=audio_base64,
             audio_path=tts_config.output_path if (tts_config and tts_config.output_path) else None,

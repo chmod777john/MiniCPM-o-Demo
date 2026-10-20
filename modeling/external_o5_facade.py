@@ -188,6 +188,28 @@ class MiniCPMO(BaseMiniCPMO):
     def warmup_compile(self, *args, **kwargs) -> None:
         logger.info("warmup_compile skipped by thin unified facade")
 
+    def generate(self, *args, **kwargs):
+        result, outputs = super().generate(*args, **kwargs)
+        if getattr(self, "_collect_chat_metadata", False):
+            # Observe native HF output; do not re-tokenize displayed text or change decoding.
+            input_ids = kwargs["input_ids"]
+            attention_mask = kwargs.get("attention_mask")
+            prompt_tokens = (int(attention_mask[0].sum().item()) if attention_mask is not None
+                             else int(input_ids.shape[-1]))
+            sequence = outputs.sequences[0]
+            generated_tokens = int(sequence.numel())
+            terminators = {self.processor.tokenizer.convert_tokens_to_ids(t) for t in self.terminators}
+            ended = generated_tokens > 0 and int(sequence[-1].item()) in terminators
+            if not ended and generated_tokens < kwargs["max_new_tokens"]:
+                raise RuntimeError("HF generation ended without EOS or reaching its token limit")
+            self._last_chat_token_stats = {
+                "cached_tokens": 0, "input_tokens": prompt_tokens,
+                "generated_tokens": generated_tokens,
+                "total_tokens": prompt_tokens + generated_tokens,
+            }
+            self._last_chat_finish_reason = "stop" if ended else "length"
+        return result, outputs
+
     @torch.inference_mode()
     def chat(
         self,
@@ -196,9 +218,15 @@ class MiniCPMO(BaseMiniCPMO):
         output_audio_path: Optional[str] = None,
         tts_ref_audio: Optional[np.ndarray] = None,
         return_prompt: bool = False,
+        collect_chat_metadata: bool = False,
         tts_sampling_params: TTSSamplingParams = TTSSamplingParams(),
         **kwargs,
     ):
+        if collect_chat_metadata and (kwargs.get("stream", False) or generate_audio):
+            raise ValueError("Completion metadata currently requires nonstreaming text output")
+        self._collect_chat_metadata = collect_chat_metadata
+        self._last_chat_token_stats = {}
+        self._last_chat_finish_reason = None
         temp_audio_path = None
         audio_path_for_base = output_audio_path
         if generate_audio and not kwargs.get("stream", False) and not audio_path_for_base:
@@ -218,6 +246,8 @@ class MiniCPMO(BaseMiniCPMO):
             if temp_audio_path and os.path.exists(temp_audio_path):
                 os.unlink(temp_audio_path)
             raise
+        finally:
+            self._collect_chat_metadata = False
 
         generated_waveform = None
         if temp_audio_path is not None:

@@ -479,6 +479,8 @@ class BackendProtocolSession:
                     generate_audio=request.generate_audio,
                     max_new_tokens=request.max_new_tokens,
                     do_sample=request.do_sample,
+                    **({"generation_options": request.generation_options}
+                       if getattr(request, "generation_options", None) else {}),
                 )
                 try:
                     for chunk in iterator:
@@ -547,6 +549,11 @@ class BackendProtocolSession:
         response_id: str,
         input_id: Optional[str],
     ) -> None:
+        options = {}
+        if request.generation_options:
+            options["generation_options"] = request.generation_options
+        if request.return_completion_metadata:
+            options["return_completion_metadata"] = True
         result = await asyncio.to_thread(
             self.backend.chat_complete,
             messages=messages,
@@ -558,13 +565,18 @@ class BackendProtocolSession:
             enable_thinking=request.enable_thinking,
             tts_ref_audio=request.tts_ref_audio,
             do_sample=request.do_sample,
+            **options,
         )
 
         if self.closed:
             return
         text = result
         waveform = None
-        if isinstance(result, tuple):
+        completion_fields = {}
+        if isinstance(result, dict):
+            text, waveform = result["text"], result.get("waveform")
+            completion_fields["completion_metadata"] = result["completion_metadata"]
+        elif isinstance(result, tuple):
             text, waveform = result
 
         if waveform is not None:
@@ -590,6 +602,7 @@ class BackendProtocolSession:
             audio=audio_base64,
             reason="turn_end",
             metrics=self._safe_metrics(),
+            **completion_fields,
         )
 
     async def _push_full_duplex(self, payload: Dict[str, Any]) -> None:
