@@ -1,8 +1,8 @@
-# OpenAI-compatible simplex benchmark adapter
-
-Owner: root
-Created: 2026-10-20T04:27:59.230654+00:00
-Base branch: demo-adapter-fc
-Base commit: c4a72a68d078b32fbe33ae60c160294af7d72100
-
-Purpose: implement the benchmark request subset supplied on 2026-10-20 over native external HF chat. Independent of the MAP application branch. Scope: protocol bridge, generation parameter forwarding, explicit compatibility limits. No changes to other worktrees or running services.
+# Multi-benchmark validation
+Created: 2026-10-20T05:36:58.522006+00:00
+Base branch: demo-adapter-fc-openai-simplex-20261020
+Base commit: 76e895eb428ba1e4701c2727837030cf1d877e57
+Owner: /root/simplex_benchmark_suite
+Reason: isolated representative benchmark validation requested by user.
+Scope: validation documentation and smallest reproduced Demo bridge fixes; HF/accel remain unchanged.
+Sync to root through commits and evidence, no automatic merge/push.
