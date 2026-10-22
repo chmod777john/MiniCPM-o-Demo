@@ -1,14 +1,14 @@
-# External-only Demo adapter
+# O5 Figma existing pages candidate
 
-Created 2026-10-19 UTC by Codex/root from demo-adapter-fc@b1ac65015e9283f6bb9482ee25463dd98ad3ca3e.
-User authorized removing vendored O5/O45 model implementations, old fallback loading/acceleration paths and dependent entries.
-Scope: this Demo worktree; preserve external HF/accel model semantics, FC/API/application behavior.
-Avoid: live frozen 9007/9009 deployments, shared environments, HF/accel source. No GPU task allocated.
-Completion: coherent external-only source tree, static dependency review, committed change; fast-forward formal demo-adapter-fc.
-No new tests or inference runs requested for this cleanup. Existing tests that address deleted implementations must be removed or adapted.
+- Created: 2026-10-22 (UTC).
+- Base branch: demo-adapter-fc.
+- Base commit: f2d5cce51a186ecb02629f6ae520d4a678d01e62.
+- Branch: demo-adapter-fc-figma-existing-pages-20261022.
+- Owner: /root/o5_figma_existing_pages.
+- Purpose: implement the supplied O5 Figma design only for pages/features already present in the O5 Demo.
+- Allowed changes: frontend layout, styles, necessary components and assets, preserving current interactions and API contracts.
+- Excluded: new product pages/features, inference/protocol backend, HF/accel, production branch/service changes, merge/push/deploy.
+- Evidence: /user/weihongliang/analysis-runs/20261022-o5-figma-existing-pages/.
+- Handoff: candidate commits and explicit mapping/review instructions to root; no direct production merge.
 
-## Formal branch integration 2026-10-20T06:26:39.776254+00:00
-
-Owner: root. Existing worktree reused; checked out formal `demo-adapter-fc` from `c4a72a68d078b32fbe33ae60c160294af7d72100`.
-User authorized merging the native simplex OpenAI API and representative benchmark records from `demo-adapter-fc-openai-simplex-20261020-multibench@4c1ec09cb90a0880c5927dd26643656cee167fac`.
-The validated runtime files are retained unchanged. HF, accel, MAP application branch and live deployments are outside this merge. Existing benchmark evidence is reused; no new GPU job or test run.
+Design must be read before implementing visual changes. Initial state: access check in progress; no visual implementation yet.
