@@ -3,7 +3,7 @@ import type { CaseDefinition } from '../shared/session/types';
 
 export const definition: CaseDefinition = {
   id: 'subagent',
-  label: '任务助手',
+  label: 'SubAgent',
   title: '从一个想法，到一次行动',
   description: '用自然对话交代任务，跟随助手查看执行进展。',
   protocol: 'fc',

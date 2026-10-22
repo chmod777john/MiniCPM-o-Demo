@@ -5,15 +5,21 @@ import {
   PRESET_OPTIONS,
   PRESET_ZH_THINK,
   buildStandaloneQuickSettings,
+  EXAMPLES_BY_LANGUAGE,
+  presetLanguage,
 } from '../../standalone/web/quick-settings.js';
-import type { SceneFactory } from '../shared/session/types';
+import type { SceneFactory, SceneContext } from '../shared/session/types';
 
-type EventItem = { id: string; text: string; unit: number | null };
+type EventItem = { id: string; text: string; unit: number | null; tool?: boolean };
 class EventScene {
   entries: EventItem[] = [];
   listeners = new Set<() => void>();
   root: Root | null = null;
-  constructor(private stage: HTMLElement) {}
+  preset = PRESET_ZH_THINK;
+  constructor(
+    private stage: HTMLElement,
+    private context: SceneContext,
+  ) {}
   snapshot = () => this.entries;
   subscribe = (fn: () => void) => {
     this.listeners.add(fn);
@@ -34,7 +40,34 @@ class EventScene {
   presetOptions = PRESET_OPTIONS;
   fallbackQuickSetting = PRESET_ZH_THINK;
   buildQuickSettings = () => buildStandaloneQuickSettings();
-  tools = () => [];
+  tools = (_defaults: any, preset?: string) => {
+    this.preset = preset || PRESET_ZH_THINK;
+    this.update([...this.entries]);
+    return [];
+  };
+  contextDraft(text: string) {
+    this.context.shell.setDraft?.(text);
+  }
+  inject(text: string) {
+    const client = this.context.getClient();
+    if (!client?.ready) return;
+    const id = `pg_${crypto.randomUUID?.() || `${Date.now().toString(36)}${Math.random().toString(36).slice(2)}`}`;
+    client.sendStandaloneEvent({ content: text, eventId: id });
+    this.onExternalEvent(id, text);
+  }
+  onToolCallDone = (event: any) =>
+    this.update([
+      ...this.entries,
+      {
+        id:
+          event.tool_call_id ||
+          crypto.randomUUID?.() ||
+          `${Date.now().toString(36)}${Math.random().toString(36).slice(2)}`,
+        text: `${event.call?.name || '(解析失败)'} ${typeof event.call?.arguments === 'string' ? event.call.arguments : JSON.stringify(event.call?.arguments || {})}`,
+        unit: event.unit_index,
+        tool: true,
+      },
+    ]);
   reset = () => this.update([]);
   dispose = () => {
     const root = this.root;
@@ -61,13 +94,22 @@ function EventStage({ store }: { store: EventScene }) {
         <RadioTower size={16} />
         外部消息
       </header>
+      <div className="event-examples">
+        {(EXAMPLES_BY_LANGUAGE[presetLanguage(store.preset)] || []).map((text: string) => (
+          <button className="secondary-button" key={text} onClick={() => store.contextDraft(text)}>
+            {text}
+          </button>
+        ))}
+      </div>
       {entries.length ? (
         <ol className="injected-events">
           {entries.map((entry) => (
             <li key={entry.id}>
               <p>{entry.text}</p>
               <span>
-                {entry.unit === null ? (
+                {entry.tool ? (
+                  `模型产生的工具调用（本场景不执行） · Unit ${entry.unit ?? '—'}`
+                ) : entry.unit === null ? (
                   '已发送，等待模型接收'
                 ) : (
                   <>
@@ -90,6 +132,6 @@ function EventStage({ store }: { store: EventScene }) {
   );
 }
 export const factory: SceneFactory = {
-  create: (context) => new EventScene(context.stageEl),
+  create: (context) => new EventScene(context.stageEl, context),
   css: '',
 };

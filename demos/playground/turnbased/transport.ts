@@ -1,6 +1,7 @@
 import { realtimeUrl } from '../shared/session/urls';
 
 interface Hooks {
+  onSend?: (event: any) => void;
   onEvent: (event: any) => void;
   onError: (message: string) => void;
   onClosed: () => void;
@@ -10,7 +11,12 @@ export class ChatTransport {
   private ws: WebSocket | null = null;
   private timer?: ReturnType<typeof setTimeout>;
   private closed = false;
+  private closeSent = false;
   constructor(private hooks: Hooks) {}
+  private send(event: any) {
+    this.ws!.send(JSON.stringify(event));
+    this.hooks.onSend?.(event);
+  }
   start(endpoint: string, input: unknown) {
     this.ws = new WebSocket(realtimeUrl(endpoint, 'chat'));
     let initialized = false,
@@ -27,22 +33,32 @@ export class ChatTransport {
         const event = JSON.parse(data);
         if (event.type === 'session.queue_done' && !initialized) {
           initialized = true;
-          this.ws!.send(JSON.stringify({ type: 'session.init', payload: {} }));
+          this.send({ type: 'session.init', payload: {} });
         } else if (event.type === 'session.created' && !sent) {
           sent = true;
-          this.ws!.send(JSON.stringify({ type: 'input.append', input }));
+          this.send({ type: 'input.append', input });
         }
         this.hooks.onEvent(event);
         if (event.type === 'response.done') {
           completed = true;
           clearTimeout(this.timer);
-          this.ws!.send(JSON.stringify({ type: 'session.close', reason: 'turn_done' }));
+          this.send({ type: 'session.close', reason: 'turn_done' });
+          this.closeSent = true;
           this.timer = setTimeout(() => this.stop(), 5000);
         } else if (event.type === 'error') {
-          fail(event.error?.message || event.message || '模型返回错误。');
+          fail(
+            (typeof event.error === 'string' ? event.error : event.error?.message) ||
+              event.message ||
+              '模型返回错误。',
+          );
         } else if (event.type === 'session.closed') {
           if (!completed)
-            fail(event.diagnostic?.message || event.reason || '回答完成前连接已关闭。');
+            fail(
+              (typeof event.error === 'string' ? event.error : event.error?.message) ||
+                event.diagnostic?.message ||
+                event.reason ||
+                '回答完成前连接已关闭。',
+            );
           else this.stop();
         }
       } catch (error) {
@@ -61,8 +77,8 @@ export class ChatTransport {
     clearTimeout(this.timer);
     if (this.ws) {
       this.ws.onmessage = this.ws.onclose = this.ws.onerror = null;
-      if (this.ws.readyState === WebSocket.OPEN)
-        this.ws.send(JSON.stringify({ type: 'session.close', reason: 'client_cancel' }));
+      if (this.ws.readyState === WebSocket.OPEN && !this.closeSent)
+        this.send({ type: 'session.close', reason: 'client_cancel' });
       this.ws.close();
       this.ws = null;
     }

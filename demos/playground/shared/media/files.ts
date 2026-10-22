@@ -11,24 +11,13 @@ export async function audioPcm(file: Blob): Promise<string> {
   const ctx = new AudioContext();
   try {
     const audio = await ctx.decodeAudioData(await file.arrayBuffer());
-    const output = new Float32Array(Math.ceil(audio.duration * 16000));
-    const channels = Array.from({ length: audio.numberOfChannels }, (_, i) =>
-      audio.getChannelData(i),
-    );
-    for (let i = 0; i < output.length; i++) {
-      const position = (i * audio.sampleRate) / 16000;
-      const lo = Math.floor(position);
-      const blend = position - lo;
-      output[i] =
-        channels.reduce(
-          (sum, data) =>
-            sum +
-            (data[Math.min(lo, data.length - 1)] * (1 - blend) +
-              data[Math.min(lo + 1, data.length - 1)] * blend),
-          0,
-        ) / channels.length;
-    }
-    return base64(output.buffer);
+    const offline = new OfflineAudioContext(1, Math.ceil(audio.duration * 16000), 16000);
+    const source = offline.createBufferSource();
+    source.buffer = audio;
+    source.connect(offline.destination);
+    source.start();
+    const output = await offline.startRendering();
+    return base64(output.getChannelData(0).buffer);
   } finally {
     await ctx.close();
   }
@@ -36,8 +25,6 @@ export async function audioPcm(file: Blob): Promise<string> {
 export async function contentFiles(files: File[]): Promise<ContentPart[]> {
   return Promise.all(
     files.map(async (file) => {
-      if (file.size > 32 * 1024 * 1024)
-        throw new Error(`${file.name} 超过 32 MB，请使用更小的文件。`);
       const type = file.type.startsWith('image/')
         ? 'image'
         : file.type.startsWith('audio/')
@@ -50,14 +37,17 @@ export async function contentFiles(files: File[]): Promise<ContentPart[]> {
         type,
         data: type === 'audio' ? await audioPcm(file) : base64(await file.arrayBuffer()),
         name: file.name,
+        ...(type === 'video' || type === 'audio'
+          ? { duration: await mediaDuration(file, type) }
+          : {}),
       };
     }),
   );
 }
-export async function wavReference(file: File) {
-  if (file.size > 16 * 1024 * 1024) throw new Error('参考音频请使用 16 MB 以内的 WAV。');
+export async function wavReference(file: File, maxSeconds = 20) {
   const pcm = Uint8Array.from(atob(await audioPcm(file)), (c) => c.charCodeAt(0));
   const floats = new Float32Array(pcm.buffer);
+  if (floats.length > maxSeconds * 16000) throw new Error('参考音频不能超过 20 秒。');
   const buffer = new ArrayBuffer(44 + floats.length * 2);
   const view = new DataView(buffer);
   const word = (offset: number, text: string) =>
@@ -78,5 +68,33 @@ export async function wavReference(file: File) {
   floats.forEach((sample, i) =>
     view.setInt16(44 + i * 2, Math.round(Math.max(-1, Math.min(1, sample)) * 32767), true),
   );
-  return { name: file.name, data: base64(buffer), pcm: base64(pcm.buffer) };
+  return {
+    name: file.name,
+    data: base64(buffer),
+    pcm: base64(pcm.buffer),
+    duration: floats.length / 16000,
+  };
+}
+
+async function mediaDuration(file: File, type: 'video' | 'audio'): Promise<number> {
+  const element = document.createElement(type);
+  const url = URL.createObjectURL(file);
+  try {
+    return await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('读取媒体时长超时。')), 15000);
+      element.onloadedmetadata = () => {
+        clearTimeout(timer);
+        resolve(Number.isFinite(element.duration) ? element.duration : 0);
+      };
+      element.onerror = () => {
+        clearTimeout(timer);
+        reject(new Error('无法读取媒体文件。'));
+      };
+      element.preload = 'metadata';
+      element.src = url;
+    });
+  } finally {
+    element.removeAttribute('src');
+    URL.revokeObjectURL(url);
+  }
 }

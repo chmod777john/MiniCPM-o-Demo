@@ -7,13 +7,25 @@ import {
   Maximize2,
   Mic,
   MicOff,
+  Pause,
+  Play,
+  Ear,
+  FlipHorizontal,
+  SwitchCamera,
+  Captions,
   Plug,
   CirclePlus,
   Square,
   Volume2,
   X,
 } from 'lucide-react';
-import type { CaseDefinition, SessionPhase, SessionSettings } from '../shared/session/types';
+import type {
+  CaseDefinition,
+  ContentPart,
+  SessionPhase,
+  SessionSettings,
+} from '../shared/session/types';
+import { defaultsFor } from '../shared/session/options';
 import { SessionController } from '../shared/session/controller';
 import { DeveloperPanel } from '../shared/ui/DeveloperPanel';
 import { SceneHost } from '../shared/ui/SceneHost';
@@ -56,7 +68,14 @@ export function Experience({
   const [sceneReady, setSceneReady] = useState(false);
   const [now, setNow] = useState(Date.now());
   const [showTranscript, setShowTranscript] = useState(true);
+  const [subtitles, setSubtitles] = useState(true);
   const [topic, setTopic] = useState('');
+  const [previewReady, setPreviewReady] = useState(false);
+  const [pageActive, setPageActive] = useState(true);
+  const pageActiveRef = useRef(true);
+  const [previewFolded, setPreviewFolded] = useState(false);
+  const previewStream = useRef<MediaStream | null>(null);
+  const [previewSize, setPreviewSize] = useState('');
   const video = useRef<HTMLVideoElement>(null);
   const videoBox = useRef<HTMLDivElement>(null);
   const live = controller.busy;
@@ -69,10 +88,160 @@ export function Experience({
     const timer = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(timer);
   }, [view.startedAt, live]);
+  useEffect(() => controller.updateSettings(settings), [controller, settings]);
+  useEffect(() => {
+    const hide = () => {
+      pageActiveRef.current = false;
+      setPageActive(false);
+      previewStream.current?.getTracks().forEach((track) => track.stop());
+      previewStream.current = null;
+      setPreviewReady(false);
+    };
+    const show = () => {
+      pageActiveRef.current = true;
+      setPageActive(true);
+    };
+    window.addEventListener('pagehide', hide);
+    window.addEventListener('pageshow', show);
+    return () => {
+      window.removeEventListener('pagehide', hide);
+      window.removeEventListener('pageshow', show);
+    };
+  }, []);
+  useEffect(() => {
+    if (
+      !pageActive ||
+      !pageActiveRef.current ||
+      !wantsVideo ||
+      live ||
+      settings.inputMode !== 'live' ||
+      !video.current
+    )
+      return;
+    let cancelled = false;
+    const element = video.current;
+    let acquired: MediaStream | null = null;
+    setPreviewReady(false);
+    void navigator.mediaDevices
+      ?.getUserMedia({
+        audio: false,
+        video: {
+          facingMode: settings.frontCamera ? 'user' : 'environment',
+          ...(fc ? { width: { ideal: 1280 }, height: { ideal: 720 } } : {}),
+        },
+      })
+      .then(async (stream) => {
+        if (cancelled || !pageActiveRef.current) {
+          stream.getTracks().forEach((track) => track.stop());
+          return;
+        }
+        acquired = stream;
+        previewStream.current = stream;
+        element.removeAttribute('src');
+        element.srcObject = stream;
+        element.style.transform = (fc ? settings.mirror : settings.frontCamera !== settings.mirror)
+          ? 'scaleX(-1)'
+          : 'none';
+        await element.play();
+        if (!cancelled) {
+          setPreviewReady(true);
+          setPreviewSize(`${element.videoWidth} × ${element.videoHeight}`);
+        }
+      })
+      .catch((error) => {
+        acquired?.getTracks().forEach((track) => track.stop());
+        if (element.srcObject === acquired) element.srcObject = null;
+        if (previewStream.current === acquired) previewStream.current = null;
+        if (!cancelled && pageActiveRef.current) {
+          controller.setError(error);
+          if (fc) onSettingsRef.current({ fcVideo: false });
+        }
+      });
+    return () => {
+      cancelled = true;
+      acquired?.getTracks().forEach((track) => track.stop());
+      if (element.srcObject === acquired) element.srcObject = null;
+      if (previewStream.current === acquired) previewStream.current = null;
+    };
+  }, [
+    controller,
+    wantsVideo,
+    live,
+    settings.inputMode,
+    settings.frontCamera,
+    settings.mirror,
+    fc,
+    pageActive,
+  ]);
+  const settingsRef = useRef(settings);
+  settingsRef.current = settings;
+  const onSettingsRef = useRef(onSettings);
+  onSettingsRef.current = onSettings;
+  useEffect(() => {
+    controller.onDraft = setDraft;
+    controller.onSettings = (patch) => onSettingsRef.current(patch);
+    return () => {
+      controller.onSettings = undefined;
+      controller.onDraft = undefined;
+    };
+  }, [controller]);
+  useEffect(() => {
+    if (fc && !sceneReady) return;
+    const current = settingsRef.current;
+    let active = true;
+    void controller
+      .loadPreset(
+        current,
+        current.preset && current.preset !== 'custom' ? current.preset : undefined,
+      )
+      .then((patch) => {
+        if (active)
+          onSettingsRef.current(
+            definition.id === 'audio-duplex'
+              ? {
+                  ...patch,
+                  ...(current.configReady || current.preset === 'custom' ? current : {}),
+                  ...(current.systemPrompt !== defaultsFor('audio-duplex').systemPrompt
+                    ? { systemPrompt: current.systemPrompt }
+                    : {}),
+                  ...(!current.referenceAudio ? { referenceAudio: patch.referenceAudio } : {}),
+                  playbackDelay: current.playbackPreference
+                    ? current.playbackDelay
+                    : (patch.playbackDelay ?? current.playbackDelay),
+                  ...(patch.slidingWindowMode
+                    ? { slidingWindowMode: patch.slidingWindowMode }
+                    : {}),
+                  ...(patch.allowedSlidingModes
+                    ? { allowedSlidingModes: patch.allowedSlidingModes }
+                    : {}),
+                  ...(patch.basicHigh != null ? { basicHigh: patch.basicHigh } : {}),
+                  ...(patch.basicLow != null ? { basicLow: patch.basicLow } : {}),
+                  configReady: true,
+                }
+              : current.configReady || current.preset === 'custom'
+                ? { ...patch, ...current }
+                : patch,
+          );
+      })
+      .catch((error) => {
+        if (active && (fc ? current.gallery : current.presetSource)) controller.setError(error);
+      });
+    return () => {
+      active = false;
+    };
+  }, [controller, sceneReady, fc]);
+  useEffect(() => {
+    if (!fc || !settings.apiService) return;
+    const timer = setInterval(() => {
+      void controller.refreshEndpoints(settingsRef.current).catch(() => {});
+    }, 30000);
+    return () => clearInterval(timer);
+  }, [fc, controller, settings.apiService]);
   const elapsed = view.startedAt ? Math.max(0, Math.floor((now - view.startedAt) / 1000)) : 0;
   const duration = `${String(Math.floor(elapsed / 60)).padStart(2, '0')}:${String(elapsed % 60).padStart(2, '0')}`;
   const currentText = [...view.messages].reverse().find((m) => m.role === 'assistant')?.text;
   async function start() {
+    if (view.configLoading || view.recordingPending) return;
     if (!settings.endpoint || (fc && !settings.segmentsJson)) {
       setDeveloper(true);
       controller.setError(
@@ -83,20 +252,23 @@ export function Experience({
       return;
     }
     try {
+      previewStream.current?.getTracks().forEach((track) => track.stop());
+      previewStream.current = null;
+      setPreviewReady(false);
       await controller.start(settings, video.current);
     } catch (error) {
       controller.setError(error);
       setDeveloper(true);
     }
   }
-  async function send(text: string, files: File[]) {
+  async function send(text: string, files: File[], ordered?: ContentPart[]) {
     if (!settings.endpoint) {
       setDeveloper(true);
       controller.setError('请先填写模型 API 地址。');
       return false;
     }
     try {
-      return await controller.send(settings, text, files);
+      return await controller.send(settings, text, files, ordered);
     } catch (error) {
       controller.setError(error);
       return false;
@@ -211,20 +383,130 @@ export function Experience({
                 )}
               </section>
             )}
-            {chat && working && <Messages messages={view.messages} />}
+            {chat && working && (
+              <Messages
+                messages={view.messages}
+                editable={!live}
+                onEdit={(id, content) => controller.editMessage(id, content)}
+                onResend={(id) =>
+                  void controller.resend(settings, id).catch((e) => controller.setError(e))
+                }
+              />
+            )}
             {wantsVideo && (
-              <div className={`video-panel ${working ? 'shown' : 'dormant'}`} ref={videoBox}>
+              <div
+                className={`video-panel ${working || previewReady ? 'shown' : 'dormant'} ${previewFolded ? 'folded' : ''}`}
+                ref={videoBox}
+              >
                 <video ref={video} playsInline muted autoPlay />
                 <div className="video-label">
                   <Camera size={13} />
-                  {view.camera ? '实时画面' : '摄像头未开启'}
+                  {view.camera
+                    ? '实时画面'
+                    : previewReady
+                      ? `预览 · ${previewSize}`
+                      : '摄像头未开启'}
                 </div>
-                {!view.camera && (
+                {!view.camera && !previewReady && (
                   <div className="video-empty">
                     <Camera size={28} />
                     <p>开始后，共享眼前的画面</p>
                   </div>
                 )}
+                {live && subtitles && (
+                  <div
+                    className="fullscreen-subtitles"
+                    style={{ height: `${settings.screenSubtitleHeight}%` }}
+                  >
+                    {view.messages
+                      .filter((m) => m.role === 'assistant')
+                      .slice(-12)
+                      .map((m, i, all) => (
+                        <p
+                          key={m.id}
+                          style={{
+                            opacity:
+                              all.length === 1
+                                ? settings.screenSubtitleBottom / 100
+                                : (settings.screenSubtitleTop +
+                                    ((settings.screenSubtitleBottom - settings.screenSubtitleTop) *
+                                      i) /
+                                      (all.length - 1)) /
+                                  100,
+                          }}
+                        >
+                          {m.text}
+                        </p>
+                      ))}
+                  </div>
+                )}
+                {live && (
+                  <IconButton
+                    className="video-subtitles"
+                    label={subtitles ? '隐藏字幕' : '显示字幕'}
+                    onClick={() => setSubtitles(!subtitles)}
+                  >
+                    <Captions size={16} />
+                  </IconButton>
+                )}
+                <button
+                  className="preview-fold text-button"
+                  onClick={() => setPreviewFolded(!previewFolded)}
+                >
+                  {previewFolded ? '展开预览' : '折叠预览'}
+                </button>
+                {!live && previewReady && (
+                  <div className="preview-controls">
+                    <IconButton
+                      label="翻转摄像头"
+                      onClick={() =>
+                        onSettings({
+                          frontCamera: !settings.frontCamera,
+                          ...(fc ? { mirror: !settings.frontCamera } : {}),
+                        })
+                      }
+                    >
+                      <SwitchCamera size={16} />
+                    </IconButton>
+                    <IconButton
+                      label="镜像画面"
+                      onClick={() => onSettings({ mirror: !settings.mirror })}
+                    >
+                      <FlipHorizontal size={16} />
+                    </IconButton>
+                  </div>
+                )}
+                <div className="fullscreen-controls">
+                  <button
+                    className="secondary-button"
+                    onClick={() => (live ? controller.stop() : void start())}
+                  >
+                    {live ? '结束' : '开始'}
+                  </button>
+                  {active && !fc && (
+                    <>
+                      <button className="secondary-button" onClick={() => controller.pause()}>
+                        {view.paused ? '继续' : '暂停'}
+                      </button>
+                      <button className="secondary-button" onClick={() => controller.forceListen()}>
+                        {view.forceListen ? '取消强制聆听' : '强制聆听'}
+                      </button>
+                      <button
+                        className="secondary-button"
+                        disabled={settings.visionHD === 'strategy'}
+                        onClick={() => controller.toggleHD()}
+                      >
+                        HD {view.hdEnabled ? '开' : '关'}
+                      </button>
+                    </>
+                  )}
+                  <button
+                    className="secondary-button"
+                    onClick={() => void document.exitFullscreen()}
+                  >
+                    退出全屏
+                  </button>
+                </div>
                 <IconButton
                   className="video-expand"
                   label="全屏预览"
@@ -251,7 +533,13 @@ export function Experience({
               <section className="voice-stage">
                 <Orb active={active} level={view.micLevel} />
                 <span className="voice-stage-label">
-                  {view.muted ? '麦克风已静音' : phaseLabels[view.phase]}
+                  {view.paused
+                    ? '已暂停'
+                    : view.forceListen
+                      ? '强制聆听'
+                      : view.muted
+                        ? '麦克风已静音'
+                        : phaseLabels[view.phase]}
                 </span>
                 <p>
                   {topic && view.phase === 'listening'
@@ -266,7 +554,7 @@ export function Experience({
               </section>
             )}
           </div>
-          {!chat && fc && working && view.messages.length > 0 && (
+          {!chat && working && view.messages.length > 0 && (
             <div className="transcript-section">
               <button
                 className="transcript-heading"
@@ -292,6 +580,7 @@ export function Experience({
         <footer className={`interaction-dock ${chat ? 'chat-dock' : ''}`}>
           {chat ? (
             <Composer
+              disabled={view.configLoading}
               value={draft}
               onChange={setDraft}
               onSend={send}
@@ -317,27 +606,83 @@ export function Experience({
                 <div className="dock-side">
                   <span className="dock-live-dot" />
                   {live ? (
-                    <span>{view.muted ? '麦克风已静音' : phaseLabels[view.phase]}</span>
+                    <span>
+                      {view.paused
+                        ? '已暂停'
+                        : view.forceListen
+                          ? '强制聆听'
+                          : view.muted
+                            ? '麦克风已静音'
+                            : phaseLabels[view.phase]}
+                    </span>
                   ) : (
                     <span>准备好，就开始吧</span>
                   )}
                 </div>
                 <div className="main-live-controls">
-                  {live && (
-                    <IconButton
-                      label={view.muted ? '取消静音' : '静音麦克风'}
-                      className={view.muted ? 'muted' : ''}
-                      onClick={() => controller.mute()}
-                    >
-                      {view.muted ? <MicOff size={19} /> : <Mic size={19} />}
-                    </IconButton>
+                  {active && !fc && (
+                    <>
+                      <IconButton
+                        label={view.paused ? '继续输入' : '暂停输入'}
+                        onClick={() => controller.pause()}
+                      >
+                        {view.paused ? <Play size={18} /> : <Pause size={18} />}
+                      </IconButton>
+                      <IconButton
+                        label={view.forceListen ? '取消强制聆听' : '强制聆听'}
+                        className={view.forceListen ? 'muted' : ''}
+                        onClick={() => controller.forceListen()}
+                      >
+                        <Ear size={18} />
+                      </IconButton>
+                    </>
                   )}
+                  {active && wantsVideo && settings.inputMode === 'live' && (
+                    <>
+                      <IconButton
+                        label="翻转摄像头"
+                        onClick={() =>
+                          void controller.flipCamera().catch((e) => controller.setError(e))
+                        }
+                      >
+                        <SwitchCamera size={18} />
+                      </IconButton>
+                      <IconButton label="镜像画面" onClick={() => controller.mirrorCamera()}>
+                        <FlipHorizontal size={18} />
+                      </IconButton>
+                    </>
+                  )}
+                  {active && definition.video && (
+                    <button
+                      className="secondary-button"
+                      disabled={settings.visionHD === 'strategy'}
+                      onClick={() => controller.toggleHD()}
+                    >
+                      {settings.visionHD === 'strategy'
+                        ? 'Strategy HD'
+                        : view.hdEnabled
+                          ? 'HD 开'
+                          : 'HD 关'}
+                    </button>
+                  )}
+
+                  {active &&
+                    (settings.inputMode === 'live' ||
+                      (!fc && settings.fileAudioMode !== 'file')) && (
+                      <IconButton
+                        label={view.muted ? '取消静音' : '静音麦克风'}
+                        className={view.muted ? 'muted' : ''}
+                        onClick={() => controller.mute()}
+                      >
+                        {view.muted ? <MicOff size={19} /> : <Mic size={19} />}
+                      </IconButton>
+                    )}
                   <button
                     className={`start-button ${live ? 'stop' : ''}`}
                     onClick={() => (live ? controller.stop() : void start())}
                     aria-label={live ? '结束对话' : '开始对话'}
                     title={live ? '结束对话' : '开始对话'}
-                    disabled={fc && !sceneReady}
+                    disabled={view.configLoading || view.recordingPending || (fc && !sceneReady)}
                   >
                     {live ? (
                       <>

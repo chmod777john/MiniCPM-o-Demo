@@ -4,30 +4,39 @@ import { cases } from './registry';
 import { Sidebar } from './Sidebar';
 import { Experience } from './Experience';
 import { SessionController } from '../shared/session/controller';
-import { defaultSettings, type CaseId, type SessionSettings } from '../shared/session/types';
+import { type CaseId, type SessionSettings } from '../shared/session/types';
+import { defaultsFor, persistedSettings } from '../shared/session/options';
 import { Dialog } from '../shared/ui/controls';
 
 const fromHash = () =>
   cases.find((c) => c.id === location.hash.replace('#', ''))?.id || 'audio-duplex';
 function loadSettings(): Record<string, SessionSettings> {
   try {
-    const stored = JSON.parse(localStorage.getItem('o5-playground-settings') || '{}');
+    const stored = JSON.parse(localStorage.getItem('o5-playground-settings-v2') || '{}');
     return Object.fromEntries(
       cases.map((c) => [
         c.id,
         {
-          ...defaultSettings,
-          ...stored[c.id],
+          ...defaultsFor(c.id),
+          ...Object.fromEntries(
+            Object.entries(persistedSettings(c.id, stored[c.id] || {})).filter(
+              ([, v]) => v !== undefined,
+            ),
+          ),
           segmentsJson: '',
           toolsJson: '',
           referencePath: '',
-          preset: '',
+          preset:
+            c.id === 'video-duplex' ||
+            (c.id !== 'audio-duplex' && stored[c.id]?.preset === 'custom')
+              ? ''
+              : stored[c.id]?.preset || '',
           referenceAudio: undefined,
         },
       ]),
     );
   } catch {
-    return Object.fromEntries(cases.map((c) => [c.id, { ...defaultSettings }]));
+    return Object.fromEntries(cases.map((c) => [c.id, defaultsFor(c.id)]));
   }
 }
 export function App() {
@@ -63,17 +72,13 @@ export function App() {
   }, []);
   useEffect(() => {
     const safe = Object.fromEntries(
-      Object.entries(settings).map(([key, value]) => {
-        const { endpoint, gallery, streaming, maxTokens, playbackDelay, generateAudio, fcVideo } =
-          value;
-        return [
-          key,
-          { endpoint, gallery, streaming, maxTokens, playbackDelay, generateAudio, fcVideo },
-        ];
-      }),
+      Object.entries(settings).map(([key, value]) => [
+        key,
+        persistedSettings(key as CaseId, value),
+      ]),
     );
     try {
-      localStorage.setItem('o5-playground-settings', JSON.stringify(safe));
+      localStorage.setItem('o5-playground-settings-v2', JSON.stringify(safe));
     } catch {
       /* storage may be disabled */
     }
@@ -100,6 +105,8 @@ export function App() {
         ...all[next],
         endpoint: all[next].endpoint || all[id].endpoint,
         gallery: all[next].gallery || all[id].gallery,
+        presetSource: all[next].presetSource || all[id].presetSource,
+        apiService: all[next].apiService || all[id].apiService,
       },
     }));
     setController(new SessionController(target));
