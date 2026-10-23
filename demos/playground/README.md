@@ -30,6 +30,7 @@ npm run preview
 - **单工／普通双工预设**：本应用的 `server/cases.json` 提供三个 case 的设置 schema、默认值、语言预设及参考音频。`GET /api/demos/playground/cases/<id>/defaults` 返回配置；`/api/demos/playground/audio/<id>` 提供音频。
 - **FC 预设与工具**：Gallery 的 `/api/demos/<id>/defaults` 提供原场景预设与工具。场景执行继续调用原工具接口。
 - **分享服务**：独立配置，负责接收录制和生成分享链接。
+- **UI Card 外部工具**：应用服务通过 `UICARD_TOOLS_CONFIG` 读取部署者的私有 JSON 配置，格式见 `../uicard/README.md`。如果该 case 单独运行应用后端，可用 `PLAYGROUND_UICARD_TARGET` 指定其地址，仅代理 `/api/demos/uicard`。搜索、天气、地图的服务端 key 不下发浏览器；缺少的供应商配置仍会明确提示。
 
 推理 WebSocket 始终由浏览器直接连接。选中 `/e/default` 时，单工与普通双工使用同池的根入口 `/v1/realtime?mode=chat|audio|video`；FC 使用 `/e/default/v1/realtime?mode=audio|omni`。其他命名池不会自动删掉路径转去 default；当前单工／普通双工会提示选择支持该模式的 default 端点。
 
