@@ -1,25 +1,17 @@
 import type { CaseId, ContentPart, SessionSettings } from './types';
 
-// Defaults follow the original pages. Service presets replace these on load.
+// Bootstrap values only. Conversation defaults/schema are loaded from the application before use.
 export function defaultsFor(id: CaseId): SessionSettings {
   return {
     configReady: false,
+    userOverrides: [],
+    shareSource: '',
     endpoint: '',
     gallery: '',
     presetSource: '',
     apiService: '',
-    systemPrompt:
-      id === 'video-duplex'
-        ? 'Streaming Omni Conversation.'
-        : '扮演一个具有以上声音特征的助手。请认真、高质量地回复用户的问题。请用高自然度的方式和用户聊天。你处于双工模式，可以一边听、一边说。你是由面壁智能开发的人工智能助手：面壁小钢炮。',
-    systemContent: [
-      { type: 'text', text: '模仿音频样本的音色并生成新的内容。' },
-      { type: 'audio', name: '', duration: 0 },
-      {
-        type: 'text',
-        text: '你的任务是用这种声音模式来当一个助手。请认真、高质量地回复用户的问题。请用高自然度的方式和用户聊天。你是由面壁智能开发的人工智能助手：面壁小钢炮。',
-      },
-    ],
+    systemPrompt: '',
+    systemContent: [],
     generateAudio: id !== 'turnbased',
     streaming: true,
     maxTokens: 1024,
@@ -129,7 +121,13 @@ export function ordinaryPayload(s: SessionSettings, video: boolean) {
 
 // Keep the old pages' configuration persistence separate from transient session/media state.
 export function persistedSettings(id: CaseId, s: SessionSettings): Partial<SessionSettings> {
-  const keys: (keyof SessionSettings)[] = ['endpoint', 'gallery', 'presetSource', 'apiService'];
+  const keys: (keyof SessionSettings)[] = [
+    'endpoint',
+    'gallery',
+    'presetSource',
+    'apiService',
+    'shareSource',
+  ];
   if (id === 'audio-duplex')
     keys.push(
       'preset',
@@ -162,5 +160,6 @@ export function persistedSettings(id: CaseId, s: SessionSettings): Partial<Sessi
   const result = Object.fromEntries(keys.map((key) => [key, s[key]]));
   // Custom uploaded audio/segments cannot be reconstructed from a preset ID after reload.
   if (result.preset === 'custom' && id !== 'audio-duplex') delete result.preset;
+  result.userOverrides = (s.userOverrides || []).filter((key) => keys.includes(key));
   return result;
 }

@@ -1,3 +1,4 @@
+import { numericSetting, settingOptions } from '../session/presets';
 import type { CaseDefinition, SessionSettings } from '../session/types';
 import { Field, Section, Toggle } from './controls';
 
@@ -18,34 +19,37 @@ export function ParameterSettings({
     min: number,
     max: number,
     step = 1,
-  ) => (
-    <Field label={label}>
-      <input
-        type="number"
-        min={min}
-        max={max}
-        step={step}
-        value={s[key] as number}
-        disabled={
-          disabled &&
-          ![
-            'playbackDelay',
-            'maxKvTokens',
-            'screenSubtitleHeight',
-            'screenSubtitleBottom',
-            'screenSubtitleTop',
-          ].includes(key)
-        }
-        onChange={(e) => {
-          if (e.target.value !== '')
-            change({
-              [key]: Math.min(max, Math.max(min, Number(e.target.value))),
-              ...(key === 'playbackDelay' ? { playbackPreference: true } : {}),
-            });
-        }}
-      />
-    </Field>
-  );
+  ) => {
+    [min, max, step] = numericSetting(s, key, [min, max, step]);
+    return (
+      <Field label={label}>
+        <input
+          type="number"
+          min={min}
+          max={max}
+          step={step}
+          value={s[key] as number}
+          disabled={
+            disabled &&
+            ![
+              'playbackDelay',
+              'maxKvTokens',
+              'screenSubtitleHeight',
+              'screenSubtitleBottom',
+              'screenSubtitleTop',
+            ].includes(key)
+          }
+          onChange={(e) => {
+            if (e.target.value !== '')
+              change({
+                [key]: Math.min(max, Math.max(min, Number(e.target.value))),
+                ...(key === 'playbackDelay' ? { playbackPreference: true } : {}),
+              });
+          }}
+        />
+      </Field>
+    );
+  };
   return (
     <>
       {definition.protocol === 'ordinary' && (
@@ -109,9 +113,12 @@ export function ParameterSettings({
               value={s.visionHD}
               onChange={(e) => change({ visionHD: e.target.value as SessionSettings['visionHD'] })}
             >
-              <option value="off">Off</option>
-              <option value="fixed">Fixed HD</option>
-              <option value="strategy">Strategy HD</option>
+              {settingOptions(s, 'visionHD', ['off', 'fixed', 'strategy']).map((mode) => (
+                <option key={mode} value={mode}>
+                  {({ off: 'Off', fixed: 'Fixed HD', strategy: 'Strategy HD' } as any)[mode] ||
+                    mode}
+                </option>
+              ))}
             </select>
           </Field>
           {s.visionHD === 'fixed' && number('fixedSlices', '每个 Unit 的 slices', 1, 9)}

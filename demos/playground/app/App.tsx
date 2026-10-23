@@ -7,12 +7,29 @@ import { SessionController } from '../shared/session/controller';
 import { type CaseId, type SessionSettings } from '../shared/session/types';
 import { defaultsFor, persistedSettings } from '../shared/session/options';
 import { Dialog } from '../shared/ui/controls';
+import { endpointBase } from '../shared/session/urls';
+import { parseApiService } from '../../../static/demo-gallery/core/api-endpoint.js';
 
 const fromHash = () =>
   cases.find((c) => c.id === location.hash.replace('#', ''))?.id || 'audio-duplex';
 function loadSettings(): Record<string, SessionSettings> {
   try {
     const stored = JSON.parse(localStorage.getItem('o5-playground-settings-v2') || '{}');
+    const deployment = import.meta.env.VITE_PLAYGROUND_DEFAULT_API || '';
+    const changed = deployment && localStorage.getItem('o5-playground-deployment') !== deployment;
+    if (deployment) {
+      const endpoint = endpointBase(deployment);
+      const apiService = parseApiService(endpoint).service;
+      for (const item of cases) {
+        if (changed || !stored[item.id]?.endpoint)
+          stored[item.id] = {
+            ...stored[item.id],
+            endpoint,
+            apiService,
+            ...(changed ? { gallery: '', presetSource: '', shareSource: '' } : {}),
+          };
+      }
+    }
     return Object.fromEntries(
       cases.map((c) => [
         c.id,
@@ -23,6 +40,11 @@ function loadSettings(): Record<string, SessionSettings> {
               ([, v]) => v !== undefined,
             ),
           ),
+          userOverrides:
+            stored[c.id]?.userOverrides ||
+            Object.keys(persistedSettings(c.id, stored[c.id] || {})).filter(
+              (key) => stored[c.id]?.[key] !== undefined,
+            ),
           segmentsJson: '',
           toolsJson: '',
           referencePath: '',
@@ -79,6 +101,11 @@ export function App() {
     );
     try {
       localStorage.setItem('o5-playground-settings-v2', JSON.stringify(safe));
+      if (import.meta.env.VITE_PLAYGROUND_DEFAULT_API)
+        localStorage.setItem(
+          'o5-playground-deployment',
+          import.meta.env.VITE_PLAYGROUND_DEFAULT_API,
+        );
     } catch {
       /* storage may be disabled */
     }
@@ -103,13 +130,10 @@ export function App() {
       ...all,
       [next]: {
         ...all[next],
-        endpoint:
-          all[next].endpoint || (target.protocol === definition.protocol ? all[id].endpoint : ''),
+        endpoint: all[next].endpoint || all[id].endpoint,
         gallery: all[next].gallery || all[id].gallery,
         presetSource: all[next].presetSource || all[id].presetSource,
-        apiService:
-          all[next].apiService ||
-          (target.protocol === 'fc' && definition.protocol === 'fc' ? all[id].apiService : ''),
+        apiService: all[next].apiService || all[id].apiService,
       },
     }));
     setController(new SessionController(target));
@@ -144,7 +168,25 @@ export function App() {
         key={`${id}-${revision}`}
         definition={definition}
         settings={currentSettings}
-        onSettings={(patch) => setSettings((all) => ({ ...all, [id]: { ...all[id], ...patch } }))}
+        onSettings={(patch) =>
+          setSettings((all) => ({
+            ...all,
+            [id]: {
+              ...all[id],
+              ...patch,
+              userOverrides:
+                patch.userOverrides ??
+                (patch.configReady === undefined
+                  ? [
+                      ...new Set([
+                        ...(all[id].userOverrides || []),
+                        ...(Object.keys(patch) as (keyof SessionSettings)[]),
+                      ]),
+                    ]
+                  : all[id].userOverrides),
+            },
+          }))
+        }
         controller={controller}
         developer={developer}
         setDeveloper={setDeveloper}
@@ -210,8 +252,8 @@ export function App() {
                   <strong>选择模型</strong>
                   <p>
                     Agent
-                    场景加载服务配置后，可在右上角直接选择模型。单工与普通双工请在开发者面板配置对应的
-                    API 与预设服务。
+                    场景和对话体验会自动加载应用预设。右上角选择已配置的兼容模型，或在开发者面板填写对应的
+                    API 地址。
                   </p>
                 </li>
                 <li>

@@ -22,35 +22,36 @@ npm run preview
 
 ## 连接模型和工具
 
-FC 场景（Board、UI Card、任务助手、Rejection、外部事件）打开后会从 Gallery 的 `/api/demos/<id>/defaults` 读取默认 API 服务与场景预设，再从该 API 服务的 `/overview/api/state` 发现模型端点。页面右上角可直接选择端点、刷新列表；会话进行中锁定选择，列表每 30 秒刷新。
+所有体验从应用服务的 `/api/demos/runtime` 读取同一份模型端点目录，再从 Gateway 的 `/overview/api/state` 发现端点。独立 Gateway 没有启用控制面板时，使用应用目录中的端点，逐一读取 `/v1/info` 获取真实模型与空闲 Worker 信息。右上角可选择模型、刷新列表；会话进行中锁定选择，列表每 30 秒刷新。
 
-首次体验 FC：
+模型信息与体验预设分开：
 
-1. 配置下面的 Gallery 开发代理并启动页面，打开 `http://localhost:5186/#uicard` 或 `/#subagent`。
-2. 等待场景预设加载，在页面右上角选择模型端点。
-3. 如出现证书提示，点击“打开 API 服务”，在确认可信的 API 页面接受证书后返回刷新端点列表。
-4. 点击开始并允许麦克风访问；在“开发者模式”查看模型身份、预设、运行参数和协议事件。
+- **模型服务**：`<端点>/v1/info` 提供实际加载的 checkpoint、runtime 与会话默认值。各体验共用发现逻辑，新打开的体验可继承已有连接。
+- **单工／普通双工预设**：本应用的 `server/cases.json` 提供三个 case 的设置 schema、默认值、语言预设及参考音频。`GET /api/demos/playground/cases/<id>/defaults` 返回配置；`/api/demos/playground/audio/<id>` 提供音频。
+- **FC 预设与工具**：Gallery 的 `/api/demos/<id>/defaults` 提供原场景预设与工具。场景执行继续调用原工具接口。
+- **分享服务**：独立配置，负责接收录制和生成分享链接。
 
-单工与普通音视频双工使用各自协议，需要配置支持相应模式的 API 与原页面预设服务。它们不自动继承 FC 地址。更多连接设置位于右上的“开发者模式”：
+推理 WebSocket 始终由浏览器直接连接。选中 `/e/default` 时，单工与普通双工使用同池的根入口 `/v1/realtime?mode=chat|audio|video`；FC 使用 `/e/default/v1/realtime?mode=audio|omni`。其他命名池不会自动删掉路径转去 default；当前单工／普通双工会提示选择支持该模式的 default 端点。
 
-- **模型 API 地址**：API 根地址，或完整的 `/v1/realtime` 地址。推理 WebSocket 由浏览器直接连接。单工使用 `mode=chat`；普通双工使用 `mode=audio|video`；FC 使用 v5 `mode=audio|omni`。应填写支持相应协议的端点。
-- **应用／预设服务地址**：单工与普通双工从原页面服务读取语言预设、默认配置和参考音频，并将分享录制上传到该服务。留空使用同源。
-- **工具服务地址**：现有 Demo Gallery 服务根地址。FC 场景从它读取预设、参考音频并执行工具；它与模型 API 是两个独立服务。
-- **场景预设**：加载后可查看 system segments、tools 和参考音色；也可以上传自己的参考音频。应用保留服务提供的预设内容，不自动改写模型提示词。
+配置步骤：
 
-工具服务地址为空时使用页面同源。在本地开发中，复制 `.env.example` 为 `.env.local` 并填写实际服务地址：
+1. 复制 `.env.example` 为 `.env.local`，填写 Gallery 应用服务；可设置 `VITE_PLAYGROUND_DEFAULT_API` 为此次部署的默认模型。
+2. 启动后等待预设加载，在右上角选择模型；浏览器遇到可信开发服务的自签证书时，先直接打开该服务确认访问。
+3. 点击开始并允许麦克风／摄像头访问。开发者模式可查看模型身份、当前 preset 和会话实际返回的配置。
 
 ```dotenv
 PLAYGROUND_GALLERY_TARGET=http://127.0.0.1:10032
-# 可选：原单工／普通双工页面所在的服务
-PLAYGROUND_PRESET_TARGET=http://127.0.0.1:9000
-# 仅当已确认可信的开发服务使用自签证书时开启
+# 可选：默认模型端点、录制分享服务
+# VITE_PLAYGROUND_DEFAULT_API=https://api.example.com/e/default
+# PLAYGROUND_SESSION_TARGET=http://127.0.0.1:9000
 # PLAYGROUND_PROXY_TLS_INSECURE=1
 ```
 
-Gallery 开发代理转发 `/api/demos/**` 与 `/demos/**`；预设代理转发 `/api/presets/**`、`/api/frontend_defaults`、`/api/default_ref_audio`、`/api/sessions/**` 与 `/s/**`。推理请求由浏览器直连。修改环境变量后重启开发服务。生产静态托管需单独配置这些路由，或填写允许跨域访问的工具服务地址。`npm run preview` 仅用于查看构建后的页面，不包含工具代理。
+`VITE_PLAYGROUND_DEFAULT_API` 改变后，会在下次加载时更新浏览器保存的连接地址一次，其他体验参数保留。之后手动选择的地址仍可记忆。该变量只有公开端点地址，不含凭证。
 
-当前连接表单支持仓库原生 WebSocket 协议，尚未接入 MAP 的 API Key 子协议鉴权。FC 按已保存选择或服务提供的默认配置选择端点；代码不内置线上地址。点击开始后才建立模型会话。页面初始化会读取配置和模型信息；SubAgent 场景还会向工具服务申请一个空工作目录，后台任务由会话内工具调用触发。
+开发与预览由 Vite 挂载本应用配置后端；独立托管静态文件时，运行 `npm run serve:app`（默认 `127.0.0.1:5187`），反向代理 `/api/demos/playground/` 到它，其他 `/api/demos/` 路由到 Gallery。配置后端只提供设置和音频，不加载模型、不转发推理。生产部署需一并提供仓库中的参考音频，或设置 `PLAYGROUND_AUDIO_ROOT`。
+
+首次进入加载应用默认值，再保留用户可记忆的设置；切换 preset 仅替换该预设声明的字段；恢复默认重新加载当前应用配置。设备选择保留在浏览器端。未成功加载配置前不能开始会话。
 
 ## 配置和行为
 
@@ -96,12 +97,11 @@ playground/
 
 尚未完整对齐：英文界面与原 FAQ、生成期间起草下一轮、部分编辑／录音／附件快捷操作、普通双工文件预检查与部分调试展示。具体缺口保留在清单，不能将此版本视作旧页面的完全替代。原页面继续保留。
 
-
 ## 端点选择接入 · 2026-10-23
 
 - FC 顶部端点选择器复用原 Gallery 的发现和合并逻辑；配置、端点列表错误会显示具体原因。
 - 默认配置读取通过部署者配置的 Gallery 路由；开发代理可显式允许可信自签上游证书，推理保持浏览器直连。
-- API 地址只在相同协议的体验间自动继承；每个体验仍可保存自己的地址。
+- 初版仅在相同协议间继承；后续统一为模型端点目录，协议入口由各体验分别选择。
 - 验收范围：配置接口只读检查、源码核对、类型检查与生产构建；不包含真实会话、麦克风与工具调用端到端验收。详细记录见工作区外 `analysis-runs/20261022-o5-react-playground/endpoint-discovery.md`。
 
 ## FC 主体布局 · 2026-10-23

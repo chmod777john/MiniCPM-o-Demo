@@ -1,3 +1,4 @@
+import { numericSetting, settingOptions } from '../session/presets';
 import { useEffect, useRef, useState } from 'react';
 import { exportConversation } from '../../turnbased/export';
 import { Download } from 'lucide-react';
@@ -27,20 +28,23 @@ export function SessionArtifacts({
   const currentId = useRef(view.recordingSessionId);
   currentId.current = view.recordingSessionId;
   const busy = controller.busy;
-  const number = (key: keyof SessionSettings, label: string, min: number, max: number) => (
-    <Field label={label}>
-      <input
-        type="number"
-        min={min}
-        max={max}
-        value={s[key] as number}
-        disabled={busy}
-        onChange={(e) =>
-          onSettings({ [key]: Math.max(min, Math.min(max, Number(e.target.value))) })
-        }
-      />
-    </Field>
-  );
+  const number = (key: keyof SessionSettings, label: string, min: number, max: number) => {
+    [min, max] = numericSetting(s, key, [min, max]);
+    return (
+      <Field label={label}>
+        <input
+          type="number"
+          min={min}
+          max={max}
+          value={s[key] as number}
+          disabled={busy}
+          onChange={(e) =>
+            onSettings({ [key]: Math.max(min, Math.min(max, Number(e.target.value))) })
+          }
+        />
+      </Field>
+    );
+  };
   return (
     <Section title="录制与分享">
       {definition.protocol === 'chat' && (
@@ -102,11 +106,13 @@ export function SessionArtifacts({
                   disabled={busy}
                   onChange={(e) => onSettings({ recordingBitrate: Number(e.target.value) })}
                 >
-                  {[1, 2, 4, 8].map((n) => (
-                    <option value={n * 1000000} key={n}>
-                      {n} Mbps
-                    </option>
-                  ))}
+                  {settingOptions(s, 'recordingBitrate', [1000000, 2000000, 4000000, 8000000]).map(
+                    (n) => (
+                      <option value={n} key={n}>
+                        {n / 1000000} Mbps
+                      </option>
+                    ),
+                  )}
                 </select>
               </Field>
               <Toggle

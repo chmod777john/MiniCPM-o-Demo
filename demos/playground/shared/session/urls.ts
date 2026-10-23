@@ -25,6 +25,21 @@ export function endpointBase(value: string) {
   url.hash = '';
   return url.toString().replace(/\/$/, '');
 }
+/** Native chat/ordinary routes are aliases of the gateway's default worker pool only. */
+export function ordinaryEndpoint(value: string) {
+  const url = new URL(endpointBase(value));
+  const named = url.pathname.match(/^(.*)\/e\/([^/]+)$/);
+  if (named) {
+    if (named[2] !== 'default')
+      throw new Error('此体验需要支持单工／普通双工的 default 端点，请选择对应模型服务。');
+    url.pathname = named[1] || '/';
+  }
+  return url.toString().replace(/\/$/, '');
+}
+export function modelInfoEndpoint(value: string) {
+  const base = endpointBase(value);
+  return /\/e\/[^/]+$/.test(new URL(base).pathname) ? base : `${base}/e/default`;
+}
 export function realtimeUrl(base: string, mode: string) {
   const url = new URL(`${endpointBase(base)}/v1/realtime`);
   url.protocol = url.protocol.replace('http', 'ws');

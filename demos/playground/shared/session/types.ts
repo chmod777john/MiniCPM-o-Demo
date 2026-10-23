@@ -55,7 +55,20 @@ export interface CaseDefinition {
   loadScene?: () => Promise<SceneFactory>;
 }
 export type AudioReference = { name: string; data: string; pcm: string; duration?: number };
+export interface SettingSpec {
+  type: string;
+  default: any;
+  owner: 'request' | 'browser';
+  min?: number;
+  max?: number;
+  step?: number;
+  options?: (string | number)[];
+}
+export type SettingsSchema = Record<string, SettingSpec>;
 export interface SessionSettings {
+  settingsSchema?: SettingsSchema;
+  userOverrides?: (keyof SessionSettings)[];
+  shareSource: string;
   configReady: boolean;
   endpoint: string;
   gallery: string;

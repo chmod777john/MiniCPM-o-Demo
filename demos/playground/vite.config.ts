@@ -1,15 +1,41 @@
 import { defineConfig, loadEnv } from 'vite';
 import react from '@vitejs/plugin-react';
+import { applicationHandler } from './server/application';
 import { fileURLToPath } from 'node:url';
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '');
-  const presets = env.PLAYGROUND_PRESET_TARGET;
+  const sessions = env.PLAYGROUND_SESSION_TARGET || env.PLAYGROUND_PRESET_TARGET;
   const gallery = env.PLAYGROUND_GALLERY_TARGET;
   const secure = env.PLAYGROUND_PROXY_TLS_INSECURE !== '1';
   return {
     base: './',
-    plugins: [react()],
+    plugins: [
+      react(),
+      {
+        name: 'playground-application',
+        configureServer(server) {
+          const handle = applicationHandler(env);
+          server.middlewares.use((req, res, next) => {
+            void handle(req, res)
+              .then((handled) => {
+                if (!handled) next();
+              })
+              .catch(next);
+          });
+        },
+        configurePreviewServer(server) {
+          const handle = applicationHandler(env);
+          server.middlewares.use((req, res, next) => {
+            void handle(req, res)
+              .then((handled) => {
+                if (!handled) next();
+              })
+              .catch(next);
+          });
+        },
+      },
+    ],
     server: {
       port: 5186,
       strictPort: true,
@@ -22,15 +48,12 @@ export default defineConfig(({ mode }) => {
               '/demos': { target: gallery, changeOrigin: true, secure },
             }
           : {}),
-        ...(presets
+        ...(sessions
           ? Object.fromEntries(
-              [
-                '/api/presets',
-                '/api/frontend_defaults',
-                '/api/default_ref_audio',
-                '/api/sessions',
-                '/s/',
-              ].map((path) => [path, { target: presets, changeOrigin: true, secure }]),
+              ['/api/sessions', '/s/'].map((path) => [
+                path,
+                { target: sessions, changeOrigin: true, secure },
+              ]),
             )
           : {}),
       },

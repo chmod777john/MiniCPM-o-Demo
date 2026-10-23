@@ -199,41 +199,19 @@ export function Experience({
       .loadPreset(
         current,
         current.preset && current.preset !== 'custom' ? current.preset : undefined,
+        'initialize',
       )
       .then((patch) => {
         if (active)
           onSettingsRef.current(
-            definition.id === 'audio-duplex'
-              ? {
-                  ...patch,
-                  ...(current.configReady || current.preset === 'custom' ? current : {}),
-                  ...(current.systemPrompt !== defaultsFor('audio-duplex').systemPrompt
-                    ? { systemPrompt: current.systemPrompt }
-                    : {}),
-                  ...(!current.referenceAudio ? { referenceAudio: patch.referenceAudio } : {}),
-                  playbackDelay: current.playbackPreference
-                    ? current.playbackDelay
-                    : (patch.playbackDelay ?? current.playbackDelay),
-                  ...(patch.slidingWindowMode
-                    ? { slidingWindowMode: patch.slidingWindowMode }
-                    : {}),
-                  ...(patch.allowedSlidingModes
-                    ? { allowedSlidingModes: patch.allowedSlidingModes }
-                    : {}),
-                  ...(patch.basicHigh != null ? { basicHigh: patch.basicHigh } : {}),
-                  ...(patch.basicLow != null ? { basicLow: patch.basicLow } : {}),
-                  configReady: true,
-                }
+            !fc
+              ? patch
               : current.configReady || current.preset === 'custom'
                 ? {
                     ...patch,
                     ...current,
-                    ...(fc
-                      ? {
-                          endpoint: patch.endpoint ?? current.endpoint,
-                          apiService: patch.apiService ?? current.apiService,
-                        }
-                      : {}),
+                    endpoint: patch.endpoint ?? current.endpoint,
+                    apiService: patch.apiService ?? current.apiService,
                   }
                 : patch,
           );
@@ -246,17 +224,22 @@ export function Experience({
     };
   }, [controller, sceneReady, fc]);
   useEffect(() => {
-    if (!fc || !settings.apiService) return;
+    if (!settings.apiService) return;
     const timer = setInterval(() => {
       void controller.refreshEndpoints(settingsRef.current).catch(() => {});
     }, 30000);
     return () => clearInterval(timer);
-  }, [fc, controller, settings.apiService]);
+  }, [controller, settings.apiService]);
   const elapsed = view.startedAt ? Math.max(0, Math.floor((now - view.startedAt) / 1000)) : 0;
   const duration = `${String(Math.floor(elapsed / 60)).padStart(2, '0')}:${String(elapsed % 60).padStart(2, '0')}`;
   const currentText = [...view.messages].reverse().find((m) => m.role === 'assistant')?.text;
   async function start() {
     if (view.configLoading || view.recordingPending) return;
+    if (!fc && !settings.configReady) {
+      setDeveloper(true);
+      controller.setError('请先加载此体验的应用配置。');
+      return;
+    }
     if (!settings.endpoint || (fc && !settings.segmentsJson)) {
       setDeveloper(true);
       controller.setError(
@@ -277,6 +260,11 @@ export function Experience({
     }
   }
   async function send(text: string, files: File[], ordered?: ContentPart[]) {
+    if (!settings.configReady) {
+      setDeveloper(true);
+      controller.setError('请先加载此体验的应用配置。');
+      return false;
+    }
     if (!settings.endpoint) {
       setDeveloper(true);
       controller.setError('请先填写模型 API 地址。');

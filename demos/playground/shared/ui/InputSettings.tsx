@@ -1,3 +1,4 @@
+import { numericSetting, settingOptions } from '../session/presets';
 import { useEffect, useRef, useState } from 'react';
 import { MixerPreview } from '../media/mixer-preview';
 import { measureLUFS } from '../../../../static/duplex/lib/lufs.js';
@@ -135,25 +136,30 @@ export function InputSettings({
     min: number,
     max: number,
     step = 1,
-  ) => (
-    <Field label={label}>
-      <input
-        type="number"
-        value={s[key] as number}
-        min={min}
-        max={max}
-        step={step}
-        disabled={
-          disabled &&
-          !(['micTarget', 'micTrim', 'fileTrim', 'monitor', 'fileVolume'] as string[]).includes(key)
-        }
-        onChange={(e) => {
-          if (e.target.value !== '')
-            change({ [key]: Math.min(max, Math.max(min, Number(e.target.value))) });
-        }}
-      />
-    </Field>
-  );
+  ) => {
+    [min, max, step] = numericSetting(s, key, [min, max, step]);
+    return (
+      <Field label={label}>
+        <input
+          type="number"
+          value={s[key] as number}
+          min={min}
+          max={max}
+          step={step}
+          disabled={
+            disabled &&
+            !(['micTarget', 'micTrim', 'fileTrim', 'monitor', 'fileVolume'] as string[]).includes(
+              key,
+            )
+          }
+          onChange={(e) => {
+            if (e.target.value !== '')
+              change({ [key]: Math.min(max, Math.max(min, Number(e.target.value))) });
+          }}
+        />
+      </Field>
+    );
+  };
   return (
     <Section title="输入与设备">
       {fc && (
@@ -170,8 +176,15 @@ export function InputSettings({
           value={s.inputMode}
           onChange={(e) => change({ inputMode: e.target.value as SessionSettings['inputMode'] })}
         >
-          <option value="live">实时麦克风{definition.video ? '与摄像头' : ''}</option>
-          <option value="file">{definition.video ? '视频文件' : '音频文件'}</option>
+          {settingOptions(s, 'inputMode', ['live', 'file']).map((mode) => (
+            <option key={mode} value={mode}>
+              {mode === 'live'
+                ? `实时麦克风${definition.video ? '与摄像头' : ''}`
+                : definition.video
+                  ? '视频文件'
+                  : '音频文件'}
+            </option>
+          ))}
         </select>
       </Field>
       {s.inputMode === 'file' && (
@@ -199,9 +212,17 @@ export function InputSettings({
                   change({ fileAudioMode: e.target.value as SessionSettings['fileAudioMode'] })
                 }
               >
-                <option value="file">仅文件音频</option>
-                {definition.video && <option value="mic">仅麦克风</option>}
-                <option value="mixed">文件 + 麦克风</option>
+                {settingOptions(
+                  s,
+                  'fileAudioMode',
+                  definition.video ? ['file', 'mic', 'mixed'] : ['file', 'mixed'],
+                ).map((mode) => (
+                  <option key={mode} value={mode}>
+                    {({ file: '仅文件音频', mic: '仅麦克风', mixed: '文件 + 麦克风' } as any)[
+                      mode
+                    ] || mode}
+                  </option>
+                ))}
               </select>
             </Field>
           )}

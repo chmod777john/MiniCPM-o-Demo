@@ -7,7 +7,7 @@ import type {
   AudioReference,
 } from '../session/types';
 import type { SessionController } from '../session/controller';
-import { applicationUrl, readJson } from '../session/urls';
+import { loadDefaultReference } from '../session/presets';
 import { MediaPreview } from './MediaPreview';
 import { wavReference } from '../media/files';
 import { defaultsFor, ttsReference } from '../session/options';
@@ -79,62 +79,60 @@ export function DeveloperPanel({
               placeholder="https://api.example.com/e/model"
               onChange={(e) => onSettings({ endpoint: e.target.value })}
               onBlur={() => {
-                if (fc && settings.endpoint)
+                if (settings.endpoint)
                   void action('endpoint', async () => {
                     await controller.inspectEndpoint(settings);
                   });
               }}
             />
           </Field>
-          {fc && (
-            <>
-              <Field label="API 服务地址" hint="用于发现同一服务下的多个模型端点。">
-                <input
-                  value={settings.apiService}
+          <>
+            <Field label="API 服务地址" hint="用于发现同一服务下的多个模型端点。">
+              <input
+                value={settings.apiService}
+                disabled={disabled}
+                placeholder="https://api.example.com"
+                onChange={(e) => onSettings({ apiService: e.target.value })}
+              />
+            </Field>
+            <button
+              className="secondary-button full"
+              disabled={disabled || (!settings.apiService && !settings.endpoint)}
+              onClick={() =>
+                void action('discover', async () => {
+                  const patch = await controller.discoverEndpoints(settings);
+                  onSettings(patch);
+                  await controller.inspectEndpoint({ ...settings, ...patch });
+                })
+              }
+            >
+              发现模型端点
+            </button>
+            {!!controller.endpoints.length && (
+              <Field label="可选端点">
+                <select
+                  value={settings.endpoint}
                   disabled={disabled}
-                  placeholder="https://api.example.com"
-                  onChange={(e) => onSettings({ apiService: e.target.value })}
-                />
+                  onChange={(e) => {
+                    const endpoint = e.target.value;
+                    onSettings({ endpoint });
+                    void action('endpoint', async () => {
+                      await controller.inspectEndpoint({ ...settings, endpoint });
+                    });
+                  }}
+                >
+                  <option value={settings.endpoint}>当前：{settings.endpoint || '未选择'}</option>
+                  {controller.endpoints
+                    .filter((e) => e.url !== settings.endpoint)
+                    .map((e) => (
+                      <option key={e.url} value={e.url}>
+                        {e.label}
+                      </option>
+                    ))}
+                </select>
               </Field>
-              <button
-                className="secondary-button full"
-                disabled={disabled || (!settings.apiService && !settings.endpoint)}
-                onClick={() =>
-                  void action('discover', async () => {
-                    const patch = await controller.discoverEndpoints(settings);
-                    onSettings(patch);
-                    await controller.inspectEndpoint({ ...settings, ...patch });
-                  })
-                }
-              >
-                发现模型端点
-              </button>
-              {!!controller.endpoints.length && (
-                <Field label="可选端点">
-                  <select
-                    value={settings.endpoint}
-                    disabled={disabled}
-                    onChange={(e) => {
-                      const endpoint = e.target.value;
-                      onSettings({ endpoint });
-                      void action('endpoint', async () => {
-                        await controller.inspectEndpoint({ ...settings, endpoint });
-                      });
-                    }}
-                  >
-                    <option value={settings.endpoint}>当前：{settings.endpoint || '未选择'}</option>
-                    {controller.endpoints
-                      .filter((e) => e.url !== settings.endpoint)
-                      .map((e) => (
-                        <option key={e.url} value={e.url}>
-                          {e.label}
-                        </option>
-                      ))}
-                  </select>
-                </Field>
-              )}
-            </>
-          )}
+            )}
+          </>
           <button
             className="secondary-button full"
             disabled={disabled || !settings.endpoint}
@@ -151,12 +149,25 @@ export function DeveloperPanel({
             )}
             读取模型信息
           </button>
+          {!fc && (
+            <Field
+              label="会话分享服务地址"
+              hint="可选。提供会话存储和分享页面，独立于预设服务；留空使用同源。"
+            >
+              <input
+                value={settings.shareSource}
+                disabled={disabled}
+                placeholder="https://sessions.example.com"
+                onChange={(e) => onSettings({ shareSource: e.target.value })}
+              />
+            </Field>
+          )}
           <Field
             label={fc ? '工具服务地址' : '应用／预设服务地址'}
             hint={
               fc
                 ? '提供场景预设、音频文件和工具接口；留空使用同源服务。'
-                : '原页面所在的服务，提供 /api/presets 和前端默认值；留空使用同源。'
+                : '提供当前体验的预设、默认设置和参考音频；留空使用本应用服务。'
             }
           >
             <input
@@ -164,7 +175,11 @@ export function DeveloperPanel({
               disabled={disabled}
               placeholder="https://demo.example.com"
               onChange={(e) =>
-                onSettings(fc ? { gallery: e.target.value } : { presetSource: e.target.value })
+                onSettings(
+                  fc
+                    ? { gallery: e.target.value }
+                    : { presetSource: e.target.value, configReady: false },
+                )
               }
             />
           </Field>
@@ -196,6 +211,12 @@ export function DeveloperPanel({
               ))}
             </select>
           </Field>
+          {!fc && (
+            <p className="field-hint">
+              {controller.presets.find((p) => p.id === settings.preset)?.description ||
+                '预设提供提示词和参考音色；切换时保留设备与播放选择。'}
+            </p>
+          )}
           <button
             className="secondary-button full"
             disabled={disabled || (fc && !sceneReady)}
@@ -210,7 +231,7 @@ export function DeveloperPanel({
             ) : (
               <Download size={14} />
             )}
-            加载预设与默认配置
+            {fc ? '加载预设与默认配置' : '重新加载当前预设'}
           </button>
           {notice && (
             <p className="field-hint" role="status">
@@ -277,19 +298,11 @@ export function DeveloperPanel({
                 value={settings.referenceAudio}
                 disabled={disabled}
                 onChange={(referenceAudio) => {
-                  if (referenceAudio || fc) custom({ referenceAudio });
+                  if (referenceAudio) custom({ referenceAudio });
                   else
                     void action('reference', async () => {
-                      const audio = await readJson(
-                        applicationUrl(settings.presetSource, '/api/default_ref_audio'),
-                      );
                       custom({
-                        referenceAudio: {
-                          name: audio.name,
-                          pcm: audio.base64,
-                          data: '',
-                          duration: audio.duration,
-                        },
+                        referenceAudio: await loadDefaultReference(settings, definition.id),
                       });
                     });
                 }}
@@ -300,17 +313,7 @@ export function DeveloperPanel({
                 disabled={disabled}
                 onClick={() =>
                   void action('reference', async () => {
-                    const audio = await readJson(
-                      applicationUrl(settings.presetSource, '/api/default_ref_audio'),
-                    );
-                    custom({
-                      referenceAudio: {
-                        name: audio.name,
-                        data: '',
-                        pcm: audio.base64,
-                        duration: audio.duration,
-                      },
-                    });
+                    custom({ referenceAudio: await loadDefaultReference(settings, definition.id) });
                   })
                 }
               >
@@ -457,9 +460,12 @@ export function DeveloperPanel({
                 gallery: settings.gallery,
                 presetSource: settings.presetSource,
                 apiService: settings.apiService,
+                shareSource: settings.shareSource,
+                referenceAudio: undefined,
+                ttsReferenceAudio: undefined,
+                inputFile: undefined,
               };
-              onSettings(fresh);
-              const loaded = await controller.loadPreset(fresh);
+              const loaded = await controller.loadPreset(fresh, undefined, 'reset');
               onSettings({ ...fresh, ...loaded });
             })
           }

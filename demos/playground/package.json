@@ -10,7 +10,8 @@
     "dev": "vite --host 127.0.0.1",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview --host 127.0.0.1",
-    "format": "prettier --write ."
+    "format": "prettier --write .",
+    "serve:app": "node --experimental-strip-types server/start.ts"
   },
   "dependencies": {
     "lucide-react": "^0.468.0",

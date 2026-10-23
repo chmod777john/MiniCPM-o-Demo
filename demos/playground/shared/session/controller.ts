@@ -19,7 +19,7 @@ import { textFromSteps } from '../../../../static/demo-gallery/core/ui-utils.js'
 import { OrdinaryLive, ordinaryFile, type InputSource, type MediaChunk } from '../media/ordinary';
 import { decodeFileToChunks } from '../../../../static/demo-gallery/core/file-audio-provider.js';
 import { ordinaryPayload, ttsReference, wireContent } from './options';
-import { loadOrdinaryPresets } from './presets';
+import { loadConversationPresets, type PresetLoadMode } from './presets';
 import {
   parseApiService,
   endpointsFromOverview,
@@ -28,7 +28,14 @@ import {
 import { ChatAudioPlayer, outputWav } from '../../turnbased/audio';
 import { ChatTransport } from '../../turnbased/transport';
 import { base64, contentFiles } from '../media/files';
-import { applicationUrl, endpointBase, readJson, realtimeUrl } from './urls';
+import {
+  applicationUrl,
+  endpointBase,
+  modelInfoEndpoint,
+  ordinaryEndpoint,
+  readJson,
+  realtimeUrl,
+} from './urls';
 import {
   emptyView,
   type CaseDefinition,
@@ -182,12 +189,13 @@ export class SessionController {
   private infoEndpoint = '';
   private endpointIdentity: Record<string, any> = {};
   defaults: any = null;
+  private connectionDefaults: any = null;
   endpoints: { url: string; label: string; available?: number }[] = [];
   endpointListError = '';
   endpointListService = '';
   private endpointRequest = 0;
   private serviceEndpoints(state: any, service: string) {
-    const configured = (this.defaults?.api_endpoints || []).filter((e: any) => {
+    const configured = (this.connectionDefaults?.api_endpoints || []).filter((e: any) => {
       try {
         return parseApiService(e.url).service === parseApiService(service).service;
       } catch {
@@ -198,7 +206,7 @@ export class SessionController {
   }
   onDraft?: (text: string) => void;
   onSettings?: (patch: Partial<SessionSettings>) => void;
-  presets: { id: string; label: string }[] = [];
+  presets: { id: string; label: string; description?: string }[] = [];
   constructor(readonly definition: CaseDefinition) {}
   snapshot = () => this.view;
   subscribe = (listener: () => void) => {
@@ -333,9 +341,13 @@ export class SessionController {
     this.scene = null;
     this.stage = null;
   }
-  async loadPreset(settings: SessionSettings, preset?: string): Promise<Partial<SessionSettings>> {
+  async loadPreset(
+    settings: SessionSettings,
+    preset?: string,
+    mode: PresetLoadMode = 'preset',
+  ): Promise<Partial<SessionSettings>> {
     this.update({ configLoading: true });
-    const result = this.readPreset(settings, preset);
+    const result = this.readPreset(settings, preset, mode);
     const request = this.fetchAbort;
     try {
       return await result;
@@ -346,22 +358,27 @@ export class SessionController {
   private async readPreset(
     settings: SessionSettings,
     preset?: string,
+    mode: PresetLoadMode = 'preset',
   ): Promise<Partial<SessionSettings>> {
     this.fetchAbort?.abort();
     const abort = new AbortController();
     this.fetchAbort = abort;
     if (this.definition.protocol !== 'fc') {
-      const result = await loadOrdinaryPresets(
+      const result = await loadConversationPresets(
         settings,
         this.definition.id,
         preset,
         abort.signal,
-        !this.presets.length,
+        mode,
       );
       if (abort.signal.aborted || !this.alive) return {};
       this.presets = result.options;
-      this.log('配置', '已加载原页面的预设和参考音频');
-      return { ...result.patch, configReady: true };
+      this.defaults = result.config;
+      this.dismissError();
+      const connection = await this.loadModelSelection(settings, abort.signal);
+      if (abort.signal.aborted || !this.alive) return {};
+      this.log('配置', '已加载应用提供的体验配置与预设');
+      return { ...result.patch, ...connection, configReady: true };
     }
     const defaults = await readJson(
       applicationUrl(settings.gallery, `/api/demos/${this.definition.id}/defaults`),
@@ -384,13 +401,30 @@ export class SessionController {
       throw new Error('工具服务尚未配置这个预设，请选择可用预设或检查服务配置。');
     const tools = this.scene?.tools?.(defaults, selected) || defaults.system?.tools || [];
     const segments = value?.segments || defaults.system?.segments || [];
+    const connection = await this.loadModelSelection(settings, abort.signal);
+    if (abort.signal.aborted || !this.alive) return {};
+    this.log('配置', '已从工具服务读取场景预设');
+    return {
+      configReady: true,
+      preset: selected,
+      referenceAudio: undefined,
+      ...connection,
+      segmentsJson: JSON.stringify(segments, null, 2),
+      toolsJson: JSON.stringify(tools, null, 2),
+      referencePath: value?.ttsPromptAudioPath || defaults.tts_prompt_audio?.file_path || '',
+    };
+  }
+  private async loadModelSelection(settings: SessionSettings, signal: AbortSignal) {
+    const defaults = await readJson(applicationUrl(settings.gallery, '/api/demos/runtime'), signal);
+    if (signal.aborted || !this.alive) return {};
+    this.connectionDefaults = defaults;
     let endpoint = settings.endpoint || defaults.default_api_endpoint || '';
     let apiService = settings.apiService || endpoint || defaults.default_api_service || '';
     if (apiService) {
       const parsed = parseApiService(apiService);
       apiService = parsed.service;
       endpoint = parsed.endpoint || endpoint;
-      const listed = await this.readEndpointOptions(apiService, abort.signal);
+      const listed = await this.readEndpointOptions(apiService, signal);
       if (listed === null) return {};
       let preferred = '';
       try {
@@ -408,20 +442,10 @@ export class SessionController {
     } else {
       this.endpoints = mergeEndpointOptions([], defaults.api_endpoints || []);
     }
-    if (!this.alive || abort.signal.aborted) return {};
+    if (!this.alive || signal.aborted) return {};
     if (endpoint)
       await this.inspectEndpoint({ ...settings, endpoint }).catch((error) => this.setError(error));
-    this.log('配置', '已从工具服务读取场景预设');
-    return {
-      configReady: true,
-      preset: selected,
-      referenceAudio: undefined,
-      apiService,
-      segmentsJson: JSON.stringify(segments, null, 2),
-      toolsJson: JSON.stringify(tools, null, 2),
-      referencePath: value?.ttsPromptAudioPath || defaults.tts_prompt_audio?.file_path || '',
-      endpoint,
-    };
+    return { endpoint, apiService };
   }
   async inspectEndpoint(settings: SessionSettings) {
     if (this.busy) return;
@@ -440,7 +464,7 @@ export class SessionController {
     this.endpointIdentity = {};
     let data;
     try {
-      data = await readJson(`${endpointBase(settings.endpoint)}/v1/info`, abort.signal);
+      data = await readJson(`${modelInfoEndpoint(settings.endpoint)}/v1/info`, abort.signal);
     } catch (error) {
       if (abort.signal.aborted) return;
       throw error;
@@ -480,10 +504,31 @@ export class SessionController {
       return true;
     } catch (error) {
       if (!this.alive || signal?.aborted || request !== this.endpointRequest) return null;
-      this.endpoints = this.serviceEndpoints({}, service);
-      this.endpointListError = `无法读取 API 端点列表：${messageOf(error)}`;
+      const configured = this.serviceEndpoints({}, service);
+      // Standalone gateways may omit the control-plane overview. The application
+      // still lists endpoints; query each gateway info route for its live state.
+      const available = await Promise.all(
+        configured.map(async (option) => {
+          try {
+            const info = await readJson(`${modelInfoEndpoint(option.url)}/v1/info`, signal);
+            const idle = Array.isArray(info.workers)
+              ? info.workers.filter((worker: any) => worker.status === 'idle' && !worker.draining)
+                  .length
+              : undefined;
+            return { ...option, available: idle };
+          } catch {
+            return null;
+          }
+        }),
+      );
+      if (!this.alive || signal?.aborted || request !== this.endpointRequest) return null;
+      this.endpoints = available.filter((option) => option !== null);
+      this.endpointListError = this.endpoints.length
+        ? ''
+        : `无法读取 API 端点列表：${messageOf(error)}`;
+      if (!this.endpoints.length) this.endpoints = configured;
       this.update({});
-      return false;
+      return this.endpoints.length > 0 && !this.endpointListError;
     }
   }
   async discoverEndpoints(settings: SessionSettings) {
@@ -572,6 +617,7 @@ export class SessionController {
   async start(settings: SessionSettings, video: HTMLVideoElement | null) {
     if (this.busy || this.view.configLoading || this.view.recordingPending) return;
     endpointBase(settings.endpoint);
+    if (this.definition.protocol !== 'fc') ordinaryEndpoint(settings.endpoint);
     this.infoAbort?.abort();
     this.stop();
     const epoch = this.epoch;
@@ -779,7 +825,8 @@ export class SessionController {
       };
       if (this.definition.protocol === 'ordinary') {
         const session = new (RealtimeSession as any)('playground', {
-          getWsUrl: () => realtimeUrl(settings.endpoint, wantsVideo ? 'video' : 'audio'),
+          getWsUrl: () =>
+            realtimeUrl(ordinaryEndpoint(settings.endpoint), wantsVideo ? 'video' : 'audio'),
           getPlaybackDelayMs: () => this.latestSettings?.playbackDelay ?? settings.playbackDelay,
           getMaxKvTokens: () => this.latestSettings?.maxKvTokens ?? settings.maxKvTokens,
           enableReconnect: true,
@@ -1151,6 +1198,7 @@ export class SessionController {
     }
     if (this.busy || this.view.configLoading) return false;
     endpointBase(settings.endpoint);
+    ordinaryEndpoint(settings.endpoint);
     const history =
       historyOverride ||
       this.view.messages.filter(
@@ -1335,7 +1383,7 @@ export class SessionController {
           if (epoch === this.epoch && this.view.phase !== 'error') this.update({ phase: 'idle' });
         },
       });
-      this.chat.start(settings.endpoint, {
+      this.chat.start(ordinaryEndpoint(settings.endpoint), {
         messages: [
           ...(wireContent(settings.systemContent).length
             ? [{ role: 'system', content: wireContent(settings.systemContent) }]
@@ -1632,7 +1680,7 @@ export class SessionController {
   async share(settings: SessionSettings, comment: string) {
     const id = this.view.recordingSessionId;
     if (!id) throw new Error('服务未返回可分享的会话编号。');
-    const base = settings.presetSource || settings.gallery;
+    const base = settings.shareSource;
     const path = `/api/sessions/${encodeURIComponent(id)}`;
     const recordingBlob = this.recordingBlob;
     const recordingExtension = this.recordingExtension;

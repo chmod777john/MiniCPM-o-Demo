@@ -44,7 +44,7 @@ export function EndpointPicker({
     : settings.endpoint
       ? '模型连接设置'
       : '选择模型 API';
-  if (!fc) {
+  if (!fc && !options.length) {
     return (
       <button className="endpoint-chip" onClick={openSettings} title="模型与连接设置">
         <span className={`status-dot ${controller.busy ? 'connected' : ''}`} />
