@@ -191,6 +191,12 @@ def test_tavily_search_matches_training_and_truncates(monkeypatch):
     assert signature(payload) == signature(training("tavily_search_general"))
     assert len(payload["results"][0]["content"]) == 500
     assert seen["include_domains"] == ["dpm.org.cn"] and seen["max_results"] == 2
+    assert seen["search_depth"] == "advanced"
+    assert seen["chunks_per_source"] == 1
+    assert seen["country"] == "china"
+    assert seen["include_raw_content"] is False
+    assert seen["topic"] == "general"
+    assert "raw_content" not in payload["results"][0]
 
 
 def test_tavily_news_keeps_published_date(monkeypatch):
@@ -199,6 +205,33 @@ def test_tavily_news_keeps_published_date(monkeypatch):
     ]}))
     payload = json.loads(run("tavily_search", {"query": "q", "topic": "news"}).content)
     assert signature(payload) == signature(training("tavily_search_news"))
+
+
+def test_tavily_total_cap_shares_unused_budget(monkeypatch):
+    """总量 3000 字按剩余条数平摊；前面短的，后面能多用。无网址的条目丢掉。"""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={
+            "query": "q",
+            "results": [
+                {"url": "https://a", "title": "A", "content": "短", "score": 0.2},
+                {"title": "no-url", "content": "丢", "score": 0.1},
+                *[{"url": f"https://{i}", "title": str(i), "content": "长" * 900, "score": 0.5} for i in range(9)],
+            ],
+        })
+
+    install_transport(monkeypatch, handler)
+    payload = json.loads(run("tavily_search", {"query": "english query", "max_results": 10}).content)
+    contents = [item["content"] for item in payload["results"]]
+    assert len(contents) == 10
+    assert sum(len(text) for text in contents) <= 3000
+    assert len(contents[0]) == 1
+    assert len(contents[1]) > 1
+
+
+def test_tavily_rejects_unknown_topic():
+    result = run("tavily_search", {"query": "q", "topic": "finance"})
+    assert result.error and "topic" in result.error
 
 
 def test_serp_passes_vendor_body_through(monkeypatch):

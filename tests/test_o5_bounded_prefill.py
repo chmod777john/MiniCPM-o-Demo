@@ -148,6 +148,15 @@ def test_prefill_experts_target_selects_long_prefill_implementation(monkeypatch:
     with prefill_experts_implementation(model, 40):
         assert config._experts_implementation == "batched_mm"
     assert config._experts_implementation == "batched_mm"
+    monkeypatch.setenv("O5_PREFILL_EXPERTS_IMPLEMENTATION", "padded_bmm")
+    with prefill_experts_implementation(model, 5000):
+        assert config._experts_implementation == "padded_bmm"
+    assert config._experts_implementation == "batched_mm"
+    with prefill_experts_implementation(model, 40):
+        assert config._experts_implementation == "batched_mm"
+    from transformers.integrations.moe import ALL_EXPERTS_FUNCTIONS
+
+    assert "padded_bmm" in ALL_EXPERTS_FUNCTIONS
     monkeypatch.setenv("O5_PREFILL_EXPERTS_IMPLEMENTATION", "fast")
     with pytest.raises(ValueError, match="只能是"):
         prefill_experts_target()

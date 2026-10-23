@@ -36,18 +36,22 @@ decode（L=1）只有 32 MiB，速度最快；但一次 ~550 token 的 system pr
 
 from __future__ import annotations
 
+import logging
 import os
 from contextlib import contextmanager
 from typing import Iterator
 
 import torch
 
+logger = logging.getLogger(__name__)
+
 DEFAULT_PREFILL_CHUNK_TOKENS = 512
 DEFAULT_PREFILL_EAGER_MIN_TOKENS = 2
 _MEMORY_HEAVY_EXPERTS_IMPLEMENTATIONS = frozenset({"batched_mm"})
-_PREFILL_EXPERTS_IMPLEMENTATIONS = ("eager", "grouped_mm", "batched_mm")
+_PREFILL_EXPERTS_IMPLEMENTATIONS = ("eager", "grouped_mm", "batched_mm", "padded_bmm")
 DEFAULT_PREFILL_EXPERTS_IMPLEMENTATION = "eager"
 _PREFILL_ATTENTION_IMPLEMENTATION = "sdpa"
+_logged_prefill_targets: set[str] = set()
 
 
 def prefill_chunk_tokens() -> int:
@@ -96,10 +100,11 @@ def prefill_experts_target() -> str:
         ``O5_PREFILL_EXPERTS_IMPLEMENTATION`` 的值，未设置时为 ``eager``（逐专家循环，显存最省、最慢）。
         ``grouped_mm`` 按专家排序后一次分组矩阵乘，不复制专家权重（只支持 H100 / sm90，A100 上报错）；
         ``batched_mm`` 等于不切换
-        （瞬时显存 = 分块 token 数 × 每 token 专家副本）。
+        （瞬时显存 = 分块 token 数 × 每 token 专家副本）；
+        ``padded_bmm`` 按专家分组后一次算完，不复制权重（A100 TP2 可用，见 ``prefill_moe.py``）。
 
     异常:
-        ValueError: 取值不在上述三种之内。
+        ValueError: 取值不在上述四种之内。
     """
 
     value = os.environ.get("O5_PREFILL_EXPERTS_IMPLEMENTATION") or DEFAULT_PREFILL_EXPERTS_IMPLEMENTATION
@@ -164,12 +169,24 @@ def prefill_experts_implementation(
         yield
         return
     target = prefill_experts_target()
+    if target == "padded_bmm":
+        from .prefill_moe import register_padded_bmm
+
+        register_padded_bmm()
     switched: list[tuple[object, str]] = []
     for config in _experts_configs(model):
         current = getattr(config, "_experts_implementation", None)
         if current in _MEMORY_HEAVY_EXPERTS_IMPLEMENTATIONS and current != target:
             switched.append((config, current))
             config._experts_implementation = target
+    if switched and target not in _logged_prefill_targets:
+        _logged_prefill_targets.add(target)
+        logger.warning(
+            "[bounded_prefill] long prefill experts %s -> %s (length=%s)",
+            switched[0][1],
+            target,
+            length,
+        )
     try:
         yield
     finally:

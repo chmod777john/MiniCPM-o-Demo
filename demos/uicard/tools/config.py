@@ -28,6 +28,20 @@ DEFAULTS: dict[str, dict[str, Any]] = {
         "search_depth": "basic",
         "timeout_sec": 15.0,
     },
+    # 原生 tavily_search。默认值是造数侧主力配置：advanced、每来源 1 段、
+    # 单条 500 字、全部合计 3000 字。endpoint / api_key 留空时回退到 tavily 段，
+    # serp 的 Tavily 备选后端仍读 tavily 段（basic），互不影响。
+    "tavily_search": {
+        "endpoint": "",
+        "api_key": "",
+        "search_depth": "advanced",
+        "chunks_per_source": 1,
+        "content_cap": 500,
+        "total_cap": 3000,
+        "max_results": 5,
+        "country": "",
+        "timeout_sec": 20.0,
+    },
     "amap_weather": {
         "endpoint": "https://restapi.amap.com/v3/weather/weatherInfo",
         "timeout_sec": 10.0,
@@ -100,6 +114,11 @@ def tool_config(section: str) -> dict[str, Any]:
         for key, value in override.items():
             if value not in (None, ""):
                 merged[key] = value
+    if section == "tavily_search":
+        shared = tool_config("tavily")
+        for key in ("endpoint", "api_key"):
+            if not str(merged.get(key) or "").strip():
+                merged[key] = shared.get(key, "")
     return merged
 
 
