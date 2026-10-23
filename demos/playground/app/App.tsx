@@ -103,10 +103,13 @@ export function App() {
       ...all,
       [next]: {
         ...all[next],
-        endpoint: all[next].endpoint || all[id].endpoint,
+        endpoint:
+          all[next].endpoint || (target.protocol === definition.protocol ? all[id].endpoint : ''),
         gallery: all[next].gallery || all[id].gallery,
         presetSource: all[next].presetSource || all[id].presetSource,
-        apiService: all[next].apiService || all[id].apiService,
+        apiService:
+          all[next].apiService ||
+          (target.protocol === 'fc' && definition.protocol === 'fc' ? all[id].apiService : ''),
       },
     }));
     setController(new SessionController(target));
@@ -204,8 +207,12 @@ export function App() {
                   <p>左侧切换单工、语音、视频，或选择一个 Agent 场景。</p>
                 </li>
                 <li>
-                  <strong>配置连接</strong>
-                  <p>在开发者面板填写模型 API 地址。Agent 场景还需要工具服务与对应预设。</p>
+                  <strong>选择模型</strong>
+                  <p>
+                    Agent
+                    场景加载服务配置后，可在右上角直接选择模型。单工与普通双工请在开发者面板配置对应的
+                    API 与预设服务。
+                  </p>
                 </li>
                 <li>
                   <strong>开始交流</strong>

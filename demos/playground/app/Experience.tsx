@@ -28,6 +28,7 @@ import type {
 import { defaultsFor } from '../shared/session/options';
 import { SessionController } from '../shared/session/controller';
 import { DeveloperPanel } from '../shared/ui/DeveloperPanel';
+import { EndpointPicker, EndpointNotice } from '../shared/ui/EndpointPicker';
 import { SceneHost } from '../shared/ui/SceneHost';
 import microphone from '../shared/assets/figma-microphone.svg';
 import { DesignIcon } from '../shared/ui/DesignIcon';
@@ -219,12 +220,21 @@ export function Experience({
                   configReady: true,
                 }
               : current.configReady || current.preset === 'custom'
-                ? { ...patch, ...current }
+                ? {
+                    ...patch,
+                    ...current,
+                    ...(fc
+                      ? {
+                          endpoint: patch.endpoint ?? current.endpoint,
+                          apiService: patch.apiService ?? current.apiService,
+                        }
+                      : {}),
+                  }
                 : patch,
           );
       })
       .catch((error) => {
-        if (active && (fc ? current.gallery : current.presetSource)) controller.setError(error);
+        if (active) controller.setError(error);
       });
     return () => {
       active = false;
@@ -288,15 +298,14 @@ export function Experience({
             <strong>{definition.label}</strong>
           </div>
           <div className="workspace-actions">
-            <button
-              className="endpoint-chip"
-              onClick={() => setDeveloper(!developer)}
-              title="模型与连接设置"
-            >
-              <span className={`status-dot ${active ? 'connected' : ''}`} />
-              <span>{view.model ? view.model.split('/').pop() : 'MiniCPM-o 5'}</span>
-              <ChevronDown size={12} />
-            </button>
+            <EndpointPicker
+              definition={definition}
+              settings={settings}
+              onSettings={onSettings}
+              controller={controller}
+              view={view}
+              openSettings={() => setDeveloper(true)}
+            />
             <span className="header-divider" />
             <IconButton label="使用说明" onClick={openHelp}>
               <CircleHelp size={17} />
@@ -323,6 +332,13 @@ export function Experience({
               {live && view.startedAt && <time>{duration}</time>}
             </div>
           </div>
+          {fc && (
+            <EndpointNotice
+              settings={settings}
+              controller={controller}
+              openSettings={() => setDeveloper(true)}
+            />
+          )}
           {view.error && (
             <div className="error-banner" role="alert">
               <span>{view.error}</span>

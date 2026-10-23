@@ -47,7 +47,11 @@ export async function readJson(url: string, signal?: AbortSignal) {
     20000,
   );
   try {
-    const response = await fetch(url, { signal: request.signal });
+    const response = await fetch(url, { signal: request.signal, cache: 'no-store' });
+    if (response.headers.get('content-type')?.includes('text/html'))
+      throw new Error(
+        '配置请求返回了网页。请在连接设置填写应用／工具服务地址，或为预览配置对应的服务代理。',
+      );
     const body = await response.json().catch(() => null);
     if (!response.ok || !body)
       throw new Error(body?.detail || `服务未就绪（HTTP ${response.status}），请检查地址。`);

@@ -183,6 +183,9 @@ export class SessionController {
   private endpointIdentity: Record<string, any> = {};
   defaults: any = null;
   endpoints: { url: string; label: string; available?: number }[] = [];
+  endpointListError = '';
+  endpointListService = '';
+  private endpointRequest = 0;
   private serviceEndpoints(state: any, service: string) {
     const configured = (this.defaults?.api_endpoints || []).filter((e: any) => {
       try {
@@ -225,6 +228,7 @@ export class SessionController {
   updateSettings(settings: SessionSettings) {
     const previous = this.latestSettings;
     this.latestSettings = settings;
+    if (previous && previous.apiService !== settings.apiService) this.endpointRequest++;
     if (
       previous &&
       previous.endpoint !== settings.endpoint &&
@@ -378,39 +382,45 @@ export class SessionController {
     const value = presets?.get(selected);
     if (!value && this.presets.length)
       throw new Error('工具服务尚未配置这个预设，请选择可用预设或检查服务配置。');
-    this.endpoints = mergeEndpointOptions([], defaults.api_endpoints || []);
     const tools = this.scene?.tools?.(defaults, selected) || defaults.system?.tools || [];
     const segments = value?.segments || defaults.system?.segments || [];
     let endpoint = settings.endpoint || defaults.default_api_endpoint || '';
-    const apiService = settings.apiService || defaults.default_api_service || '';
+    let apiService = settings.apiService || endpoint || defaults.default_api_service || '';
     if (apiService) {
+      const parsed = parseApiService(apiService);
+      apiService = parsed.service;
+      endpoint = parsed.endpoint || endpoint;
+      const listed = await this.readEndpointOptions(apiService, abort.signal);
+      if (listed === null) return {};
+      let preferred = '';
       try {
-        const state = await readJson(
-          `${parseApiService(apiService).service}/overview/api/state`,
-          abort.signal,
-        );
-        this.endpoints = this.serviceEndpoints(state, apiService);
-        if (!endpoint)
-          endpoint =
-            this.endpoints.find((e) => (e.available || 0) > 0)?.url || this.endpoints[0]?.url || '';
-      } catch (error) {
-        if (abort.signal.aborted) throw error;
+        preferred = endpoint ? endpointBase(endpoint) : '';
+      } catch {
+        /* Invalid saved address: use the current service's discovered options. */
       }
+      const sameService = preferred && parseApiService(preferred).service === apiService;
+      endpoint =
+        this.endpoints.find((option) => sameService && option.url === preferred)?.url ||
+        (!listed && sameService ? preferred : '') ||
+        this.endpoints.find((option) => (option.available || 0) > 0)?.url ||
+        this.endpoints[0]?.url ||
+        '';
+    } else {
+      this.endpoints = mergeEndpointOptions([], defaults.api_endpoints || []);
     }
     if (!this.alive || abort.signal.aborted) return {};
-    if (endpoint) await this.inspectEndpoint({ ...settings, endpoint }).catch(() => {});
+    if (endpoint)
+      await this.inspectEndpoint({ ...settings, endpoint }).catch((error) => this.setError(error));
     this.log('配置', '已从工具服务读取场景预设');
     return {
       configReady: true,
       preset: selected,
       referenceAudio: undefined,
-      ...(!settings.apiService && defaults.default_api_service
-        ? { apiService: defaults.default_api_service }
-        : {}),
+      apiService,
       segmentsJson: JSON.stringify(segments, null, 2),
       toolsJson: JSON.stringify(tools, null, 2),
       referencePath: value?.ttsPromptAudioPath || defaults.tts_prompt_audio?.file_path || '',
-      ...(!settings.endpoint && endpoint ? { endpoint } : {}),
+      endpoint,
     };
   }
   async inspectEndpoint(settings: SessionSettings) {
@@ -458,18 +468,43 @@ export class SessionController {
     this.log('API', '已读取模型信息');
     return data;
   }
+  private async readEndpointOptions(service: string, signal?: AbortSignal) {
+    const request = ++this.endpointRequest;
+    this.endpointListService = service;
+    try {
+      const state = await readJson(`${service}/overview/api/state`, signal);
+      if (!this.alive || signal?.aborted || request !== this.endpointRequest) return null;
+      this.endpoints = this.serviceEndpoints(state, service);
+      this.endpointListError = '';
+      this.update({});
+      return true;
+    } catch (error) {
+      if (!this.alive || signal?.aborted || request !== this.endpointRequest) return null;
+      this.endpoints = this.serviceEndpoints({}, service);
+      this.endpointListError = `无法读取 API 端点列表：${messageOf(error)}`;
+      this.update({});
+      return false;
+    }
+  }
   async discoverEndpoints(settings: SessionSettings) {
+    if (this.busy) return {};
     const parsed = parseApiService(settings.apiService || settings.endpoint);
-    const state = await readJson(`${parsed.service}/overview/api/state`);
-    if (!this.alive) return {};
-    this.endpoints = this.serviceEndpoints(state, parsed.service);
-    const remembered = this.endpoints.find((option) => option.url === settings.endpoint);
+    const listed = await this.readEndpointOptions(parsed.service);
+    if (listed === null) return {};
+    let preferred = parsed.endpoint || '';
+    try {
+      if (!preferred && settings.endpoint) preferred = endpointBase(settings.endpoint);
+    } catch {
+      /* Fall back to discovered endpoints. */
+    }
+    const sameService = preferred && parseApiService(preferred).service === parsed.service;
+    const remembered = this.endpoints.find((option) => sameService && option.url === preferred);
     this.log('API', `发现 ${this.endpoints.length} 个端点`);
     return {
       apiService: parsed.service,
       endpoint:
         remembered?.url ||
-        parsed.endpoint ||
+        (!listed && sameService ? preferred : '') ||
         this.endpoints.find((e) => (e.available || 0) > 0)?.url ||
         this.endpoints[0]?.url ||
         '',
@@ -1368,12 +1403,9 @@ export class SessionController {
   }
   private wavAudio: HTMLAudioElement | null = null;
   async refreshEndpoints(settings: SessionSettings) {
-    if (!settings.apiService) return;
+    if (!settings.apiService || this.view.configLoading) return;
     const service = parseApiService(settings.apiService).service;
-    const state = await readJson(`${service}/overview/api/state`);
-    if (!this.alive) return;
-    this.endpoints = this.serviceEndpoints(state, service);
-    this.update({});
+    await this.readEndpointOptions(service);
   }
   async resumeCheckpoint(settings: SessionSettings) {
     const old = this.fc;

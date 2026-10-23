@@ -6,6 +6,7 @@ export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '');
   const presets = env.PLAYGROUND_PRESET_TARGET;
   const gallery = env.PLAYGROUND_GALLERY_TARGET;
+  const secure = env.PLAYGROUND_PROXY_TLS_INSECURE !== '1';
   return {
     base: './',
     plugins: [react()],
@@ -17,8 +18,8 @@ export default defineConfig(({ mode }) => {
       proxy: {
         ...(gallery
           ? {
-              '/api/demos': { target: gallery, changeOrigin: true },
-              '/demos': { target: gallery, changeOrigin: true },
+              '/api/demos': { target: gallery, changeOrigin: true, secure },
+              '/demos': { target: gallery, changeOrigin: true, secure },
             }
           : {}),
         ...(presets
@@ -29,7 +30,7 @@ export default defineConfig(({ mode }) => {
                 '/api/default_ref_audio',
                 '/api/sessions',
                 '/s/',
-              ].map((path) => [path, { target: presets, changeOrigin: true }]),
+              ].map((path) => [path, { target: presets, changeOrigin: true, secure }]),
             )
           : {}),
       },
