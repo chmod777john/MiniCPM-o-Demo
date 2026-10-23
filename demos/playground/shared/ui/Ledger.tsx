@@ -31,7 +31,8 @@ export function Ledger({ events, config }: { events: any[]; config: any }) {
         case 'response.think.end':
         case 'response.tool_call.done':
           view.endSegment(kind, e.unit_index, {
-            fullText: e.full_text,
+            fullText:
+              e.type === 'response.tool_call.done' ? e.full_text || e.error || '' : e.full_text,
             toolCallId: e.tool_call_id,
           });
           break;

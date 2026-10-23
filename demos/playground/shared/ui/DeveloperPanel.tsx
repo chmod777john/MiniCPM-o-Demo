@@ -18,7 +18,6 @@ import { Field, IconButton, Section, Toggle } from './controls';
 import { ContentEditor, SegmentEditor } from './ContentEditor';
 import { ParameterSettings } from './ParameterSettings';
 import { SessionArtifacts } from './SessionArtifacts';
-import { Ledger } from './Ledger';
 import { ProtocolEvents } from './ProtocolEvents';
 import { InputSettings } from './InputSettings';
 
@@ -438,11 +437,6 @@ export function DeveloperPanel({
           onSettings={onSettings}
           disabled={disabled}
         />
-        {fc && (
-          <Section title="Think / Tool 轨迹">
-            <Ledger events={view.ledger} config={view.effectiveConfig} />
-          </Section>
-        )}
         {!fc && (
           <SessionArtifacts
             settings={settings}
@@ -494,8 +488,12 @@ export function DeveloperPanel({
             </button>
           </Section>
         )}
-        <RuntimeMetrics definition={definition} view={view} />
-        <ProtocolEvents controller={controller} definition={definition} view={view} />
+        {!fc && (
+          <>
+            <RuntimeMetrics definition={definition} view={view} />
+            <ProtocolEvents controller={controller} definition={definition} view={view} />
+          </>
+        )}
       </div>
     </aside>
   );

@@ -4,6 +4,7 @@ import {
   Camera,
   ChevronDown,
   CircleHelp,
+  Activity,
   Maximize2,
   Mic,
   MicOff,
@@ -30,12 +31,15 @@ import { SessionController } from '../shared/session/controller';
 import { DeveloperPanel } from '../shared/ui/DeveloperPanel';
 import { EndpointPicker, EndpointNotice } from '../shared/ui/EndpointPicker';
 import { SceneHost } from '../shared/ui/SceneHost';
+import { FcConversation } from '../shared/ui/FcConversation';
+import { ProtocolEvents } from '../shared/ui/ProtocolEvents';
+import { RuntimeMetrics } from '../shared/ui/RuntimeMetrics';
 import microphone from '../shared/assets/figma-microphone.svg';
 import { DesignIcon } from '../shared/ui/DesignIcon';
 import { Orb } from '../shared/ui/Orb';
 import { Messages } from '../shared/ui/Messages';
 import { Composer } from '../shared/ui/Composer';
-import { IconButton } from '../shared/ui/controls';
+import { Dialog, IconButton } from '../shared/ui/controls';
 
 const phaseLabels: Record<SessionPhase, string> = {
   idle: '准备就绪',
@@ -69,6 +73,7 @@ export function Experience({
   const [sceneReady, setSceneReady] = useState(false);
   const [now, setNow] = useState(Date.now());
   const [showTranscript, setShowTranscript] = useState(true);
+  const [diagnostics, setDiagnostics] = useState(false);
   const [subtitles, setSubtitles] = useState(true);
   const [topic, setTopic] = useState('');
   const [previewReady, setPreviewReady] = useState(false);
@@ -288,7 +293,7 @@ export function Experience({
   return (
     <div className={`experience ${developer ? 'with-developer' : ''}`}>
       <main
-        className="workspace"
+        className={`workspace ${fc ? 'fc-workspace' : ''}`}
         id="experience-panel"
         role="tabpanel"
         aria-labelledby={`tab-${definition.id}`}
@@ -347,10 +352,39 @@ export function Experience({
               </IconButton>
             </div>
           )}
+          {fc && (
+            <div className="fc-scene-heading">
+              <div>
+                <h2>{definition.title}</h2>
+                <p>{definition.description}</p>
+              </div>
+              <button className="secondary-button" onClick={() => setDiagnostics(true)}>
+                <Activity size={15} />
+                协议与指标
+              </button>
+            </div>
+          )}
+          {fc && !working && (
+            <div className="fc-prompt-row" aria-label="试试这些话题">
+              {definition.prompts.map((prompt) => (
+                <button
+                  key={prompt}
+                  className={topic === prompt ? 'selected' : ''}
+                  title="选择后，开始对话时可以试着说"
+                  onClick={() =>
+                    definition.id === 'standalone' ? setDraft(prompt) : setTopic(prompt)
+                  }
+                >
+                  {prompt}
+                </button>
+              ))}
+              {topic && <span>开始后试着说：{topic}</span>}
+            </div>
+          )}
           <div
-            className={`content-stage ${working ? 'working' : 'welcoming'} ${fc ? 'fc-stage' : ''} ${wantsVideo ? 'with-video' : ''}`}
+            className={`content-stage ${working || fc ? 'working' : 'welcoming'} ${fc ? 'fc-stage' : ''} ${wantsVideo ? 'with-video' : ''}`}
           >
-            {!working && (
+            {!working && !fc && (
               <section className="welcome">
                 <Orb />
                 <div className="welcome-copy">
@@ -541,7 +575,7 @@ export function Experience({
                 definition={definition}
                 controller={controller}
                 settings={settings}
-                visible={working}
+                visible={fc || working}
                 onReady={() => setSceneReady(true)}
               />
             )}
@@ -570,7 +604,8 @@ export function Experience({
               </section>
             )}
           </div>
-          {!chat && working && view.messages.length > 0 && (
+          {fc && <FcConversation view={view} />}
+          {!chat && !fc && working && view.messages.length > 0 && (
             <div className="transcript-section">
               <button
                 className="transcript-heading"
@@ -593,6 +628,14 @@ export function Experience({
             </div>
           )}
         </div>
+        {fc && diagnostics && (
+          <Dialog title="协议事件与运行指标" onClose={() => setDiagnostics(false)}>
+            <div className="fc-diagnostics">
+              <ProtocolEvents controller={controller} definition={definition} view={view} open />
+              <RuntimeMetrics definition={definition} view={view} />
+            </div>
+          </Dialog>
+        )}
         <footer className={`interaction-dock ${chat ? 'chat-dock' : ''}`}>
           {chat ? (
             <Composer

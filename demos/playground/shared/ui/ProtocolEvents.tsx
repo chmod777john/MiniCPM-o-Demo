@@ -7,10 +7,12 @@ export function ProtocolEvents({
   controller,
   definition,
   view,
+  open = false,
 }: {
   controller: SessionController;
   definition: CaseDefinition;
   view: SessionView;
+  open?: boolean;
 }) {
   const [filter, setFilter] = useState('all');
   const [expanded, setExpanded] = useState(false);
@@ -24,7 +26,7 @@ export function ProtocolEvents({
         : String(event.type).includes(filter)),
   );
   return (
-    <Section title="协议事件" badge={String(records.length)}>
+    <Section title="协议事件" badge={String(records.length)} open={open}>
       <p className="field-hint">
         保留最近 200 条完整事件及音频，最多约 24 MiB；导出范围与此处一致。
       </p>
