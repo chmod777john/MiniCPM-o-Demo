@@ -7,8 +7,7 @@ import { SessionController } from '../shared/session/controller';
 import { type CaseId, type SessionSettings } from '../shared/session/types';
 import { defaultsFor, persistedSettings } from '../shared/session/options';
 import { Dialog } from '../shared/ui/controls';
-import { endpointBase } from '../shared/session/urls';
-import { parseApiService } from '../../../static/demo-gallery/core/api-endpoint.js';
+import { apiBase } from '../shared/session/urls';
 
 const fromHash = () =>
   cases.find((c) => c.id === location.hash.replace('#', ''))?.id || 'audio-duplex';
@@ -16,16 +15,18 @@ function loadSettings(): Record<string, SessionSettings> {
   try {
     const stored = JSON.parse(localStorage.getItem('o5-playground-settings-v2') || '{}');
     const deployment = import.meta.env.VITE_PLAYGROUND_DEFAULT_API || '';
-    const changed = deployment && localStorage.getItem('o5-playground-deployment') !== deployment;
+    const defaultModel = import.meta.env.VITE_PLAYGROUND_DEFAULT_MODEL || '';
+    const deploymentKey = `${deployment}|${defaultModel}`;
+    const changed =
+      deployment && localStorage.getItem('o5-playground-deployment') !== deploymentKey;
     if (deployment) {
-      const endpoint = endpointBase(deployment);
-      const apiService = parseApiService(endpoint).service;
+      const base = apiBase(deployment);
       for (const item of cases) {
-        if (changed || !stored[item.id]?.endpoint)
+        if (changed || !stored[item.id]?.apiBase)
           stored[item.id] = {
             ...stored[item.id],
-            endpoint,
-            apiService,
+            apiBase: base,
+            modelId: defaultModel,
           };
       }
     }
@@ -41,7 +42,8 @@ function loadSettings(): Record<string, SessionSettings> {
           ),
           userOverrides:
             stored[c.id]?.userOverrides?.filter(
-              (key: string) => !['gallery', 'presetSource', 'shareSource'].includes(key),
+              (key: string) =>
+                !['gallery', 'presetSource', 'shareSource', 'endpoint', 'apiService'].includes(key),
             ) ||
             Object.keys(persistedSettings(c.id, stored[c.id] || {})).filter(
               (key) => stored[c.id]?.[key] !== undefined,
@@ -105,7 +107,7 @@ export function App() {
       if (import.meta.env.VITE_PLAYGROUND_DEFAULT_API)
         localStorage.setItem(
           'o5-playground-deployment',
-          import.meta.env.VITE_PLAYGROUND_DEFAULT_API,
+          `${import.meta.env.VITE_PLAYGROUND_DEFAULT_API}|${import.meta.env.VITE_PLAYGROUND_DEFAULT_MODEL || ''}`,
         );
     } catch {
       /* storage may be disabled */
@@ -131,8 +133,11 @@ export function App() {
       ...all,
       [next]: {
         ...all[next],
-        endpoint: all[next].endpoint || all[id].endpoint,
-        apiService: all[next].apiService || all[id].apiService,
+        apiBase: all[next].apiBase || all[id].apiBase,
+        modelId:
+          all[next].apiBase && all[next].apiBase !== all[id].apiBase
+            ? all[next].modelId
+            : all[next].modelId || all[id].modelId,
       },
     }));
     setController(new SessionController(target));

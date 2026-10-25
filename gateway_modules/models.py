@@ -59,6 +59,7 @@ class WorkerRegistrationRequest(BaseModel):
     endpoint_name: Optional[str] = Field(
         default=None, description="注册到哪个 API 端点；缺省为 default（兼容旧调用方）"
     )
+    model_id: Optional[str] = Field(default=None, description="Public model ID; defaults to model_info.profile_id")
     model_info: Dict[str, Any] = Field(default_factory=dict, description="该 Worker 加载的模型摘要")
 
 

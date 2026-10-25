@@ -70,10 +70,10 @@ export interface SessionSettings {
   userOverrides?: (keyof SessionSettings)[];
   shareSource: string;
   configReady: boolean;
-  endpoint: string;
+  apiBase: string;
+  modelId: string;
   gallery: string;
   presetSource: string;
-  apiService: string;
   systemPrompt: string;
   systemContent: ContentPart[];
   generateAudio: boolean;
@@ -150,8 +150,8 @@ export interface SessionView {
   camera: boolean;
   model: string;
   modelIdentity: Record<string, any>;
-  modelSource: 'unavailable' | 'endpoint' | 'session';
-  configSource: 'unavailable' | 'endpoint' | 'session';
+  modelSource: 'unavailable' | 'catalog' | 'session';
+  configSource: 'unavailable' | 'catalog' | 'session';
   effectiveConfig: Record<string, any>;
   metrics: Record<string, any>;
   paused: boolean;
@@ -222,3 +222,12 @@ export const emptyView = (): SessionView => ({
   hdEnabled: true,
   dirty: false,
 });
+
+export interface ModelOption {
+  id: string;
+  object: 'model';
+  name?: string;
+  loaded_model?: Record<string, any>;
+  capabilities?: { modes?: string[]; request_types?: string[] };
+  status?: string;
+}

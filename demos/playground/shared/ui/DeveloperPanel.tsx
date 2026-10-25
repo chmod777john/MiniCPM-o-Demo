@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { ChevronRight, Download, LoaderCircle, Plug, Upload, X } from 'lucide-react';
+import { ChevronRight, Download, LoaderCircle, Upload, X } from 'lucide-react';
 import type {
   CaseDefinition,
   SessionSettings,
@@ -72,83 +72,35 @@ export function DeveloperPanel({
       </header>
       <div className="developer-scroll">
         <Section title="连接设置" badge={view.sessionId ? '已建立' : 'SESSION'} open>
-          <Field label="模型 API 端点" hint="浏览器直接连接此端点。">
+          <Field label="API 地址" hint="填写后自动加载模型列表和详情。">
             <input
-              value={settings.endpoint}
-              disabled={disabled}
-              placeholder="https://api.example.com/e/model"
-              onChange={(e) => onSettings({ endpoint: e.target.value })}
-              onBlur={() => {
-                if (settings.endpoint)
-                  void action('endpoint', async () => {
-                    await controller.inspectEndpoint(settings);
-                  });
-              }}
+              value={settings.apiBase}
+              disabled={busy || !!loading || view.recordingPending}
+              placeholder="https://api.example.com"
+              onChange={(e) => onSettings({ apiBase: e.target.value, modelId: '' })}
             />
           </Field>
-          <>
-            <Field label="API 服务地址" hint="用于发现同一服务下的多个模型端点。">
-              <input
-                value={settings.apiService}
-                disabled={disabled}
-                placeholder="https://api.example.com"
-                onChange={(e) => onSettings({ apiService: e.target.value })}
-              />
-            </Field>
-            <button
-              className="secondary-button full"
-              disabled={disabled || (!settings.apiService && !settings.endpoint)}
-              onClick={() =>
-                void action('discover', async () => {
-                  const patch = await controller.discoverEndpoints(settings);
-                  onSettings(patch);
-                  await controller.inspectEndpoint({ ...settings, ...patch });
-                })
-              }
+          <Field label="模型">
+            <select
+              value={settings.modelId}
+              disabled={disabled || controller.modelLoading || !controller.models.length}
+              onChange={(e) => {
+                controller.selectModel(e.target.value);
+                onSettings({ modelId: e.target.value });
+              }}
             >
-              发现模型端点
-            </button>
-            {!!controller.endpoints.length && (
-              <Field label="可选端点">
-                <select
-                  value={settings.endpoint}
-                  disabled={disabled}
-                  onChange={(e) => {
-                    const endpoint = e.target.value;
-                    onSettings({ endpoint });
-                    void action('endpoint', async () => {
-                      await controller.inspectEndpoint({ ...settings, endpoint });
-                    });
-                  }}
-                >
-                  <option value={settings.endpoint}>当前：{settings.endpoint || '未选择'}</option>
-                  {controller.endpoints
-                    .filter((e) => e.url !== settings.endpoint)
-                    .map((e) => (
-                      <option key={e.url} value={e.url}>
-                        {e.label}
-                      </option>
-                    ))}
-                </select>
-              </Field>
-            )}
-          </>
-          <button
-            className="secondary-button full"
-            disabled={disabled || !settings.endpoint}
-            onClick={() =>
-              void action('endpoint', async () => {
-                await controller.inspectEndpoint(settings);
-              })
-            }
-          >
-            {loading === 'endpoint' ? (
-              <LoaderCircle className="spin" size={14} />
-            ) : (
-              <Plug size={14} />
-            )}
-            读取模型信息
-          </button>
+              {!controller.models.some((model) => model.id === settings.modelId) && (
+                <option value={settings.modelId}>
+                  {controller.modelLoading ? '正在加载模型…' : settings.modelId || '请选择模型'}
+                </option>
+              )}
+              {controller.models.map((model) => (
+                <option key={model.id} value={model.id}>
+                  {model.name || model.id}
+                </option>
+              ))}
+            </select>
+          </Field>
           {view.sessionId && (
             <div className="meta-row">
               <span>Session</span>
@@ -422,8 +374,8 @@ export function DeveloperPanel({
             void action('reset', async () => {
               const fresh = {
                 ...defaultsFor(definition.id),
-                endpoint: settings.endpoint,
-                apiService: settings.apiService,
+                apiBase: settings.apiBase,
+                modelId: settings.modelId,
                 referenceAudio: undefined,
                 ttsReferenceAudio: undefined,
                 inputFile: undefined,

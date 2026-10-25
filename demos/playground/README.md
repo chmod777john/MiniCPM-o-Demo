@@ -22,28 +22,29 @@ npm run preview
 
 ## 连接模型和工具
 
-所有体验从应用服务的 `/api/demos/runtime` 读取同一份模型端点目录，再从 Gateway 的 `/overview/api/state` 发现端点。独立 Gateway 没有启用控制面板时，使用应用目录中的端点，逐一读取 `/v1/info` 获取真实模型与空闲 Worker 信息。右上角可选择模型、刷新列表；会话进行中锁定选择，列表每 30 秒刷新。
+所有体验只配置 API Base 和 Model ID。填写 API 地址后自动读取 `/v1/models`，切换模型直接使用同一目录中的详情，无需手动发现或读取。空闲时每 30 秒刷新目录；会话期间锁定连接设置。服务不再提供所选 ID 时保留选择并提示，不静默切换到另一个模型。
 
 模型信息与体验预设分开：
 
-- **模型服务**：`<端点>/v1/info` 提供实际加载的 checkpoint、runtime 与会话默认值。各体验共用发现逻辑，新打开的体验可继承已有连接。
+- **模型服务**：`/v1/models` 返回模型 ID、`loaded_model`、能力及默认配置。本次实际模型和生效参数以 `session.created` / `session.resumed` 为准。各体验共用模型目录，新打开的体验可继承已有连接。
 - **单工／普通双工预设**：本应用的 `server/cases.json` 提供三个 case 的设置 schema、默认值、语言预设及参考音频。`GET /api/demos/playground/cases/<id>/defaults` 返回配置；`/api/demos/playground/audio/<id>` 提供音频。
 - **FC 预设与工具**：Gallery 的 `/api/demos/<id>/defaults` 提供原场景预设与工具。场景执行继续调用原工具接口。
 - **分享服务**：独立配置，负责接收录制和生成分享链接。
 - **UI Card 外部工具**：应用服务通过 `UICARD_TOOLS_CONFIG` 读取部署者的私有 JSON 配置，格式见 `../uicard/README.md`。如果该 case 单独运行应用后端，可用 `PLAYGROUND_UICARD_TARGET` 指定其地址，仅代理 `/api/demos/uicard`。搜索、天气、地图的服务端 key 不下发浏览器；缺少的供应商配置仍会明确提示。
 
-推理 WebSocket 始终由浏览器直接连接。选中 `/e/default` 时，单工与普通双工使用同池的根入口 `/v1/realtime?mode=chat|audio|video`；FC 使用 `/e/default/v1/realtime?mode=audio|omni`。其他命名池不会自动删掉路径转去 default；当前单工／普通双工会提示选择支持该模式的 default 端点。
+推理 WebSocket 始终由浏览器直接连接 `/v1/realtime?model=<ID>&mode=chat|audio|video|omni`。Gateway 将 Model ID 映射到内部池再调度实例；不提供 `/e/...` 兼容路由。单工、普通双工与 FC 可以选择同一模型；具体能力以目录声明为准。
 
 配置步骤：
 
-1. 复制 `.env.example` 为 `.env.local`，填写 Gallery 应用服务；可设置 `VITE_PLAYGROUND_DEFAULT_API` 为此次部署的默认模型。
+1. 复制 `.env.example` 为 `.env.local`，填写 Gallery 应用服务；可设置 `VITE_PLAYGROUND_DEFAULT_API` 为此次部署的 API Base，`VITE_PLAYGROUND_DEFAULT_MODEL` 为默认 Model ID。
 2. 启动后等待预设加载，在右上角选择模型；浏览器遇到可信开发服务的自签证书时，先直接打开该服务确认访问。
 3. 点击开始并允许麦克风／摄像头访问。开发者模式可查看模型身份、当前 preset 和会话实际返回的配置。
 
 ```dotenv
 PLAYGROUND_GALLERY_TARGET=http://127.0.0.1:10032
-# 可选：默认模型端点、录制分享服务
-# VITE_PLAYGROUND_DEFAULT_API=https://api.example.com/e/default
+# 可选：默认 API Base、模型 ID、录制分享服务
+# VITE_PLAYGROUND_DEFAULT_API=https://api.example.com
+# VITE_PLAYGROUND_DEFAULT_MODEL=minicpm-o5
 # PLAYGROUND_SESSION_TARGET=http://127.0.0.1:9000
 # PLAYGROUND_PROXY_TLS_INSECURE=1
 ```
@@ -86,7 +87,7 @@ playground/
 
 切换体验或新建对话会结束当前会话并清空本页记录；有会话或内容时先确认。停止会话释放浏览器媒体与连接，SubAgent 停止本地轮询；已提交到工具服务的后台任务可能继续运行。连接地址和原页面支持记忆的参数按体验分别保存到本机 localStorage；音频双工包括自定义文本提示词；视频双工刷新后恢复页面／服务默认值。Max KV、滑窗策略从当前页面／服务默认值重新初始化。对话、上传文件、音频和 FC system segments 不持久化。
 
-视觉素材和出处记录在 `shared/assets/README.md`；文字颜色、主视觉与麦克风按钮采用设计稿，导航按现有八个体验组织。当前交付范围为桌面布局。会话状态与媒体处理独立于布局，后续移动端可复用；旧桌面页面、旧移动端和服务端均未修改。本分支已完成类型检查与生产构建；真实模型、设备权限及各工具的端到端联调仍待进行。
+视觉素材和出处记录在 `shared/assets/README.md`；文字颜色、主视觉与麦克风按钮采用设计稿，导航按现有八个体验组织。当前交付范围为桌面布局。会话状态与媒体处理独立于布局，后续移动端可复用；旧桌面页面和旧移动端源码保留；本分支 Gateway 已切换到 Model ID 接口，这些旧页面需迁移调用方式后才能接入新 Gateway。本分支已完成类型检查与生产构建；真实模型、设备权限及各工具的端到端联调仍待进行。
 
 ## 行为核对记录 · 2026-10-22
 

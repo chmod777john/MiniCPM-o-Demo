@@ -6,10 +6,10 @@ export function defaultsFor(id: CaseId): SessionSettings {
     configReady: false,
     userOverrides: [],
     shareSource: '',
-    endpoint: '',
+    apiBase: '',
+    modelId: '',
     gallery: '',
     presetSource: '',
-    apiService: '',
     systemPrompt: '',
     systemContent: [],
     generateAudio: id !== 'turnbased',
@@ -121,7 +121,7 @@ export function ordinaryPayload(s: SessionSettings, video: boolean) {
 
 // Keep the old pages' configuration persistence separate from transient session/media state.
 export function persistedSettings(id: CaseId, s: SessionSettings): Partial<SessionSettings> {
-  const keys: (keyof SessionSettings)[] = ['endpoint', 'apiService'];
+  const keys: (keyof SessionSettings)[] = ['apiBase', 'modelId'];
   if (id === 'audio-duplex')
     keys.push(
       'preset',

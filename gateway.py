@@ -49,6 +49,7 @@ from gateway_modules.models import (
 )
 from gateway_modules.worker_pool import WorkerPool, WorkerConnection
 from gateway_modules.endpoints import DEFAULT_ENDPOINT, EndpointError, EndpointRegistry
+from gateway_modules.model_catalog import ModelCatalogError, catalog_entries, pool_model_id
 from gateway_modules.live_sessions import LiveSession, LiveSessionRegistry
 from runtime.protocol import API_INPUT_MODES, API_PROTOCOL_VERSION
 from control_plane.routes import docs_router as control_docs_router
@@ -177,9 +178,10 @@ def _identity_dict(
 # ============ 全局变量 ============
 
 worker_pool: Optional[WorkerPool] = None
-"""default 端点的池（旧地址 /v1/realtime、/workers、/api/queue、旧注册接口都用它）。"""
+"""默认内部池；公开会话通过 model ID 解析池，不使用隐式 default 路由。"""
 endpoint_registry: Optional[EndpointRegistry] = None
 live_sessions = LiveSessionRegistry()
+_model_registration_lock = asyncio.Lock()
 ref_audio_registry: Optional[RefAudioRegistry] = None
 app_registry: AppRegistry = AppRegistry()
 
@@ -308,8 +310,8 @@ _BLOCKED_ADMIN_STATIC_PATHS = {"/static/admin.html", "/static/admin.html/"}
 # 老页面（O45 时期的 /、/omni、/admin…）和会修改服务状态的旧接口（DELETE /api/queue、
 # PUT /api/config/eta、参考音频上传、会话录音）都不对外。评测本地网关不设这个开关，行为不变。
 _API_ONLY = os.getenv("GATEWAY_API_ONLY", "").lower() in {"1", "true", "yes", "on"}
-_API_ONLY_PREFIXES = ("/e/", "/api-docs", "/control", "/overview")
-_API_ONLY_EXACT = {"/health"}
+_API_ONLY_PREFIXES = ("/api-docs", "/control", "/overview")
+_API_ONLY_EXACT = {"/health", "/v1/models"}
 
 
 def api_only_allows(path: str) -> bool:
@@ -437,28 +439,40 @@ async def register_worker(worker_id: str, payload: WorkerRegistrationRequest):
     if endpoint_registry is None:
         raise HTTPException(status_code=503, detail="Service not ready")
 
-    target = payload.endpoint_name or DEFAULT_ENDPOINT
-    pool = endpoint_registry.get(target)
-    if pool is None:
-        raise HTTPException(status_code=404, detail=f"unknown endpoint {target}")
-    found = endpoint_registry.find_worker(worker_id)
-    if found is not None and found[0] != target:
-        raise HTTPException(status_code=409, detail=f"worker {worker_id} 已属于端点 {found[0]}")
-    try:
-        worker = await pool.register_worker(
-            worker_id=worker_id,
-            endpoint=payload.endpoint,
-            gpu_group=payload.gpu_group,
-            labels=payload.labels,
-            model_info=payload.model_info or None,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    async with _model_registration_lock:
+        target = payload.endpoint_name or DEFAULT_ENDPOINT
+        pool = endpoint_registry.get(target)
+        if pool is None:
+            raise HTTPException(status_code=404, detail=f"unknown endpoint {target}")
+        found = endpoint_registry.find_worker(worker_id)
+        if found is not None and found[0] != target:
+            raise HTTPException(status_code=409, detail=f"worker {worker_id} 已属于端点 {found[0]}")
+        model_id = (payload.model_id or getattr(pool, "public_model_id", None)
+                    or payload.model_info.get("model_id") or payload.model_info.get("profile_id"))
+        if model_id:
+            bound = getattr(pool, "public_model_id", None)
+            if bound and bound != model_id:
+                raise HTTPException(status_code=409, detail="Model pool already bound to a different model ID")
+            for name, other in endpoint_registry.items():
+                if name != target and (getattr(other, "public_model_id", None) == model_id or pool_model_id(other) == model_id):
+                    raise HTTPException(status_code=409, detail="Model ID already belongs to another pool")
+        try:
+            worker = await pool.register_worker(
+                worker_id=worker_id,
+                endpoint=payload.endpoint,
+                gpu_group=payload.gpu_group,
+                labels=payload.labels,
+                model_info=payload.model_info or None,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    return {
-        "ok": True,
-        "worker": worker.to_info(),
-    }
+        if model_id:
+            pool.public_model_id = model_id
+        return {
+            "ok": True,
+            "worker": worker.to_info(),
+        }
 
 
 @internal_app.post("/internal/workers/{worker_id}/drain")
@@ -645,6 +659,7 @@ async def _api_worker_passthrough_ws(
         source_mode=source_mode,
     )
     identity["endpoint"] = endpoint_name
+    identity["model_id"] = ws.query_params.get("model")
     identity_qs = urlencode({k: v for k, v in identity.items() if v})
 
     # 分到的 Worker 连不上（例如刚挂掉、健康检查还没发现）：标为离线并重新排队一次，
@@ -757,6 +772,9 @@ async def _api_worker_passthrough_ws(
             async for raw in worker_ws:
                 recv = time.time()
                 frame = _as_frame(raw)
+                if frame.get("type") in {"session.created", "session.resumed"}:
+                    frame["model_id"] = ws.query_params.get("model")
+                    raw = json.dumps(frame, ensure_ascii=False)
                 if frame.get("type") == "session.created":
                     ensure_recorder(frame.get("session_id"))
                 sent: Optional[float] = None
@@ -1643,35 +1661,50 @@ app.mount("/docs", StaticFiles(directory=docs_static_dir, html=True, check_dir=F
 
 # ============ Realtime API (OpenAI Realtime Protocol) ============
 
+@app.get("/v1/models")
+async def list_models():
+    """Public catalog: model IDs, loaded identity/capabilities and recommended defaults."""
+    try:
+        data = [entry for _, _, entry in catalog_entries(endpoint_registry)]
+    except ModelCatalogError as exc:
+        return JSONResponse({"error": {"code": "model_catalog_unavailable", "message": str(exc)}},
+                            status_code=503, headers=_PUBLIC_CORS_HEADERS)
+    return JSONResponse({"object": "list", "data": data}, headers=_PUBLIC_CORS_HEADERS)
+
+
 @app.websocket("/v1/realtime")
 async def realtime_ws(ws: WebSocket):
-    """Unified API WebSocket（default 端点）：chat 与 realtime duplex。"""
-
-    await _realtime_entry(ws, pool=worker_pool, endpoint_name=DEFAULT_ENDPOINT, allow_chat=True)
-
-
-@app.websocket("/e/{endpoint}/v1/realtime")
-async def endpoint_realtime_ws(ws: WebSocket, endpoint: str):
-    """某个 API 端点的 realtime 会话：排队到该端点自己的 Worker 组。"""
-
-    pool = endpoint_registry.get(endpoint) if endpoint_registry is not None else None
-    if pool is None:
-        await ws.close(code=4404, reason=f"Unknown endpoint: {endpoint}")
-        return
-    # v5:端点只有两种会话 —— audio(只送音频)与 omni(每个 Unit 必须带一帧视频)。
-    # 模式由 URL 决定,网关把它写进 session.init.payload.input_mode 交给 Worker 强校验。
+    """Resolve one public model ID to its pool; instances stay an internal concern."""
+    model_id = ws.query_params.get("model")
     mode = ws.query_params.get("mode")
-    if mode not in API_INPUT_MODES:
-        await ws.close(code=1008, reason=f"mode 必须是 {'/'.join(API_INPUT_MODES)} 之一,收到 {mode!r}")
+    async def reject(code: str, message: str, close_code: int):
+        await ws.accept()
+        await ws.send_json({"type": "error", "error": {"code": code, "message": message}})
+        await ws.close(code=close_code)
+    if not model_id:
+        await reject("model_required", "The model query parameter is required", 1008)
         return
-    await _realtime_entry(ws, pool=pool, endpoint_name=endpoint, allow_chat=False, input_mode=mode)
+    try:
+        selected = next((item for item in catalog_entries(endpoint_registry) if item[2]["id"] == model_id), None)
+    except ModelCatalogError as exc:
+        await reject("model_catalog_unavailable", str(exc), 1013)
+        return
+    if selected is None:
+        await reject("model_not_found", f"Unknown model: {model_id}", 4404)
+        return
+    pool_name, pool, model = selected
+    if mode not in model["capabilities"]["modes"]:
+        await reject("unsupported_mode", f"Unsupported mode for this model: {mode}", 1008)
+        return
+    await _realtime_entry(ws, pool=pool, endpoint_name=pool_name, allow_chat=True,
+                          input_mode=mode if mode in API_INPUT_MODES else None)
 
 
 async def _realtime_entry(
     ws: WebSocket, *, pool: Optional[WorkerPool], endpoint_name: str, allow_chat: bool,
     input_mode: Optional[str] = None,
 ) -> None:
-    """``input_mode`` 只有端点路由(v5)会给:audio / omni;default 端点的旧页面仍按 mode=video|audio 走。"""
+    """One selected model pool supports chat, ordinary audio/video and FC audio/omni."""
 
     mode = input_mode or ws.query_params.get("mode", "video")
 
@@ -1739,17 +1772,6 @@ async def _realtime_entry(
     )
 
 
-@app.get("/e/{endpoint}/v1/info")
-async def endpoint_info(endpoint: str):
-    """端点公开信息：会话前可查用哪个模型、有几个 Worker、排队多长。允许跨域（Demo 在别的域名）。"""
-
-    pool = endpoint_registry.get(endpoint) if endpoint_registry is not None else None
-    if pool is None:
-        return JSONResponse({"detail": f"unknown endpoint {endpoint}"}, status_code=404,
-                            headers=_PUBLIC_CORS_HEADERS)
-    return JSONResponse(build_endpoint_info(endpoint, pool), headers=_PUBLIC_CORS_HEADERS)
-
-
 _PUBLIC_CORS_HEADERS = {"Access-Control-Allow-Origin": "*", "Cache-Control": "no-store"}
 
 
@@ -1799,8 +1821,9 @@ def build_endpoint_info(endpoint: str, pool: WorkerPool) -> Dict[str, Any]:
     return {
         "endpoint": endpoint,
         "protocol_version": API_PROTOCOL_VERSION,
-        "realtime_path": f"/e/{endpoint}/v1/realtime?mode=audio",
-        "realtime_paths": {m: f"/e/{endpoint}/v1/realtime?mode={m}" for m in API_INPUT_MODES},
+        "model_id": pool_model_id(pool),
+        "realtime_path": "/v1/realtime",
+        "realtime_paths": {m: "/v1/realtime?" + urlencode({"model": pool_model_id(pool) or "", "mode": m}) for m in ("chat", "audio", "video", "omni")},
         "workers": workers,
         "available_workers": pool.idle_count,
         "queue_length": pool.queue_length,

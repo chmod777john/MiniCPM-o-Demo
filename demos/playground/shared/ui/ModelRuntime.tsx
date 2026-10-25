@@ -43,15 +43,15 @@ export function ModelRuntime({
         : 'audio';
   let socket = '';
   try {
-    socket = realtimeUrl(settings.endpoint, mode);
+    socket = realtimeUrl(settings.apiBase, settings.modelId, mode);
   } catch {
     /* Address may still be edited. */
   }
   const source = (kind: SessionView['modelSource']) =>
     kind === 'session'
       ? `会话实际值 · ${view.sessionId || '未知会话'}`
-      : kind === 'endpoint'
-        ? '所选端点默认值 · /v1/info'
+      : kind === 'catalog'
+        ? '模型目录 · /v1/models'
         : '尚未读取';
   let tools: string[] = [];
   try {
@@ -65,6 +65,7 @@ export function ModelRuntime({
     <>
       <Section title="Loaded model · 当前模型" open>
         <p className="field-hint">{source(view.modelSource)}</p>
+        <Fact label="Model ID" value={settings.modelId} />
         <Fact label="Checkpoint Profile" value={identity.profile_id} />
         {MODEL_IDENTITY_ROWS.map(([key, label]) => (
           <Fact
@@ -86,6 +87,7 @@ export function ModelRuntime({
               value={runtime.scheduling}
               hint="quality / latency 调度方式，由所选端点决定。"
             />
+            <Fact label="Model ID" value={settings.modelId} />
             <Fact label="Checkpoint Profile" value={identity.profile_id} />
             <Fact label="Listening budget" value={runtime.listening} />
             <Fact label="Speaking budget" value={runtime.speaking} />

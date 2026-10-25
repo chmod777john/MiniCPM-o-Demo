@@ -20,27 +20,16 @@ import { OrdinaryLive, ordinaryFile, type InputSource, type MediaChunk } from '.
 import { decodeFileToChunks } from '../../../../static/demo-gallery/core/file-audio-provider.js';
 import { ordinaryPayload, ttsReference, wireContent } from './options';
 import { loadConversationPresets, type PresetLoadMode } from './presets';
-import {
-  parseApiService,
-  endpointsFromOverview,
-  mergeEndpointOptions,
-} from '../../../../static/demo-gallery/core/api-endpoint.js';
 import { ChatAudioPlayer, outputWav } from '../../turnbased/audio';
 import { ChatTransport } from '../../turnbased/transport';
 import { assistantText } from './text';
 import { base64, contentFiles } from '../media/files';
-import {
-  applicationUrl,
-  endpointBase,
-  modelInfoEndpoint,
-  ordinaryEndpoint,
-  readJson,
-  realtimeUrl,
-} from './urls';
+import { applicationUrl, apiBase, readJson, realtimeUrl } from './urls';
 import {
   emptyView,
   type CaseDefinition,
   type Message,
+  type ModelOption,
   type ContentPart,
   type Scene,
   type SceneFactory,
@@ -186,25 +175,14 @@ export class SessionController {
   private stage: HTMLElement | null = null;
   private fcTimer?: ReturnType<typeof setTimeout>;
   private fetchAbort?: AbortController;
-  private infoAbort?: AbortController;
-  private infoEndpoint = '';
-  private endpointIdentity: Record<string, any> = {};
+  private modelAbort?: AbortController;
+  private catalogIdentity: Record<string, any> = {};
   defaults: any = null;
-  private connectionDefaults: any = null;
-  endpoints: { url: string; label: string; available?: number }[] = [];
-  endpointListError = '';
-  endpointListService = '';
-  private endpointRequest = 0;
-  private serviceEndpoints(state: any, service: string) {
-    const configured = (this.connectionDefaults?.api_endpoints || []).filter((e: any) => {
-      try {
-        return parseApiService(e.url).service === parseApiService(service).service;
-      } catch {
-        return false;
-      }
-    });
-    return mergeEndpointOptions(endpointsFromOverview(state, service), configured);
-  }
+  models: ModelOption[] = [];
+  modelsBase = '';
+  modelLoading = false;
+  modelError = '';
+  private modelRequest = 0;
   onDraft?: (text: string) => void;
   onSettings?: (patch: Partial<SessionSettings>) => void;
   presets: { id: string; label: string; description?: string }[] = [];
@@ -237,21 +215,18 @@ export class SessionController {
   updateSettings(settings: SessionSettings) {
     const previous = this.latestSettings;
     this.latestSettings = settings;
-    if (previous && previous.apiService !== settings.apiService) this.endpointRequest++;
-    if (
-      previous &&
-      previous.endpoint !== settings.endpoint &&
-      this.infoEndpoint !== settings.endpoint
-    ) {
-      this.infoAbort?.abort();
-      this.endpointIdentity = {};
-      this.update({
-        model: '',
-        modelIdentity: {},
-        effectiveConfig: {},
-        modelSource: 'unavailable',
-        configSource: 'unavailable',
-      });
+    if (previous && previous.apiBase !== settings.apiBase) {
+      this.modelRequest++;
+      this.modelAbort?.abort();
+      this.models = [];
+      this.modelsBase = '';
+      this.modelError = '';
+      this.modelLoading = false;
+      this.update({ sessionId: '' });
+      this.applyModel(settings.modelId);
+    } else if (previous && previous.modelId !== settings.modelId && !this.busy) {
+      this.update({ sessionId: '' });
+      this.applyModel(settings.modelId);
     }
     if (this.busy) this.input?.updateMixer?.(settings);
     if (this.busy && previous && previous.speakerDevice !== settings.speakerDevice) {
@@ -376,10 +351,9 @@ export class SessionController {
       this.presets = result.options;
       this.defaults = result.config;
       this.dismissError();
-      const connection = await this.loadModelSelection(settings, abort.signal);
       if (abort.signal.aborted || !this.alive) return {};
       this.log('配置', '已加载应用提供的体验配置与预设');
-      return { ...result.patch, ...connection, configReady: true };
+      return { ...result.patch, configReady: true };
     }
     const defaults = await readJson(
       applicationUrl(settings.gallery, `/api/demos/${this.definition.id}/defaults`),
@@ -402,159 +376,109 @@ export class SessionController {
       throw new Error('工具服务尚未配置这个预设，请选择可用预设或检查服务配置。');
     const tools = this.scene?.tools?.(defaults, selected) || defaults.system?.tools || [];
     const segments = value?.segments || defaults.system?.segments || [];
-    const connection = await this.loadModelSelection(settings, abort.signal);
     if (abort.signal.aborted || !this.alive) return {};
     this.log('配置', '已从工具服务读取场景预设');
     return {
       configReady: true,
       preset: selected,
       referenceAudio: undefined,
-      ...connection,
       segmentsJson: JSON.stringify(segments, null, 2),
       toolsJson: JSON.stringify(tools, null, 2),
       referencePath: value?.ttsPromptAudioPath || defaults.tts_prompt_audio?.file_path || '',
     };
   }
-  private async loadModelSelection(settings: SessionSettings, signal: AbortSignal) {
-    const defaults = await readJson(applicationUrl(settings.gallery, '/api/demos/runtime'), signal);
-    if (signal.aborted || !this.alive) return {};
-    this.connectionDefaults = defaults;
-    let endpoint = settings.endpoint || defaults.default_api_endpoint || '';
-    let apiService = settings.apiService || endpoint || defaults.default_api_service || '';
-    if (apiService) {
-      const parsed = parseApiService(apiService);
-      apiService = parsed.service;
-      endpoint = parsed.endpoint || endpoint;
-      const listed = await this.readEndpointOptions(apiService, signal);
-      if (listed === null) return {};
-      let preferred = '';
-      try {
-        preferred = endpoint ? endpointBase(endpoint) : '';
-      } catch {
-        /* Invalid saved address: use the current service's discovered options. */
-      }
-      const sameService = preferred && parseApiService(preferred).service === apiService;
-      endpoint =
-        this.endpoints.find((option) => sameService && option.url === preferred)?.url ||
-        (!listed && sameService ? preferred : '') ||
-        this.endpoints.find((option) => (option.available || 0) > 0)?.url ||
-        this.endpoints[0]?.url ||
-        '';
-    } else {
-      this.endpoints = mergeEndpointOptions([], defaults.api_endpoints || []);
-    }
-    if (!this.alive || signal.aborted) return {};
-    if (endpoint)
-      await this.inspectEndpoint({ ...settings, endpoint }).catch((error) => this.setError(error));
-    return { endpoint, apiService };
-  }
-  async inspectEndpoint(settings: SessionSettings) {
-    if (this.busy) return;
-    const epoch = this.epoch;
-    this.infoAbort?.abort();
-    const abort = new AbortController();
-    this.infoAbort = abort;
-    this.infoEndpoint = settings.endpoint;
+  private sessionFacts(event: any) {
     this.update({
-      model: '',
-      modelIdentity: {},
-      effectiveConfig: {},
-      modelSource: 'unavailable',
-      configSource: 'unavailable',
+      sessionId: event.session_id || '',
+      model: event.model?.profile_id || event.model_id || this.view.model,
+      modelIdentity: event.model || {},
+      modelSource: event.model ? 'session' : 'unavailable',
+      effectiveConfig: event.session_config || {},
+      configSource: event.session_config ? 'session' : 'unavailable',
     });
-    this.endpointIdentity = {};
-    let data;
-    try {
-      data = await readJson(`${modelInfoEndpoint(settings.endpoint)}/v1/info`, abort.signal);
-    } catch (error) {
-      if (abort.signal.aborted) return;
-      throw error;
-    }
-    if (
-      !this.alive ||
-      abort.signal.aborted ||
-      this.infoAbort !== abort ||
-      epoch !== this.epoch ||
-      this.busy
-    )
-      return;
-    const identity = data.models?.[0]?.model || data.model || {};
-    this.endpointIdentity = identity;
-    const model =
-      identity.profile_id || identity.name || identity.checkpoint || data.model_id || '';
+  }
+  private applyModel(modelId: string) {
+    const model = this.models.find((item) => item.id === modelId);
+    const identity = model?.loaded_model || {};
+    this.catalogIdentity = identity;
+    if (this.busy || this.view.sessionId) return; // Preserve the last actual session facts.
     this.update({
-      model: String(model),
+      model: model ? identity.profile_id || model.id : '',
       modelIdentity: identity,
-      modelSource: Object.keys(identity).length ? 'endpoint' : 'unavailable',
       effectiveConfig: identity.session_defaults || {},
-      configSource: identity.session_defaults ? 'endpoint' : 'unavailable',
-      detail: `${Array.isArray(data.workers) && !data.workers.length ? '此端点目前无 Worker，开始后将排队。' : 'API 信息已读取。'}${data.models?.length > 1 ? '此端点存在多个模型，以会话实际返回为准。' : ''}`,
+      modelSource: model ? 'catalog' : 'unavailable',
+      configSource: identity.session_defaults ? 'catalog' : 'unavailable',
     });
-    this.log('API', '已读取模型信息');
-    return data;
   }
-  private async readEndpointOptions(service: string, signal?: AbortSignal) {
-    const request = ++this.endpointRequest;
-    this.endpointListService = service;
-    try {
-      const state = await readJson(`${service}/overview/api/state`, signal);
-      if (!this.alive || signal?.aborted || request !== this.endpointRequest) return null;
-      this.endpoints = this.serviceEndpoints(state, service);
-      this.endpointListError = '';
-      this.update({});
-      return true;
-    } catch (error) {
-      if (!this.alive || signal?.aborted || request !== this.endpointRequest) return null;
-      const configured = this.serviceEndpoints({}, service);
-      // Standalone gateways may omit the control-plane overview. The application
-      // still lists endpoints; query each gateway info route for its live state.
-      const available = await Promise.all(
-        configured.map(async (option) => {
-          try {
-            const info = await readJson(`${modelInfoEndpoint(option.url)}/v1/info`, signal);
-            const idle = Array.isArray(info.workers)
-              ? info.workers.filter((worker: any) => worker.status === 'idle' && !worker.draining)
-                  .length
-              : undefined;
-            return { ...option, available: idle };
-          } catch {
-            return null;
-          }
-        }),
-      );
-      if (!this.alive || signal?.aborted || request !== this.endpointRequest) return null;
-      this.endpoints = available.filter((option) => option !== null);
-      this.endpointListError = this.endpoints.length
-        ? ''
-        : `无法读取 API 端点列表：${messageOf(error)}`;
-      if (!this.endpoints.length) this.endpoints = configured;
-      this.update({});
-      return this.endpoints.length > 0 && !this.endpointListError;
-    }
+  selectModel(modelId: string) {
+    if (this.busy || !this.models.some((item) => item.id === modelId)) return;
+    this.update({ sessionId: '' });
+    this.applyModel(modelId);
   }
-  async discoverEndpoints(settings: SessionSettings) {
+  async loadModels(settings: SessionSettings): Promise<Partial<SessionSettings>> {
     if (this.busy) return {};
-    const parsed = parseApiService(settings.apiService || settings.endpoint);
-    const listed = await this.readEndpointOptions(parsed.service);
-    if (listed === null) return {};
-    let preferred = parsed.endpoint || '';
+    const request = ++this.modelRequest;
+    this.modelAbort?.abort();
+    const abort = new AbortController();
+    this.modelAbort = abort;
+    this.modelLoading = true;
+    this.modelError = '';
+    this.update({});
     try {
-      if (!preferred && settings.endpoint) preferred = endpointBase(settings.endpoint);
-    } catch {
-      /* Fall back to discovered endpoints. */
+      const base = apiBase(settings.apiBase);
+      const data = await readJson(`${base}/v1/models`, abort.signal);
+      if (request !== this.modelRequest || abort.signal.aborted || !this.alive) return {};
+      if (
+        data.object !== 'list' ||
+        !Array.isArray(data.data) ||
+        data.data.some((item: any) => typeof item.id !== 'string' || !item.id)
+      )
+        throw new Error('服务没有返回有效的模型列表。');
+      this.models = data.data;
+      this.modelsBase = base;
+      // Use the latest selection if it changed while the catalog was being fetched.
+      const selected =
+        this.latestSettings?.apiBase === settings.apiBase
+          ? this.latestSettings.modelId
+          : settings.modelId;
+      const modelId = selected || this.models[0]?.id || '';
+      this.applyModel(modelId);
+      if (!this.models.length) this.modelError = '服务当前没有可用的模型。';
+      else if (!this.models.some((item) => item.id === modelId))
+        this.modelError = '所选模型已不在服务列表中，请重新选择。';
+      return selected ? {} : { modelId };
+    } catch (error) {
+      if (request !== this.modelRequest || abort.signal.aborted || !this.alive) return {};
+      this.models = [];
+      this.modelsBase = '';
+      this.applyModel('');
+      this.modelError = `模型列表加载失败：${messageOf(error)}`;
+      return {};
+    } finally {
+      if (request === this.modelRequest && this.alive) {
+        this.modelLoading = false;
+        this.update({});
+      }
     }
-    const sameService = preferred && parseApiService(preferred).service === parsed.service;
-    const remembered = this.endpoints.find((option) => sameService && option.url === preferred);
-    this.log('API', `发现 ${this.endpoints.length} 个端点`);
-    return {
-      apiService: parsed.service,
-      endpoint:
-        remembered?.url ||
-        (!listed && sameService ? preferred : '') ||
-        this.endpoints.find((e) => (e.available || 0) > 0)?.url ||
-        this.endpoints[0]?.url ||
-        '',
-    };
+  }
+  private requireModel(settings: SessionSettings) {
+    const base = apiBase(settings.apiBase);
+    if (this.modelLoading || this.modelsBase !== base)
+      throw new Error('模型列表尚未加载完成，请稍候。');
+    const model = this.models.find((item) => item.id === settings.modelId);
+    if (!model) throw new Error('请选择服务提供的模型。');
+    const mode =
+      this.definition.protocol === 'chat'
+        ? 'chat'
+        : this.definition.protocol === 'fc'
+          ? settings.fcVideo
+            ? 'omni'
+            : 'audio'
+          : this.definition.video
+            ? 'video'
+            : 'audio';
+    if (model.capabilities?.modes && !model.capabilities.modes.includes(mode))
+      throw new Error(`当前模型不支持此体验的 ${mode} 模式。`);
   }
   private async resolveAudio(settings: SessionSettings, path: string) {
     const audio = await readJson(
@@ -617,9 +541,8 @@ export class SessionController {
   }
   async start(settings: SessionSettings, video: HTMLVideoElement | null) {
     if (this.busy || this.view.configLoading || this.view.recordingPending) return;
-    endpointBase(settings.endpoint);
-    if (this.definition.protocol !== 'fc') ordinaryEndpoint(settings.endpoint);
-    this.infoAbort?.abort();
+    this.requireModel(settings);
+    this.modelAbort?.abort();
     this.stop();
     const epoch = this.epoch;
     const current = () => this.alive && this.epoch === epoch;
@@ -634,11 +557,11 @@ export class SessionController {
       metrics: {},
       recordingSessionId: '',
       sessionId: '',
-      modelIdentity: this.endpointIdentity,
-      effectiveConfig: this.endpointIdentity.session_defaults || {},
-      modelSource: Object.keys(this.endpointIdentity).length ? 'endpoint' : 'unavailable',
-      configSource: this.endpointIdentity.session_defaults ? 'endpoint' : 'unavailable',
-      model: this.endpointIdentity.profile_id || this.endpointIdentity.name || '',
+      modelIdentity: this.catalogIdentity,
+      effectiveConfig: this.catalogIdentity.session_defaults || {},
+      modelSource: Object.keys(this.catalogIdentity).length ? 'catalog' : 'unavailable',
+      configSource: this.catalogIdentity.session_defaults ? 'catalog' : 'unavailable',
+      model: this.catalogIdentity.profile_id || this.catalogIdentity.name || '',
       hdEnabled: settings.visionHD !== 'off',
     });
     const wantsVideo = Boolean(
@@ -827,7 +750,7 @@ export class SessionController {
       if (this.definition.protocol === 'ordinary') {
         const session = new (RealtimeSession as any)('playground', {
           getWsUrl: () =>
-            realtimeUrl(ordinaryEndpoint(settings.endpoint), wantsVideo ? 'video' : 'audio'),
+            realtimeUrl(settings.apiBase, settings.modelId, wantsVideo ? 'video' : 'audio'),
           getPlaybackDelayMs: () => this.latestSettings?.playbackDelay ?? settings.playbackDelay,
           getMaxKvTokens: () => this.latestSettings?.maxKvTokens ?? settings.maxKvTokens,
           enableReconnect: true,
@@ -930,6 +853,7 @@ export class SessionController {
         };
         session.onProtocolEvent = (event: any) => {
           if (!current()) return;
+          if (event.type === 'session.created') this.sessionFacts(event.full || {});
           if (event.type === 'session.config')
             this.update({ effectiveConfig: event.full || {}, configSource: 'session' });
           this.captureEvent(
@@ -1015,7 +939,9 @@ export class SessionController {
           () => fail(new Error('会话准备超时，请重试或检查模型服务。')),
           180000,
         );
-        await client.connect(realtimeUrl(settings.endpoint, wantsVideo ? 'omni' : 'audio'));
+        await client.connect(
+          realtimeUrl(settings.apiBase, settings.modelId, wantsVideo ? 'omni' : 'audio'),
+        );
         if (!current()) {
           client.disconnect();
           return;
@@ -1198,8 +1124,7 @@ export class SessionController {
       return true;
     }
     if (this.busy || this.view.configLoading) return false;
-    endpointBase(settings.endpoint);
-    ordinaryEndpoint(settings.endpoint);
+    this.requireModel(settings);
     const history =
       historyOverride ||
       this.view.messages.filter(
@@ -1276,7 +1201,7 @@ export class SessionController {
         onEvent: (event) => {
           if (epoch !== this.epoch) return;
           this.captureEvent('server', event);
-          if (event.type === 'session.created') this.update({ sessionId: event.session_id || '' });
+          if (event.type === 'session.created') this.sessionFacts(event);
           if (event.type === 'session.queued') this.update({ phase: 'queued' });
           if (event.type === 'response.output.delta') {
             firstText ??= performance.now() - requestStart;
@@ -1387,7 +1312,7 @@ export class SessionController {
           if (epoch === this.epoch && this.view.phase !== 'error') this.update({ phase: 'idle' });
         },
       });
-      this.chat.start(ordinaryEndpoint(settings.endpoint), {
+      this.chat.start(settings.apiBase, settings.modelId, {
         messages: [
           ...(wireContent(settings.systemContent).length
             ? [{ role: 'system', content: wireContent(settings.systemContent) }]
@@ -1437,11 +1362,6 @@ export class SessionController {
     await this.send(settings, user.text, [], content, this.view.messages.slice(0, userIndex));
   }
   private wavAudio: HTMLAudioElement | null = null;
-  async refreshEndpoints(settings: SessionSettings) {
-    if (!settings.apiService || this.view.configLoading) return;
-    const service = parseApiService(settings.apiService).service;
-    await this.readEndpointOptions(service);
-  }
   async resumeCheckpoint(settings: SessionSettings) {
     const old = this.fc;
     const index = this.view.metrics.unit_index;
@@ -1481,7 +1401,9 @@ export class SessionController {
     try {
       await new Promise((resolve) => setTimeout(resolve, 600));
       if (epoch !== this.epoch) return;
-      await client.connect(realtimeUrl(settings.endpoint, settings.fcVideo ? 'omni' : 'audio'));
+      await client.connect(
+        realtimeUrl(settings.apiBase, settings.modelId, settings.fcVideo ? 'omni' : 'audio'),
+      );
       if (epoch !== this.epoch) {
         client.disconnect();
         return;
@@ -1736,7 +1658,7 @@ export class SessionController {
   dispose() {
     this.stop();
     this.fetchAbort?.abort();
-    this.infoAbort?.abort();
+    this.modelAbort?.abort();
     this.view.messages.forEach((m) => m.audioPlayer?.dispose());
     this.alive = false;
     if (this.view.recordingUrl) URL.revokeObjectURL(this.view.recordingUrl);

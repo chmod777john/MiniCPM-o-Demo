@@ -17,8 +17,8 @@ export class ChatTransport {
     this.ws!.send(JSON.stringify(event));
     this.hooks.onSend?.(event);
   }
-  start(endpoint: string, input: unknown) {
-    this.ws = new WebSocket(realtimeUrl(endpoint, 'chat'));
+  start(base: string, modelId: string, input: unknown) {
+    this.ws = new WebSocket(realtimeUrl(base, modelId, 'chat'));
     let initialized = false,
       sent = false,
       completed = false;

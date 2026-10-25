@@ -36,15 +36,11 @@ export function Messages({
             key={message.id}
             className={`message ${message.role} ${message.failed ? 'failed' : ''}`}
           >
-            <div className="message-byline">
-              {assistant ? (
-                <>
-                  <img className="mini-brand" src={brand} alt="" /> MiniCPM-o
-                </>
-              ) : (
-                '你'
-              )}
-            </div>
+            {assistant && (
+              <div className="message-byline">
+                <img className="mini-brand" src={brand} alt="" /> MiniCPM-o
+              </div>
+            )}
             <div className="message-content">
               {Array.isArray(message.content)
                 ? message.content.map((part, index) =>
@@ -73,9 +69,7 @@ export function Messages({
             {message.audioPlayer ? (
               <ChatAudio player={message.audioPlayer} />
             ) : (
-              message.audioUrl && (
-                <audio controls src={message.audioUrl} className="message-audio" />
-              )
+              message.audioUrl && <ChatAudio src={message.audioUrl} />
             )}
             {message.cancelled && <small>已停止生成 · 保留已收到的内容</small>}
             {assistant && !message.pending && !compact && (onRegenerate || text) && (

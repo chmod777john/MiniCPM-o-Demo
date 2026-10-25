@@ -28,3 +28,7 @@ Design must be read before implementing visual changes. Initial state: access ch
 - Remaining: real inference/tool/device integration, production deployment, mobile layout, and font-binary alignment.
 - Local preview: `127.0.0.1:5186`, owner `/root`, retained for user review.
 - Evidence: `/user/weihongliang/analysis-runs/20261022-o5-react-playground/`.
+
+## Root API migration · 2026-10-25T11:19:45.539450+00:00
+
+User now authorizes public Gateway API and Playground changes for base + model ID. Scope additionally gateway.py / gateway_modules; /e routes removed. Worker/HF/accel sources stay unchanged. Existing root-owned9011 preview deployment may be updated after preparation; source provenance and deployment changes recorded separately.

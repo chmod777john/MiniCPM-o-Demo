@@ -1,7 +1,7 @@
-"""API 端点注册表：一个端点 = 一个公开 URL（``/e/<name>/v1/realtime``）+ 一组 Worker + 一条队列。
+"""Internal pool registry: each pool owns worker instances, a queue and health checks.
 
-每个端点持有独立的 ``WorkerPool``（排队、ETA、健康检查互不影响）。一个 Worker 只属于一个端点。
-名为 ``default`` 的端点永远存在，对应旧地址 ``/v1/realtime`` 与旧的注册接口（评测副本池在用）。
+Public APIs select a model ID via model_catalog; pool names are control-plane details.
+The default pool exists for deployment registration, not as an implicit public model.
 """
 
 from __future__ import annotations

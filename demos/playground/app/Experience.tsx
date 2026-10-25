@@ -210,8 +210,8 @@ export function Experience({
                 ? {
                     ...patch,
                     ...current,
-                    endpoint: patch.endpoint ?? current.endpoint,
-                    apiService: patch.apiService ?? current.apiService,
+                    apiBase: settingsRef.current.apiBase,
+                    modelId: settingsRef.current.modelId,
                   }
                 : patch,
           );
@@ -224,12 +224,20 @@ export function Experience({
     };
   }, [controller, sceneReady, fc]);
   useEffect(() => {
-    if (!settings.apiService) return;
-    const timer = setInterval(() => {
-      void controller.refreshEndpoints(settingsRef.current).catch(() => {});
-    }, 30000);
-    return () => clearInterval(timer);
-  }, [controller, settings.apiService]);
+    let active = true;
+    const load = async () => {
+      if (!settingsRef.current.apiBase) return;
+      const patch = await controller.loadModels(settingsRef.current);
+      if (active && Object.keys(patch).length) onSettingsRef.current(patch);
+    };
+    const delay = setTimeout(() => void load(), 450);
+    const timer = setInterval(() => void load(), 30000);
+    return () => {
+      active = false;
+      clearTimeout(delay);
+      clearInterval(timer);
+    };
+  }, [controller, settings.apiBase]);
   const elapsed = view.startedAt ? Math.max(0, Math.floor((now - view.startedAt) / 1000)) : 0;
   const duration = `${String(Math.floor(elapsed / 60)).padStart(2, '0')}:${String(elapsed % 60).padStart(2, '0')}`;
   const currentText = [...view.messages].reverse().find((m) => m.role === 'assistant')?.text;
@@ -240,11 +248,11 @@ export function Experience({
       controller.setError('请先加载此体验的应用配置。');
       return;
     }
-    if (!settings.endpoint || (fc && !settings.segmentsJson)) {
+    if (!settings.apiBase || !settings.modelId || (fc && !settings.segmentsJson)) {
       setDeveloper(true);
       controller.setError(
-        !settings.endpoint
-          ? '先填写模型 API 地址，即可开始体验。'
+        !settings.apiBase || !settings.modelId
+          ? '请填写 API 地址并选择模型。'
           : '先加载当前场景配置，即可开始体验。',
       );
       return;
@@ -265,9 +273,9 @@ export function Experience({
       controller.setError('请先加载此体验的应用配置。');
       return false;
     }
-    if (!settings.endpoint) {
+    if (!settings.apiBase || !settings.modelId) {
       setDeveloper(true);
-      controller.setError('请先填写模型 API 地址。');
+      controller.setError('请填写 API 地址并选择模型。');
       return false;
     }
     try {
@@ -325,13 +333,11 @@ export function Experience({
               {live && view.startedAt && <time>{duration}</time>}
             </div>
           </div>
-          {fc && (
-            <EndpointNotice
-              settings={settings}
-              controller={controller}
-              openSettings={() => setDeveloper(true)}
-            />
-          )}
+          <EndpointNotice
+            settings={settings}
+            controller={controller}
+            openSettings={() => setDeveloper(true)}
+          />
           {view.error && (
             <div className="error-banner" role="alert">
               <span>{view.error}</span>
@@ -758,7 +764,7 @@ export function Experience({
                 <div className="dock-side right">
                   <button onClick={() => setDeveloper(true)}>
                     <Plug size={14} />
-                    {settings.endpoint ? '连接设置' : '配置连接'}
+                    {settings.apiBase ? '连接设置' : '配置连接'}
                   </button>
                 </div>
               </div>

@@ -14,35 +14,23 @@ function clientIdentity(url: URL) {
   url.searchParams.set('page_route', location.pathname + location.hash);
   url.searchParams.set('client_surface', 'desktop');
 }
-export function endpointBase(value: string) {
-  if (!value.trim()) throw new Error('请先在连接设置中填写模型 API 地址。');
+export function apiBase(value: string) {
+  if (!value.trim()) throw new Error('请填写 API 地址。');
   const url = new URL(value.trim());
-  if (!['http:', 'https:', 'ws:', 'wss:'].includes(url.protocol))
-    throw new Error('API 地址需要使用 HTTP、HTTPS 或 WebSocket。');
-  url.protocol = url.protocol.replace('ws', 'http');
-  url.pathname = url.pathname.replace(/\/v1\/(realtime|info)\/?$/, '').replace(/\/$/, '');
-  url.search = '';
-  url.hash = '';
+  if (!['http:', 'https:'].includes(url.protocol))
+    throw new Error('API 地址需要使用 HTTP 或 HTTPS。');
+  if (url.username || url.password || url.search || url.hash)
+    throw new Error('请填写服务的 API Base，不包含凭证、查询参数或页面锚点。');
+  if (/\/e(?:\/|$)/.test(url.pathname) || /\/v1\/.+/.test(url.pathname))
+    throw new Error('请填写 API Base，并从模型列表选择模型。');
+  url.pathname = url.pathname.replace(/\/+$/, '').replace(/\/v1$/, '');
   return url.toString().replace(/\/$/, '');
 }
-/** Native chat/ordinary routes are aliases of the gateway's default worker pool only. */
-export function ordinaryEndpoint(value: string) {
-  const url = new URL(endpointBase(value));
-  const named = url.pathname.match(/^(.*)\/e\/([^/]+)$/);
-  if (named) {
-    if (named[2] !== 'default')
-      throw new Error('此体验需要支持单工／普通双工的 default 端点，请选择对应模型服务。');
-    url.pathname = named[1] || '/';
-  }
-  return url.toString().replace(/\/$/, '');
-}
-export function modelInfoEndpoint(value: string) {
-  const base = endpointBase(value);
-  return /\/e\/[^/]+$/.test(new URL(base).pathname) ? base : `${base}/e/default`;
-}
-export function realtimeUrl(base: string, mode: string) {
-  const url = new URL(`${endpointBase(base)}/v1/realtime`);
+export function realtimeUrl(base: string, modelId: string, mode: string) {
+  if (!modelId) throw new Error('请选择模型。');
+  const url = new URL(`${apiBase(base)}/v1/realtime`);
   url.protocol = url.protocol.replace('http', 'ws');
+  url.searchParams.set('model', modelId);
   url.searchParams.set('mode', mode);
   clientIdentity(url);
   return url.toString();
@@ -57,10 +45,7 @@ export async function readJson(url: string, signal?: AbortSignal) {
   const cancel = () => request.abort(signal?.reason);
   if (signal?.aborted) cancel();
   else signal?.addEventListener('abort', cancel, { once: true });
-  const timer = setTimeout(
-    () => request.abort(new Error('服务响应超时，请稍后重试。')),
-    20000,
-  );
+  const timer = setTimeout(() => request.abort(new Error('服务响应超时，请稍后重试。')), 20000);
   try {
     const response = await fetch(url, { signal: request.signal, cache: 'no-store' });
     if (response.headers.get('content-type')?.includes('text/html'))
