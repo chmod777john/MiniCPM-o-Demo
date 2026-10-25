@@ -58,18 +58,16 @@ export async function readJson(url: string, signal?: AbortSignal) {
   if (signal?.aborted) cancel();
   else signal?.addEventListener('abort', cancel, { once: true });
   const timer = setTimeout(
-    () => request.abort(new Error('读取配置超时，请检查应用服务地址。')),
+    () => request.abort(new Error('服务响应超时，请稍后重试。')),
     20000,
   );
   try {
     const response = await fetch(url, { signal: request.signal, cache: 'no-store' });
     if (response.headers.get('content-type')?.includes('text/html'))
-      throw new Error(
-        '配置请求返回了网页。请在连接设置填写应用／工具服务地址，或为预览配置对应的服务代理。',
-      );
+      throw new Error('服务返回了网页，暂时无法读取配置，请联系部署维护者检查服务。');
     const body = await response.json().catch(() => null);
     if (!response.ok || !body)
-      throw new Error(body?.detail || `服务未就绪（HTTP ${response.status}），请检查地址。`);
+      throw new Error(body?.detail || `服务未就绪（HTTP ${response.status}），请稍后重试。`);
     return body;
   } finally {
     clearTimeout(timer);

@@ -26,7 +26,6 @@ function loadSettings(): Record<string, SessionSettings> {
             ...stored[item.id],
             endpoint,
             apiService,
-            ...(changed ? { gallery: '', presetSource: '', shareSource: '' } : {}),
           };
       }
     }
@@ -41,7 +40,9 @@ function loadSettings(): Record<string, SessionSettings> {
             ),
           ),
           userOverrides:
-            stored[c.id]?.userOverrides ||
+            stored[c.id]?.userOverrides?.filter(
+              (key: string) => !['gallery', 'presetSource', 'shareSource'].includes(key),
+            ) ||
             Object.keys(persistedSettings(c.id, stored[c.id] || {})).filter(
               (key) => stored[c.id]?.[key] !== undefined,
             ),
@@ -131,8 +132,6 @@ export function App() {
       [next]: {
         ...all[next],
         endpoint: all[next].endpoint || all[id].endpoint,
-        gallery: all[next].gallery || all[id].gallery,
-        presetSource: all[next].presetSource || all[id].presetSource,
         apiService: all[next].apiService || all[id].apiService,
       },
     }));

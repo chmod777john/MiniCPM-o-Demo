@@ -27,6 +27,7 @@ import {
 } from '../../../../static/demo-gallery/core/api-endpoint.js';
 import { ChatAudioPlayer, outputWav } from '../../turnbased/audio';
 import { ChatTransport } from '../../turnbased/transport';
+import { assistantText } from './text';
 import { base64, contentFiles } from '../media/files';
 import {
   applicationUrl,
@@ -1255,12 +1256,15 @@ export class SessionController {
       });
       this.player = new ChatAudioPlayer();
       this.player.init();
-      const updateText = (text: string, append: boolean, pending: boolean) =>
+      let rawText = '';
+      const updateText = (text: string, append: boolean, pending: boolean) => {
+        rawText = append ? rawText + text : text;
         this.update({
           messages: this.view.messages.map((m) =>
-            m.id === assistantId ? { ...m, text: append ? m.text + text : text, pending } : m,
+            m.id === assistantId ? { ...m, text: assistantText(rawText, pending), pending } : m,
           ),
         });
+      };
       const hasVideo =
         settings.systemContent.some((part) => part.type === 'video' && part.data) ||
         attachments.some((a) => a.type === 'video') ||
@@ -1420,28 +1424,11 @@ export class SessionController {
       return false;
     }
   }
-  editMessage(id: string, content: ContentPart[]) {
-    if (this.busy || !wireContent(content).length) return;
-    this.update({
-      messages: this.view.messages.map((m) =>
-        m.id !== id
-          ? m
-          : {
-              ...m,
-              content,
-              text: content
-                .filter((p) => p.type === 'text')
-                .map((p) => p.text)
-                .join('\n'),
-              files: content.filter((p) => p.type !== 'text').map((p) => p.name || p.type),
-            },
-      ),
-    });
-  }
-  async resend(settings: SessionSettings, id: string) {
+  async regenerate(settings: SessionSettings, id: string) {
     if (this.busy) return;
     const index = this.view.messages.findIndex((m) => m.id === id);
-    const userIndex = this.view.messages[index]?.role === 'user' ? index : index - 1;
+    if (this.view.messages[index]?.role !== 'assistant') return;
+    const userIndex = index - 1;
     const user = this.view.messages[userIndex];
     if (!user || user.role !== 'user') return;
     const content = Array.isArray(user.content)

@@ -11,9 +11,6 @@ import {
   Video,
   X,
 } from 'lucide-react';
-import { ContentEditor } from './ContentEditor';
-import { contentFiles } from '../media/files';
-import type { ContentPart } from '../session/types';
 import { IconButton } from './controls';
 
 export function Composer({
@@ -28,19 +25,17 @@ export function Composer({
 }: {
   value: string;
   onChange: (value: string) => void;
-  onSend: (text: string, files: File[], ordered?: ContentPart[]) => Promise<boolean>;
+  onSend: (text: string, files: File[]) => Promise<boolean>;
   onStop: () => void;
   busy: boolean;
   disabled?: boolean;
   attachments?: boolean;
   placeholder: string;
 }) {
-  const [ordered, setOrdered] = useState<ContentPart[] | null>(null);
   const [files, setFiles] = useState<File[]>([]);
   const [recording, setRecording] = useState(false);
   const [error, setError] = useState('');
   const [converting, setConverting] = useState(false);
-  const [editorBusy, setEditorBusy] = useState(false);
   const input = useRef<HTMLInputElement>(null);
   const textarea = useRef<HTMLTextAreaElement>(null);
   const recorder = useRef<MediaRecorder | null>(null);
@@ -52,17 +47,7 @@ export function Composer({
   const keyboardRecord = useRef<() => Promise<void>>(async () => {});
   const addFiles = (next: File[]) => {
     setError('');
-    if (ordered) {
-      setConverting(true);
-      void contentFiles(next)
-        .then((parts) => {
-          if (mounted.current) setOrdered((old) => [...(old || []), ...parts]);
-        })
-        .catch((e) => setError(String(e)))
-        .finally(() => {
-          if (mounted.current) setConverting(false);
-        });
-    } else setFiles((old) => [...old, ...next]);
+    setFiles((old) => [...old, ...next]);
   };
   useEffect(() => {
     mounted.current = true;
@@ -182,32 +167,12 @@ export function Composer({
     };
   }, [attachments, busy, disabled, converting, value]);
   async function submit() {
-    if (
-      (!value.trim() && !files.length && !ordered?.some((p) => p.text || p.data)) ||
-      busy ||
-      converting ||
-      editorBusy ||
-      disabled ||
-      recording
-    )
-      return;
+    if ((!value.trim() && !files.length) || busy || converting || disabled || recording) return;
     setConverting(true);
     try {
-      if (
-        await onSend(
-          ordered
-            ? ordered
-                .filter((p) => p.type === 'text')
-                .map((p) => p.text)
-                .join('\n')
-            : value,
-          ordered ? [] : files,
-          ordered || undefined,
-        )
-      ) {
+      if (await onSend(value, files)) {
         onChange('');
         setFiles([]);
-        setOrdered(null);
       }
     } finally {
       if (mounted.current) setConverting(false);
@@ -239,18 +204,6 @@ export function Composer({
           })}
         </div>
       )}
-      {ordered && (
-        <div className="ordered-composer">
-          <ContentEditor
-            value={ordered}
-            onChange={setOrdered}
-            onBusy={setEditorBusy}
-            onSubmit={() => void submit()}
-            disabled={busy || converting}
-            onError={(e) => setError(String(e))}
-          />
-        </div>
-      )}
       <div
         className={`composer ${recording ? 'recording' : ''}`}
         onDragOver={(e) => {
@@ -269,23 +222,21 @@ export function Composer({
           }
         }}
       >
-        {!ordered && (
-          <textarea
-            ref={textarea}
-            aria-label="消息内容"
-            rows={1}
-            placeholder={placeholder}
-            value={value}
-            disabled={disabled || busy || converting}
-            onChange={(e) => onChange(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
-                e.preventDefault();
-                void submit();
-              }
-            }}
-          />
-        )}
+        <textarea
+          ref={textarea}
+          aria-label="消息内容"
+          rows={1}
+          placeholder={placeholder}
+          value={value}
+          disabled={disabled || busy || converting}
+          onChange={(e) => onChange(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+              e.preventDefault();
+              void submit();
+            }
+          }}
+        />
         <div className="composer-tools">
           <div className="composer-left">
             {attachments && (
@@ -308,27 +259,6 @@ export function Composer({
                 >
                   <Plus size={19} />
                 </IconButton>
-                {!ordered && (
-                  <button
-                    className="text-button"
-                    disabled={busy || converting}
-                    onClick={() => {
-                      setConverting(true);
-                      void contentFiles(files)
-                        .then((parts) => {
-                          setOrdered([
-                            ...(value ? [{ type: 'text' as const, text: value }] : []),
-                            ...parts,
-                          ]);
-                          setFiles([]);
-                        })
-                        .catch((e) => setError(String(e)))
-                        .finally(() => setConverting(false));
-                    }}
-                  >
-                    编辑内容顺序
-                  </button>
-                )}
                 <span className="composer-format">
                   <Paperclip size={12} /> 图片、音频、视频
                 </span>
@@ -355,12 +285,7 @@ export function Composer({
               aria-label={busy ? '停止生成' : '发送消息'}
               onClick={() => (busy ? onStop() : void submit())}
               disabled={
-                !busy &&
-                (disabled ||
-                  converting ||
-                  editorBusy ||
-                  recording ||
-                  (!value.trim() && !files.length && !ordered?.some((p) => p.text || p.data)))
+                !busy && (disabled || converting || recording || (!value.trim() && !files.length))
               }
             >
               {busy ? <Square size={15} fill="currentColor" /> : <ArrowUp size={20} />}

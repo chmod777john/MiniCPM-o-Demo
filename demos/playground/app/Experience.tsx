@@ -424,10 +424,9 @@ export function Experience({
             {chat && working && (
               <Messages
                 messages={view.messages}
-                editable={!live}
-                onEdit={(id, content) => controller.editMessage(id, content)}
-                onResend={(id) =>
-                  void controller.resend(settings, id).catch((e) => controller.setError(e))
+                canRegenerate={!live && !view.configLoading}
+                onRegenerate={(id) =>
+                  void controller.regenerate(settings, id).catch((e) => controller.setError(e))
                 }
               />
             )}

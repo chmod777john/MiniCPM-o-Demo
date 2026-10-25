@@ -149,40 +149,6 @@ export function DeveloperPanel({
             )}
             读取模型信息
           </button>
-          {!fc && (
-            <Field
-              label="会话分享服务地址"
-              hint="可选。提供会话存储和分享页面，独立于预设服务；留空使用同源。"
-            >
-              <input
-                value={settings.shareSource}
-                disabled={disabled}
-                placeholder="https://sessions.example.com"
-                onChange={(e) => onSettings({ shareSource: e.target.value })}
-              />
-            </Field>
-          )}
-          <Field
-            label={fc ? '工具服务地址' : '应用／预设服务地址'}
-            hint={
-              fc
-                ? '提供场景预设、音频文件和工具接口；留空使用同源服务。'
-                : '提供当前体验的预设、默认设置和参考音频；留空使用本应用服务。'
-            }
-          >
-            <input
-              value={fc ? settings.gallery : settings.presetSource}
-              disabled={disabled}
-              placeholder="https://demo.example.com"
-              onChange={(e) =>
-                onSettings(
-                  fc
-                    ? { gallery: e.target.value }
-                    : { presetSource: e.target.value, configReady: false },
-                )
-              }
-            />
-          </Field>
           {view.sessionId && (
             <div className="meta-row">
               <span>Session</span>
@@ -457,10 +423,7 @@ export function DeveloperPanel({
               const fresh = {
                 ...defaultsFor(definition.id),
                 endpoint: settings.endpoint,
-                gallery: settings.gallery,
-                presetSource: settings.presetSource,
                 apiService: settings.apiService,
-                shareSource: settings.shareSource,
                 referenceAudio: undefined,
                 ttsReferenceAudio: undefined,
                 inputFile: undefined,

@@ -121,13 +121,7 @@ export function ordinaryPayload(s: SessionSettings, video: boolean) {
 
 // Keep the old pages' configuration persistence separate from transient session/media state.
 export function persistedSettings(id: CaseId, s: SessionSettings): Partial<SessionSettings> {
-  const keys: (keyof SessionSettings)[] = [
-    'endpoint',
-    'gallery',
-    'presetSource',
-    'apiService',
-    'shareSource',
-  ];
+  const keys: (keyof SessionSettings)[] = ['endpoint', 'apiService'];
   if (id === 'audio-duplex')
     keys.push(
       'preset',
