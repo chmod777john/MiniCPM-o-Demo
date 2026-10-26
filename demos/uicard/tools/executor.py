@@ -11,7 +11,7 @@
   "durationSeconds","path":[6 个点]}],"cards":[…]}``
 * ``serp_google_search`` → SERP.HK 原始响应（经 llm-center MCP 网关）
 * ``tavily_search`` → ``{"query","results":[{"url","title","content","score"(,"published_date")}]}``，
-  ``content`` 截到 500 字（训练数据最常见的截断长度）
+  ``content`` 单条截到 500 字、全部合计截到 3000 字（造数侧主力配置）
 * ``show_card`` → ``卡片已展示给用户。``
 
 天气与地图卡片由工具在这里拼好，模型只拿到编号（``cards``）；完整卡片只给页面（:class:`ToolExecution`
@@ -46,7 +46,6 @@ ROUTE_PATH_POINTS = 6
 MAX_ROUTES = 5
 # 页面画图用的完整路线（不给模型）。
 DISPLAY_PATH_POINTS = 180
-TAVILY_CONTENT_CHARS = 500
 TAVILY_DEFAULT_MAX_RESULTS = 5
 SERP_MAX_ATTEMPTS = 4
 SERP_RETRY_DELAY_SEC = 0.25
@@ -790,40 +789,125 @@ def _display_link(url: str) -> str:
 
 
 # --------------------------------------------------------------------- tavily_search
+#
+# 与造数侧 tavily_search 对齐：advanced、每来源 1 段、单条 500 字、总量 3000 字平摊、
+# 中文查询补 country=china。不要走上面的 _tavily_request（那是 serp 备选后端，读 tavily 段的 basic）。
 
-_TAVILY_PASSTHROUGH = ("topic", "time_range", "include_domains", "exclude_domains")
+TAVILY_TOPICS = ("general", "news")
+TAVILY_TIME_RANGES = ("day", "week", "month", "year")
+TAVILY_MAX_RESULTS = 10
+TAVILY_KEEP_FIELDS = ("url", "title", "content", "score", "published_date")
 
 
-def tavily_payload(query: str, body: dict[str, Any]) -> str:
-    """Tavily 响应 → 训练形态 ``{"query","results":[{url,title,content,score(,published_date)}]}``。"""
+def _contains_cjk(text: str) -> bool:
+    """查询里是否有中日韩字符。有则给 Tavily 补 ``country=china``。"""
 
-    results = []
-    for item in body.get("results") or []:
-        if not isinstance(item, dict):
-            continue
-        entry: dict[str, Any] = {
-            "url": item.get("url"),
-            "title": item.get("title"),
-            "content": str(item.get("content") or "")[:TAVILY_CONTENT_CHARS],
-            "score": item.get("score"),
-        }
-        if item.get("published_date"):
-            entry["published_date"] = item["published_date"]
-        results.append(entry)
-    return compact({"query": query, "results": results})
+    return any("\u4e00" <= char <= "\u9fff" or "\u3040" <= char <= "\u30ff" for char in text)
+
+
+def shape_tavily_response(parsed: Any, *, content_cap: int = 0, total_cap: int = 0) -> str:
+    """丢掉训练数据里没出现过的字段，并套上单条 / 总量两道长度上限。
+
+    参数:
+        parsed: Tavily 原始 JSON。
+        content_cap: 单条 ``content`` 的字数上限；0 表示不限。
+        total_cap: 全部 ``content`` 加起来的字数上限；按还剩几条平摊，前面没用完的留给后面。0 表示不限。
+
+    返回:
+        训练形态 JSON 字符串 ``{"query","results":[{url,title,content,score(,published_date)}]}``。
+        没有网址的条目丢掉；值为空的字段不输出。
+
+    异常:
+        ToolError: 响应不是带 ``results`` 列表的对象。
+    """
+
+    if not isinstance(parsed, dict) or not isinstance(parsed.get("results"), list):
+        detail = parsed.get("detail") or parsed.get("error") if isinstance(parsed, dict) else None
+        raise ToolError(f"tavily returned an unexpected body: {compact(detail or parsed)[:200]}")
+    results = [item for item in parsed["results"] if isinstance(item, dict) and _text(item.get("url"))]
+    remaining = total_cap
+    shaped: list[dict[str, Any]] = []
+    for index, item in enumerate(results):
+        entry = {key: item[key] for key in TAVILY_KEEP_FIELDS if item.get(key) is not None}
+        text = _text(entry.get("content"))
+        cap = content_cap or len(text)
+        if total_cap:
+            cap = min(cap, remaining // max(len(results) - index, 1))
+            remaining -= min(len(text), cap)
+        if cap < len(text):
+            entry["content"] = text[:cap]
+        shaped.append(entry)
+    return compact({"query": _text(parsed.get("query")), "results": shaped})
 
 
 async def _tavily_search(arguments: dict[str, Any]) -> str:
+    """按造数侧主力配置调用 Tavily，返回训练形态的搜索结果。
+
+    参数:
+        arguments: 模型给出的参数。``query`` 必填；``topic`` 只允许 general/news；
+            ``time_range`` 只允许 day/week/month/year；``max_results`` 限制在 1 到 10。
+
+    返回:
+        ``shape_tavily_response`` 的 JSON 字符串。
+
+    异常:
+        ToolError: 缺 query、topic / time_range 非法、未配置 key，或 Tavily 报错。
+    """
+
+    settings = tool_config("tavily_search")
+    key = _text(settings.get("api_key"))
+    if not key:
+        raise ToolError("tavily api_key is not configured (UICARD_TOOLS_CONFIG)")
     query = _text(arguments.get("query"))
     if not query:
         raise ToolError("tavily_search requires query")
+    topic = _text(arguments.get("topic")) or "general"
+    if topic not in TAVILY_TOPICS:
+        raise ToolError(f"topic must be one of {', '.join(TAVILY_TOPICS)}")
+    time_range = _text(arguments.get("time_range"))
+    if time_range and time_range not in TAVILY_TIME_RANGES:
+        raise ToolError(f"time_range must be one of {', '.join(TAVILY_TIME_RANGES)}")
+    max_results = _clamp(
+        _as_int(arguments.get("max_results"), _as_int(settings.get("max_results"), TAVILY_DEFAULT_MAX_RESULTS)),
+        1,
+        TAVILY_MAX_RESULTS,
+    )
+    search_depth = _text(settings.get("search_depth")) or "advanced"
     payload: dict[str, Any] = {
         "query": query,
-        "max_results": _clamp(_as_int(arguments.get("max_results"), TAVILY_DEFAULT_MAX_RESULTS), 1, 10),
+        "topic": topic,
+        "max_results": max_results,
+        "search_depth": search_depth,
         "include_answer": False,
+        "include_raw_content": False,
     }
-    for key in _TAVILY_PASSTHROUGH:
-        value = arguments.get(key)
-        if value not in (None, "", []):
-            payload[key] = value
-    return tavily_payload(query, await _tavily_request(payload))
+    if search_depth == "advanced":
+        payload["chunks_per_source"] = _clamp(_as_int(settings.get("chunks_per_source"), 1), 1, 3)
+    if time_range:
+        payload["time_range"] = time_range
+    for field in ("include_domains", "exclude_domains"):
+        domains = arguments.get(field)
+        if isinstance(domains, list) and domains:
+            payload[field] = [str(item) for item in domains]
+    country = _text(settings.get("country")) or ("china" if _contains_cjk(query) else "")
+    if country:
+        payload["country"] = country
+
+    async with httpx.AsyncClient(timeout=float(settings.get("timeout_sec", 20.0))) as client:
+        response = await client.post(
+            str(settings.get("endpoint")),
+            json=payload,
+            headers={"Authorization": f"Bearer {key}"},
+        )
+    try:
+        parsed = response.json()
+    except ValueError as exc:
+        raise ToolError(f"tavily returned a non-JSON body: {response.text[:200]}") from exc
+    if response.status_code >= 400 and isinstance(parsed, dict):
+        detail = parsed.get("detail") or parsed.get("error") or response.text[:200]
+        raise ToolError(f"tavily: {detail}")
+    return shape_tavily_response(
+        parsed,
+        content_cap=_as_int(settings.get("content_cap"), 0),
+        total_cap=_as_int(settings.get("total_cap"), 0),
+    )
