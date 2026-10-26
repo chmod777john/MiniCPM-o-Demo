@@ -1,0 +1,114 @@
+/* Match the original desktop mini-player, with shared streaming/file controls. */
+.chat-audio-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 360px;
+  max-width: 100%;
+  min-width: 0;
+  margin-top: 10px;
+  padding: 6px 10px;
+  border: 1px solid #e5e5e0;
+  border-radius: 8px;
+  background: #fff;
+  color: #2d2d2d;
+  user-select: none;
+}
+.chat-audio-bar .chat-audio-toggle,
+.chat-audio-bar .chat-audio-download {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+}
+.chat-audio-bar .chat-audio-toggle {
+  border-radius: 50%;
+  background: #2d2d2d;
+  color: #fff;
+}
+.chat-audio-toggle:hover:not(:disabled) {
+  background: #505050;
+}
+.chat-audio-bar .chat-audio-download {
+  border-radius: 5px;
+  background: transparent;
+  color: #737373;
+}
+.chat-audio-download:hover:not(:disabled) {
+  background: #f3f3f0;
+  color: #2d2d2d;
+}
+.chat-audio-bar .chat-audio-seek {
+  appearance: none;
+  -webkit-appearance: none;
+  flex: 1;
+  width: 0;
+  min-width: 32px;
+  height: 24px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 2px;
+  background: transparent;
+  cursor: pointer;
+}
+.chat-audio-bar .chat-audio-seek:focus {
+  box-shadow: none;
+}
+.chat-audio-bar .chat-audio-seek:focus-visible {
+  outline: 2px solid #a1b8ff;
+  outline-offset: 2px;
+}
+.chat-audio-seek::-webkit-slider-runnable-track {
+  height: 3px;
+  border-radius: 2px;
+  background: linear-gradient(
+    to right,
+    #2d2d2d 0%,
+    #2d2d2d var(--audio-progress),
+    #e5e5e0 var(--audio-progress),
+    #e5e5e0 100%
+  );
+}
+.chat-audio-seek::-webkit-slider-thumb {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 11px;
+  height: 11px;
+  margin-top: -4px;
+  border: 2px solid #fff;
+  border-radius: 50%;
+  background: #2d2d2d;
+  box-shadow: 0 0 2px #0003;
+}
+.chat-audio-seek::-moz-range-track {
+  height: 3px;
+  border-radius: 2px;
+  background: #e5e5e0;
+}
+.chat-audio-seek::-moz-range-progress {
+  height: 3px;
+  border-radius: 2px;
+  background: #2d2d2d;
+}
+.chat-audio-seek::-moz-range-thumb {
+  box-sizing: border-box;
+  width: 11px;
+  height: 11px;
+  border: 2px solid #fff;
+  border-radius: 50%;
+  background: #2d2d2d;
+  box-shadow: 0 0 2px #0003;
+}
+.chat-audio-bar .chat-audio-time {
+  flex: none;
+  color: #737373;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  white-space: nowrap;
+}

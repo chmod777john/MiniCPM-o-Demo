@@ -1,0 +1,28 @@
+slug: o5-test
+displayName: O5 Test
+description: React Playground desktop experience; CPU application, browser-direct inference to 9011
+environment: prod
+components:
+  - name: web
+    displayName: O5 Playground
+    repositoryUrl: https://codehub.devcloud.cn-north-4.huaweicloud.com/ce15bee9f2f3473692f1921544547e42/demo/MiniCPM-o-Demo.git
+    branch: demo-adapter-fc-figma-existing-pages-20261022
+    buildContext: .
+    dockerfilePath: demos/playground/deploy/Dockerfile
+    containerPort: 8080
+    servicePort: 8080
+    healthPath: /health
+    readinessPath: /api/demos/playground/health
+    startupGraceSeconds: 60
+    terminationGracePeriodSeconds: 30
+    routePaths: ['/']
+    resourceTier: small
+    prodReplicas: 1
+    automountServiceAccountToken: false
+    env:
+      - name: PLAYGROUND_GALLERY_TARGET
+        value: https://82.157.64.212:9011
+      - name: PLAYGROUND_SESSION_TARGET
+        value: https://82.157.64.212:9011
+      - name: PLAYGROUND_PROXY_TLS_INSECURE
+        value: '1'

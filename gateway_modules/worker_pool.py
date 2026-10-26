@@ -30,6 +30,8 @@ from dataclasses import dataclass, field
 
 import httpx
 
+from .model_catalog import model_signature
+
 from .models import (
     GatewayWorkerStatus,
     WorkerInfo,
@@ -346,6 +348,15 @@ class WorkerPool:
         host, port = self._parse_endpoint(endpoint)
         now = datetime.now()
         worker = self.workers.get(worker_id)
+        proposed = model_info if model_info is not None else (worker.model_info if worker else {})
+        peers = [w for key, w in self.workers.items() if key != worker_id]
+        if peers and any(model_signature(w.model_info) != model_signature(proposed) for w in peers):
+            raise ValueError("Workers in one model pool must have identical model identity and defaults")
+        pinned = getattr(self, "registered_model_identity", None)
+        if pinned and model_signature(pinned) != model_signature(proposed):
+            raise ValueError("Cannot replace a registered model identity; create a separate model pool")
+        if proposed:
+            self.registered_model_identity = dict(proposed)
 
         if worker is None:
             worker = WorkerConnection(
