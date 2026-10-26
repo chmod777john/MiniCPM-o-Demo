@@ -385,44 +385,44 @@ export function Experience({
                   <h1>{definition.title}</h1>
                   <p>{definition.description}</p>
                 </div>
-                <div className="prompt-grid">
-                  {definition.prompts.map((prompt, i) => {
-                    const PromptIcon = definition.promptIcons?.[i] || definition.icon;
-                    return (
-                      <button
-                        key={prompt}
-                        className="prompt-card"
-                        onClick={() =>
-                          chat
-                            ? setDraft(prompt)
-                            : definition.id === 'standalone'
+                {(chat || fc) && (
+                  <div className="prompt-grid">
+                    {definition.prompts.map((prompt, i) => {
+                      const PromptIcon = definition.promptIcons?.[i] || definition.icon;
+                      return (
+                        <button
+                          key={prompt}
+                          className="prompt-card"
+                          onClick={() =>
+                            chat
                               ? setDraft(prompt)
-                              : setTopic(prompt)
-                        }
-                      >
-                        <span className={`prompt-number n${i}`}>
-                          {chat ? (
-                            <DesignIcon
-                              name={(['document', 'palette', 'code'] as const)[i]}
-                              size={21}
-                            />
-                          ) : (
-                            <PromptIcon size={21} strokeWidth={1.5} />
-                          )}
-                        </span>
-                        <span>{prompt}</span>
-                        <CirclePlus size={20} strokeWidth={1.2} />
-                      </button>
-                    );
-                  })}
-                </div>
-                {!chat && (
+                              : definition.id === 'standalone'
+                                ? setDraft(prompt)
+                                : setTopic(prompt)
+                          }
+                        >
+                          <span className={`prompt-number n${i}`}>
+                            {chat ? (
+                              <DesignIcon
+                                name={(['document', 'palette', 'code'] as const)[i]}
+                                size={21}
+                              />
+                            ) : (
+                              <PromptIcon size={21} strokeWidth={1.5} />
+                            )}
+                          </span>
+                          <span>{prompt}</span>
+                          <CirclePlus size={20} strokeWidth={1.2} />
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+                {fc && (
                   <div className="welcome-note">
                     {topic
                       ? `开始对话后，可以试着说：${topic}`
-                      : fc
-                        ? '选择一个话题，开始后用语音交代任务'
-                        : '选择一个话题，开始后直接开口交流'}
+                      : '选择一个话题，开始后用语音交代任务'}
                   </div>
                 )}
               </section>
