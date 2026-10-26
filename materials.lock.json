@@ -10,7 +10,7 @@
   },
   "demo": {
     "branch": "demo-adapter-fc",
-    "commit": "4c1ec09cb90a0880c5927dd26643656cee167fac"
+    "commit": "befb77bab1057e76a81d80ba576b82c4b25937ae"
   },
   "last_runtime_validation": {
     "date_utc": "2026-10-20",
@@ -39,5 +39,14 @@
     "uses_pinned_hf_and_accel": true,
     "job_id": 1296620,
     "scope": "9009 public API smoke: ordinary audio/video duplex; no long-context or performance qualification."
+  },
+  "application_integration": {
+    "date_utc": "2026-10-26",
+    "demo_commit": "befb77bab1057e76a81d80ba576b82c4b25937ae",
+    "playground_tip": "a8d21c5b",
+    "upstream_commit": "e452210222319011aa6f107407f96a54acddbd4e",
+    "scope": "Playground, model-ID gateway, CPU appctl server; upstream Tavily only. Upstream inference/acceleration intentionally excluded.",
+    "checks": "Playground TypeScript and Vite production build passed with Node22.23.3; merge diff checked. No new runtime/tool tests.",
+    "deployments_updated": false
   }
 }
