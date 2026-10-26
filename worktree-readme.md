@@ -32,3 +32,7 @@ Design must be read before implementing visual changes. Initial state: access ch
 ## Root API migration · 2026-10-25T11:19:45.539450+00:00
 
 User now authorizes public Gateway API and Playground changes for base + model ID. Scope additionally gateway.py / gateway_modules; /e routes removed. Worker/HF/accel sources stay unchanged. Existing root-owned9011 preview deployment may be updated after preparation; source provenance and deployment changes recorded separately.
+
+## Root appctl deployment · 2026-10-26
+
+User authorizes new CPU appctl workload o5-test to expose current Playground. Scope adds demos/playground/server/production.ts and deploy/. Existing UI edits by side task are read-only snapshot overlays; root does not stage or alter them. Inference remains browser-direct to9011; application routes forward only presets/tools/assets/recordings. Build on host34; publish immutable image and deploy new workload only. Evidence: analysis-runs/20261026-o5-test-appctl.
