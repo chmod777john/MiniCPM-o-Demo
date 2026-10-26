@@ -1,0 +1,46 @@
+{
+  "checked_at_utc": "2026-10-26T03:37:12.083662+00:00",
+  "workload": "o5-test",
+  "workload_id": "449f589d-d296-4f16-a7d3-60d3bef1a605",
+  "component": "web",
+  "environment": "prod",
+  "release_id": "36eebf20-de5b-4b33-a43f-5b9fdffb606f",
+  "release_status": "HEALTHY",
+  "image": "modelbest-kt8zv1.swr-pro.myhuaweicloud.com/lis-dev-images/o5-test-playground@sha256:f2731161328ae8d581a79a1b4c6a85571d48cb9345386b31481c6c35e89f2867",
+  "source_commit": "8820591aaa95fba19bf77a150c97a0ef0cdff693",
+  "ui_snapshot_overlays": {
+    "demos/playground/app/Experience.tsx": "83e231a0b9c67273af0e30d3b11ef3572c70089cde7f0f5052462db6234aab49",
+    "demos/playground/shared/ui/ChatAudio.tsx": "211646b37ca29999e92e54d8cefeff5a8bbe355e2d076edf303ee1eb7cc5561b",
+    "demos/playground/shared/ui/ChatAudio.css": "442182f983cce8242d04ae10a2d94f328b1684aea7be853403a648f616f208a6"
+  },
+  "snapshot_manifest_sha256": "f958ffeacd6595582fbc3d1e7ab6a62aae450142895240e02d1ad156e6eb8c40",
+  "cpu_only": true,
+  "replicas": 1,
+  "resource_tier": "small",
+  "container_user": "node",
+  "container_port": 8080,
+  "frontend_default_api": "https://82.157.64.212:9011",
+  "frontend_default_model": "minicpm-o5",
+  "inference": "browser-direct",
+  "application_upstreams": "Gallery/tools/session routes forwarded to9011; conversation presets and reference audio served locally",
+  "internal_url": "https://o5-test.modelbest.co",
+  "requested_public_url": "https://o5-test.modelbest.cn",
+  "external_domain_state": "PENDING_ADMIN_APPROVAL",
+  "external_domain_requested_at": "2026-10-26T11:18:31.088+08:00",
+  "checks": {
+    "build": "TypeScript/Vite passed locally and in Docker",
+    "runtime": "one healthy Pod, no restarts",
+    "internal_http": "page, JS/CSS, local presets/audio and five FC defaults HTTP200; v1/models404 on application as intended",
+    "model_service": "Cybertron1363990 Running,9011 model catalog available; no change to model service",
+    "external_http": "cn404 pending domain approval; co resolves differently on host34 and does not reach app"
+  },
+  "limits": [
+    "No live inference, browser interaction, device or paid tool execution acceptance in this deployment",
+    "Public domain unavailable until CNAP administrator approves external-domain request",
+    "Model API9011 uses its existing TLS configuration; browser validation still applies",
+    "Gallery/tool/share services depend on9011",
+    "Tavily and SubAgent credentials remain absent as before",
+    "Release uses custom-image platform mode; actual commit and overlay hashes are tracked here and in image /app/source-snapshot.json"
+  ],
+  "evidence_directory": "/user/weihongliang/analysis-runs/20261026-o5-test-appctl"
+}
