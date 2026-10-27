@@ -36,3 +36,24 @@ User now authorizes public Gateway API and Playground changes for base + model I
 ## Root appctl deployment · 2026-10-26
 
 User authorizes new CPU appctl workload o5-test to expose current Playground. Scope adds demos/playground/server/production.ts and deploy/. Existing UI edits by side task are read-only snapshot overlays; root does not stage or alter them. Inference remains browser-direct to9011; application routes forward only presets/tools/assets/recordings. Build on host34; publish immutable image and deploy new workload only. Evidence: analysis-runs/20261026-o5-test-appctl.
+
+## Root legacy Omni model URL fix · 2026-10-27T04:47:24.412960+00:00
+
+- Owner: `/root`.
+- Created from branch `demo-adapter-fc`, commit `a5d458e0e315be9f8f11c9a411c6f9d50911de44`.
+- Worktree/branch: `demo-adapter-fc-legacy-omni-model-20261027`.
+- Purpose: preserve same-origin legacy Omni for human evaluation after the Gateway began requiring `?model=`.
+- Scope: legacy Omni connection setup and cache revision in desktop/mobile shells sharing that script; no API URL/model picker.
+- Selection: require exactly one catalog model supporting `video`; busy models remain eligible for the existing queue. Ambiguous catalogs fail explicitly.
+- No Gateway/Worker/backend/HF/Accel changes; no live service changes or GPU resources.
+- Evidence: `/user/weihongliang/analysis-runs/20261027-legacy-omni-model-url/REPORT.md`.
+- Validation scope: source review only; automated tests and real media/inference acceptance were not requested for this change.
+- Integration: commit the scoped fix and fast-forward the clean root-owned `demo-adapter-fc` mainline after review.
+
+### Source review and handoff · 2026-10-27
+
+- Legacy Omni fetches the same-origin `/v1/models` on Start, requires exactly one `video`-capable model, and sets URL `model` + `mode=video` using URLSearchParams. Busy replicas keep using the existing queue.
+- Lookup has a 15s timeout and prevents duplicate starts; Stop/pagehide abort pending lookup. Errors leave media/session creation untouched and restore Start buttons. The resolved URL remains fixed for reconnects in that session.
+- Desktop and mobile Omni HTML revisions now load the updated shared script. No new address/model controls or inference/session configuration changes.
+- Source diff reviewed against `a5d458e0`; no automated tests, browser runs, model calls or deployment performed. Runtime acceptance is still pending.
+- User selected the previous9005 configuration for the upcoming human evaluation; this frontend change does not change current mainline defaults to that configuration. Deployment must explicitly carry the selected9005 parameters.

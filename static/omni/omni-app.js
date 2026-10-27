@@ -39,6 +39,7 @@ const CHUNK_MS = 1000;
 
 let currentMode = 'live';
 let session = null;
+let modelLookup = null;
 let media = null;
 
 // Save & Share
@@ -1505,9 +1506,38 @@ async function measureFileLUFS(file) {
 // ============================================================================
 // Session Control
 // ============================================================================
+// Legacy Omni stays on this origin and uses its sole video-capable model.
+// Do not choose by availability: a busy model must enter the existing queue.
+async function resolveLocalOmniUrl() {
+    const controller = new AbortController();
+    modelLookup = controller;
+    const timeout = setTimeout(() => controller.abort(new Error('Model lookup timed out. Please retry.')), 15000);
+    try {
+        const response = await fetch('/v1/models', { signal: controller.signal, cache: 'no-store' });
+        if (!response.ok) throw new Error(`Cannot read this service's models (HTTP ${response.status}).`);
+        const catalog = await response.json();
+        if (catalog?.object !== 'list' || !Array.isArray(catalog.data)
+            || catalog.data.some(model => !model || typeof model.id !== 'string' || !model.id.trim())) {
+            throw new Error('This service returned an invalid model list.');
+        }
+        const models = catalog.data.filter(model =>
+            Array.isArray(model.capabilities?.modes) && model.capabilities.modes.includes('video'));
+        if (!models.length) throw new Error('This service has no model supporting video duplex. Please retry after it is ready.');
+        if (models.length !== 1) throw new Error('Legacy Omni requires one video-duplex model on this service. Please ask the deployment owner to configure it.');
+        const url = new URL('/v1/realtime', location.origin);
+        url.protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+        url.searchParams.set('model', models[0].id);
+        url.searchParams.set('mode', 'video');
+        return window.ClientIdentity ? window.ClientIdentity.appendToUrl(url.toString()) : url.toString();
+    } finally {
+        clearTimeout(timeout);
+        if (modelLookup === controller) modelLookup = null;
+    }
+}
+
 async function startSession() {
     await frontendDefaultsReady;
-    if (session) return;
+    if (session || modelLookup) return;
     if (currentMode === 'file' && !selectedFile) { alert('Please select a video file first.'); return; }
 
     const slidingWindowMode = document.querySelector('input[name="slidingWindowMode"]:checked')?.value || 'basic';
@@ -1529,6 +1559,21 @@ async function startSession() {
     if (slidingWindowMode === 'basic' && slidingConfig.basic_window_high_tokens <= slidingConfig.basic_window_low_tokens) {
         addSystemEntry('Basic sliding window requires the start threshold to be greater than the retain threshold.');
         return;
+    }
+
+    // Resolve before acquiring media or creating a session, so lookup failures
+    // leave the existing preview/recording lifecycle untouched.
+    const startButtons = ['btnStart', 'fsBtnStart'].map(id => document.getElementById(id)).filter(Boolean);
+    const previousDisabled = startButtons.map(button => button.disabled);
+    startButtons.forEach(button => { button.disabled = true; });
+    let realtimeUrl;
+    try {
+        realtimeUrl = await resolveLocalOmniUrl();
+    } catch (error) {
+        if (error.name !== 'AbortError') addSystemEntry(`Failed: ${error.message}`);
+        return;
+    } finally {
+        startButtons.forEach((button, index) => { button.disabled = previousDisabled[index]; });
     }
 
     clearConversation();
@@ -1573,11 +1618,7 @@ async function startSession() {
         getPlaybackDelayMs: () => parseInt(document.getElementById('playbackDelay').value, 10) || 200,
         outputSampleRate: SAMPLE_RATE_OUT,
         enableReconnect: true,
-        getWsUrl: () => {
-            const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-            const url = `${proto}://${location.host}/v1/realtime?mode=video`;
-            return window.ClientIdentity ? window.ClientIdentity.appendToUrl(url) : url;
-        },
+        getWsUrl: () => realtimeUrl,
     });
     session.onMetrics = (data) => metricsPanel.update(data);
     session.onSystemLog = addSystemEntry;
@@ -1821,6 +1862,7 @@ async function startSession() {
 function pauseSession() { if (session) session.pauseToggle(); }
 
 function stopSession() {
+    modelLookup?.abort();
     if (!session) return;
     if (_queuePhase) { session.cancelQueue(); } else { _sendSessionSummary(); session.stop(); }
     session = null;
@@ -1941,6 +1983,7 @@ if (document.readyState !== 'loading') {
 // Use pagehide too because iOS Safari is unreliable with beforeunload during
 // same-origin navigations.
 function _cleanupOmniMedia() {
+    modelLookup?.abort();
     try { if (session?.running) session.stop(); } catch (_) {}
     try { if (media) { media.stop(); media = null; } } catch (_) {}
     try {
