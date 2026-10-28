@@ -683,7 +683,23 @@ async def _api_worker_passthrough_ws(
         client_reader.cancel()
         return
 
-    await gateway_send({"type": "session.queue_done", "worker_id": worker.worker_id})
+    # 客户端在分到 worker 后、正式进 try/finally 之前断开（如 dispatch 完 3ms 就掉线）时，
+    # 下面这句 send 会抛 WebSocketDisconnect——此时 mark_busy 已生效但 finally 还没开始，
+    # 不在这里兜住会让 worker 永远停在 busy（2026-10-28 merge1006-128k-300step-31 实测卡了 14h）。
+    try:
+        await gateway_send({"type": "session.queue_done", "worker_id": worker.worker_id})
+    except Exception as exc:
+        logger.info(
+            "Client disconnected before session start; releasing worker=%s ticket=%s (%s)",
+            worker.worker_id, ticket.ticket_id, exc,
+        )
+        try:
+            await worker_ws.close()
+        except Exception:
+            pass
+        client_reader.cancel()
+        pool.release_worker(worker, request_type=request_type)
+        return
     task_start = datetime.now()
     session_closed = asyncio.Event()
     live = LiveSession(worker_id=worker.worker_id, ticket_id=ticket.ticket_id, endpoint=endpoint_name)
