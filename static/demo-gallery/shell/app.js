@@ -99,6 +99,7 @@ const el = {
   generationSteps: document.getElementById('generationSteps'),
   resumeCheckpoint: document.getElementById('resumeCheckpoint'),
   resumeSummary: document.getElementById('resumeSummary'),
+  sessionIdDisplay: document.getElementById('sessionIdDisplay'),
   liveHint: document.getElementById('liveHint'),
   audioFileInput: document.getElementById('audioFileInput'),
   runFileReplay: document.getElementById('runFileReplay'),
@@ -991,6 +992,7 @@ function applyApiEvent(event) {
   appendTimeline(`${event.type} ${event.kind || ''} ${event.tool_call_id || ''}`.trim());
   switch (event.type) {
     case 'session.created':
+      setSessionIdDisplay(event.session_id);
       if (event.model) {
         renderModelIdentity(event.model);
         if (el.kvCkpt) el.kvCkpt.textContent = event.model.profile_id || '—';
@@ -999,6 +1001,7 @@ function applyApiEvent(event) {
       setStatus('Session created');
       return;
     case 'session.resumed':
+      setSessionIdDisplay(event.session_id);
       setStatus(`Session resumed after Unit ${event.through_unit_index}`);
       return;
     case 'session.resume.failed':
@@ -1226,6 +1229,15 @@ function releaseMicLive(finalState = 'closed') {
   unlockInputMode();
 }
 
+/** 控制栏 Session ID 常驻显示:session.created/resumed 填充,开新会话时传 null 清空。 */
+function setSessionIdDisplay(sessionId) {
+  if (!el.sessionIdDisplay) return;
+  el.sessionIdDisplay.textContent = sessionId ? `SID ${sessionId}` : 'SID —';
+  el.sessionIdDisplay.title = sessionId
+    ? `Session ID: ${sessionId}(开新会话时清空)`
+    : 'Session ID(上一场会话的保留显示,点 Start 开新会话时清空)';
+}
+
 function clearViews() {
   scene.reset();
   nsView.reset();
@@ -1239,6 +1251,8 @@ function clearViews() {
   aiAudioCount = 0;
   generationStepCount = 0;
   latestCheckpoint = null;
+  // Session ID 只在开新会话(Start / file replay)时清空;Stop 保留上一场的显示。
+  setSessionIdDisplay(null);
   if (el.kvCkpt) el.kvCkpt.textContent = 'No checkpoint';
   if (el.resumeSummary) {
     el.resumeSummary.textContent = 'No resumable checkpoint';
