@@ -79,3 +79,9 @@ User authorizes new CPU appctl workload o5-test to expose current Playground. Sc
 - Restore the exact English and Chinese WAV blobs from74f03a96 (更新中英文参考音频), as shipped in0916 integration. Preset YAML paths remain stable.
 - Source provenance: English blob63f7eb5ae90008d958aadfb078e32782fe2916a3 (14.2507s/48kHz); Chinese bloba3ed890c20edfef6d500d451d8d0b1d6a3d74ef9 (6.016s/16kHz).
 - File/PCM comparison evidence: /user/weihongliang/analysis-runs/20261029-code-diff-9005-9035/REFERENCE_AUDIO_AUDIT.zh.md. No audio-quality inference claimed.
+
+### Ordinary audio-duplex short prompt · 2026-10-29
+
+- User requests the short prompt in9040;restore Chinese/English audio_duplex presets to `Streaming Omni Conversation.` (historical d068408b).
+- Align legacy desktop HTML fallback with these presets. Reference audio paths and inference options unchanged.
+- Validation scope: source review and deployment HTTP/preset readiness only;no automated tests or media/inference probes requested.
