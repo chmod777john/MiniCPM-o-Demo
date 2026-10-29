@@ -73,3 +73,9 @@ User authorizes new CPU appctl workload o5-test to expose current Playground. Sc
 - Audio lookup happens before media/session setup; fixed URL reused on reconnect; timeout, duplicate starts, cancellation and pagehide handled.
 - Chat keeps its existing synchronous cancellation handle while discovering the model asynchronously; cancelled lookups cannot open a later socket or update a newer turn.
 - Source review only; no automated tests or media/model probes run.
+
+### Reference audio restoration · 2026-10-29
+
+- Restore the exact English and Chinese WAV blobs from74f03a96 (更新中英文参考音频), as shipped in0916 integration. Preset YAML paths remain stable.
+- Source provenance: English blob63f7eb5ae90008d958aadfb078e32782fe2916a3 (14.2507s/48kHz); Chinese bloba3ed890c20edfef6d500d451d8d0b1d6a3d74ef9 (6.016s/16kHz).
+- File/PCM comparison evidence: /user/weihongliang/analysis-runs/20261029-code-diff-9005-9035/REFERENCE_AUDIO_AUDIT.zh.md. No audio-quality inference claimed.
