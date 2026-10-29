@@ -57,3 +57,12 @@ User authorizes new CPU appctl workload o5-test to expose current Playground. Sc
 - Desktop and mobile Omni HTML revisions now load the updated shared script. No new address/model controls or inference/session configuration changes.
 - Source diff reviewed against `a5d458e0`; no automated tests, browser runs, model calls or deployment performed. Runtime acceptance is still pending.
 - User selected the previous9005 configuration for the upcoming human evaluation; this frontend change does not change current mainline defaults to that configuration. Deployment must explicitly carry the selected9005 parameters.
+
+## Root reuse · 2026-10-29T05:22:01.248102+00:00
+
+- Reuse this completed root worktree at demo-adapter-fc / eb2ce9dd.
+- User authorizes committing the two recorded9035 defaults patches, desktop Audio/Chat model discovery, and restoring reference WAVs from74f03a96.
+- Model discovery scope: legacy desktop Audio and turnbased only. Existing Omni discovery, Playground and mobile connection logic unchanged.
+- Source commits will fast-forward demo-adapter-fc; deployment9040 uses separate snapshots. Deployment records remain outside Git.
+- Two2A100 instances in deploy; preserve existing services; HF/accel pinned to20261027.
+- Validation scope: source review and deployment readiness; no tests or model conversation probes requested.

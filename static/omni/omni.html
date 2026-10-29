@@ -212,20 +212,20 @@
                 <div class="cg-row" data-tip="Choose the sliding-window policy for this session. The service-level LLM cache size is unchanged.">
                     <span class="cg-label" id="slidingWindowModeLabel">Sliding Window</span>
                     <div class="sw-mode-options" role="radiogroup" aria-labelledby="slidingWindowModeLabel">
-                        <label class="sw-mode-option"><input type="radio" name="slidingWindowMode" value="off"><span id="slidingWindowOffLabel">Off</span></label>
-                        <label class="sw-mode-option"><input type="radio" name="slidingWindowMode" value="basic" checked><span id="slidingWindowBasicLabel">Basic</span></label>
+                        <label class="sw-mode-option"><input type="radio" name="slidingWindowMode" value="off" checked><span id="slidingWindowOffLabel">Off</span></label>
+                        <label class="sw-mode-option"><input type="radio" name="slidingWindowMode" value="basic"><span id="slidingWindowBasicLabel">Basic</span></label>
                         <label class="sw-mode-option"><input type="radio" name="slidingWindowMode" value="kv_surgery"><span id="slidingWindowKvLabel">KV surgery</span></label>
                     </div>
                 </div>
                 <div class="sw-settings" id="basicSlidingSettings" hidden>
                     <div class="cg-row inline" data-tip="Basic mode starts pruning above the high watermark and stops at the low watermark.">
                         <span class="cg-label" id="basicHighLabel" style="flex:none;">Start pruning above</span>
-                        <input type="number" class="cg-input-sm" id="basicWindowHighTokens" value="8000" min="1" max="262144" step="256">
+                        <input type="number" class="cg-input-sm" id="basicWindowHighTokens" value="32768" min="1" max="262144" step="256">
                         <span style="font-size:10px;color:#888;">tok</span>
                     </div>
                     <div class="cg-row inline" data-tip="Basic mode removes old units until the cache is at or below this value.">
                         <span class="cg-label" id="basicLowLabel" style="flex:none;">Retain down to</span>
-                        <input type="number" class="cg-input-sm" id="basicWindowLowTokens" value="6000" min="1" max="262144" step="256">
+                        <input type="number" class="cg-input-sm" id="basicWindowLowTokens" value="24576" min="1" max="262144" step="256">
                         <span style="font-size:10px;color:#888;">tok</span>
                     </div>
                 </div>
@@ -370,7 +370,7 @@
 <script src="/static/shared/preset-selector.js"></script>
 <script src="/static/shared/save-share.js"></script>
 <script src="/static/shared/client-identity.js"></script>
-<script type="module" src="/static/omni/omni-app.js?v=local-model-20261027"></script>
+<script type="module" src="/static/omni/omni-app.js?v=human-eval9035-window-off-20261027"></script>
 <script type="module">
 import { initNav } from '/static/shared/app-nav.js';
 import { t } from '/static/shared/i18n-module.js';

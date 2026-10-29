@@ -132,7 +132,7 @@ const settingsPersistence = new SettingsPersistence('audio_duplex_settings', [
 ]);
 
 function syncSlidingWindowSettings() {
-    const mode = document.querySelector('input[name="slidingWindowMode"]:checked')?.value || 'basic';
+    const mode = document.querySelector('input[name="slidingWindowMode"]:checked')?.value || 'off';
     const basic = document.getElementById('basicSlidingSettings');
     const kv = document.getElementById('kvSurgerySettings');
     if (basic) basic.hidden = mode !== 'basic';
@@ -867,7 +867,7 @@ async function startSession() {
     await frontendDefaultsReady;
     if (session) return;
 
-    const slidingWindowMode = document.querySelector('input[name="slidingWindowMode"]:checked')?.value || 'basic';
+    const slidingWindowMode = document.querySelector('input[name="slidingWindowMode"]:checked')?.value || 'off';
     const readInt = (id, fallback) => {
         const input = document.getElementById(id);
         const value = parseInt(input?.value, 10);

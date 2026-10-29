@@ -158,7 +158,7 @@ document.querySelectorAll('input, select, textarea').forEach((el) => {
 });
 
 function syncSlidingWindowSettings() {
-    const mode = document.querySelector('input[name="slidingWindowMode"]:checked')?.value || 'basic';
+    const mode = document.querySelector('input[name="slidingWindowMode"]:checked')?.value || 'off';
     const basic = document.getElementById('basicSlidingSettings');
     const kv = document.getElementById('kvSurgerySettings');
     if (basic) basic.hidden = mode !== 'basic';
@@ -1540,7 +1540,7 @@ async function startSession() {
     if (session || modelLookup) return;
     if (currentMode === 'file' && !selectedFile) { alert('Please select a video file first.'); return; }
 
-    const slidingWindowMode = document.querySelector('input[name="slidingWindowMode"]:checked')?.value || 'basic';
+    const slidingWindowMode = document.querySelector('input[name="slidingWindowMode"]:checked')?.value || 'off';
     const readInt = (id, fallback) => {
         const input = document.getElementById(id);
         const value = parseInt(input?.value, 10);
@@ -1763,6 +1763,12 @@ async function startSession() {
     // Build prepare payload
     const preparePayload = {
         config: {
+            // Deployment9035: preserve recent9005 ordinary-duplex sampling/LS defaults.
+            force_listen_count: 0,
+            top_k: 100,
+            length_penalty: 1.0,
+            ls_strict_unit: document.getElementById('listenSpeakDecisionEnabled').checked,
+            ls_log_prob: true,
             ...slidingConfig,
             ls_decision_mode: document.getElementById('listenSpeakDecisionEnabled').checked ? 'binary' : 'legacy',
             speak_threshold: (() => {
