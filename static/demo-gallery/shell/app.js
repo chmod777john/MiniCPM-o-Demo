@@ -76,6 +76,12 @@ let sessionInputMode = null;       // 本次会话实际用的模式(会话期�
 // 音频路径 → v4 base64 音频对象（由 Demo 服务读本机文件）；同一页面内复用。
 const audioCache = new Map();
 let micLiveState = 'idle';
+// 「模型热身」窗口：session.created 之后、首个 response.unit.started 之前。
+// created 只代表 fc_duplex_prepare 完成（实测 system 仅百级 token、kv_cache_length=0），
+// Worker 首场会话还要在首个 unit 的 prefill 里做懒初始化（实测十几秒），期间音频在排队但
+// 模型还没真正开始处理 —— UI 必须如实显示，不能提前宣布「可以说话了」。
+let micWarmupPending = false;
+let micWarmupTicker = null;
 let streamEventSeq = 0;
 const speechQueue = [];
 let speechDrainer = null;
@@ -416,7 +422,8 @@ el.startMicLive.addEventListener('click', async () => {
     // 那段时间的声音不会送给模型，不能算进「开麦后多久没说话」。
     resetMicPeak();
     setMicLiveState('live');
-    setStatus(`🎙 可以说话了 · ${scene.liveStatus}`);
+    // session.created ≠ 模型能处理音频：首个 unit 被处理（response.unit.started）才算真就绪。
+    beginMicWarmup();
   } catch (err) {
     setStatus(`Mic live error: ${err.message}`);
     stopMicLive('error');
@@ -458,7 +465,8 @@ el.resumeCheckpoint?.addEventListener('click', async () => {
     await micProvider.start();
     setMicLiveState('live');
     setWsState('connected');
-    setStatus(`Resume succeeded · continuing after Unit ${throughUnitIndex}`);
+    // Resume 成功后首个 unit 还要重放历史 + prefill，同样有热身窗口，不能直接宣布可以说话。
+    beginMicWarmup(`Resume succeeded · after Unit ${throughUnitIndex} · `);
   } catch (err) {
     console.error('[FC resume]', err);
     setMicLiveState('error');
@@ -1018,6 +1026,8 @@ function applyApiEvent(event) {
         : `Session closed: ${event.reason || 'closed'}`);
       return;
     case 'response.unit.started':
+      // 首个 unit 被处理 = 模型真正就绪（该事件在服务端 unit prefill 完成后才发）。
+      if (finishMicWarmup()) setStatus(`🎙 可以说话了 · ${scene.liveStatus}`);
       scene.onUnitStarted(event);
       return;
     case 'response.non_spoken.end':
@@ -1206,6 +1216,7 @@ function appendAiAudio(index, audioBase64, sampleRate) {
 
 function stopMicLive(finalState = 'stopped') {
   setMicLiveState('stopping');
+  finishMicWarmup();
   if (micProvider) {
     micProvider.stop();
     micProvider = null;
@@ -1220,6 +1231,7 @@ function stopMicLive(finalState = 'stopped') {
 }
 
 function releaseMicLive(finalState = 'closed') {
+  finishMicWarmup();
   if (micProvider) {
     micProvider.stop();
     micProvider = null;
@@ -1227,6 +1239,31 @@ function releaseMicLive(finalState = 'closed') {
   liveClient = null;
   setMicLiveState(finalState);
   unlockInputMode();
+}
+
+/** 进入「模型热身中」状态：开麦后、首个 unit 被处理前的窗口。
+ *  prefix 给 resume 等场景附加上下文。 */
+function beginMicWarmup(prefix = '') {
+  micWarmupPending = true;
+  const startedAt = Date.now();
+  const showWarmup = () => {
+    const waited = `已等 ${Math.round((Date.now() - startedAt) / 1000)}s`;
+    setStatus(`${prefix}⏳ 模型热身中 · ${waited} · 还不能开始对话，出现「可以说话了」再开口`);
+  };
+  showWarmup();
+  if (micWarmupTicker) clearInterval(micWarmupTicker);
+  micWarmupTicker = setInterval(showWarmup, 250);
+}
+
+/** 结束热身窗口（首个 unit 到达 / 会话停止都调）。返回是否确实在热身中。 */
+function finishMicWarmup() {
+  if (micWarmupTicker) {
+    clearInterval(micWarmupTicker);
+    micWarmupTicker = null;
+  }
+  const wasPending = micWarmupPending;
+  micWarmupPending = false;
+  return wasPending;
 }
 
 /** 控制栏 Session ID 常驻显示:session.created/resumed 填充,开新会话时传 null 清空。 */
