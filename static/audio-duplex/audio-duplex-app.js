@@ -41,6 +41,7 @@ const CHUNK_MS = 1000;
 
 let currentMode = 'live';
 let session = null;
+let modelLookup = null;
 let media = null;          // current MediaProvider
 
 // Save & Share
@@ -865,7 +866,7 @@ async function measureFileLUFS(file) {
 // ============================================================================
 async function startSession() {
     await frontendDefaultsReady;
-    if (session) return;
+    if (session || modelLookup) return;
 
     const slidingWindowMode = document.querySelector('input[name="slidingWindowMode"]:checked')?.value || 'off';
     const readInt = (id, fallback) => {
@@ -888,8 +889,29 @@ async function startSession() {
         return;
     }
 
+    if (currentMode === 'file' && !selectedFile) {
+        alert('Please select an audio file first.');
+        return;
+    }
+    // Resolve before opening media or creating a session. Reconnects reuse this URL.
+    const controller = new AbortController();
+    modelLookup = controller;
+    const startButton = document.getElementById('btnStart');
+    const previousDisabled = startButton.disabled;
+    startButton.disabled = true;
+    let realtimeUrl;
+    try {
+        realtimeUrl = await window.LocalModelDiscovery.resolveRealtimeUrl('audio', { signal: controller.signal });
+        if (controller.signal.aborted) return;
+    } catch (error) {
+        if (!controller.signal.aborted) addSystemLog(`Failed: ${error.message}`);
+        return;
+    } finally {
+        if (modelLookup === controller) modelLookup = null;
+        startButton.disabled = previousDisabled;
+    }
+
     if (currentMode === 'file') {
-        if (!selectedFile) { alert('Please select an audio file first.'); return; }
         const audioMode = document.querySelector('input[name="fileAudioMode"]:checked')?.value || 'file';
         const _i = (id, def) => { const v = parseInt(document.getElementById(id).value, 10); return Number.isFinite(v) ? v : def; };
         media = new FileAudioProvider(selectedFile, {
@@ -904,11 +926,7 @@ async function startSession() {
         getPlaybackDelayMs: () => parseInt(document.getElementById('playbackDelay').value, 10) || 200,
         outputSampleRate: SAMPLE_RATE_OUT,
         enableReconnect: true,
-        getWsUrl: () => {
-            const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-            const url = `${proto}://${location.host}/v1/realtime?mode=audio`;
-            return window.ClientIdentity ? window.ClientIdentity.appendToUrl(url) : url;
-        },
+        getWsUrl: () => realtimeUrl,
     });
 
     setStatusLamp('preparing');
@@ -1096,6 +1114,7 @@ async function startSession() {
 
 function pauseSession() { if (session) session.pauseToggle(); }
 function stopSession() {
+    modelLookup?.abort();
     if (!session) return;
     if (_queuePhase) { session.cancelQueue(); } else { session.stop(); }
     session = null;
@@ -1203,8 +1222,11 @@ if (document.readyState !== 'loading') {
 }
 
 // Cleanup on page unload (release mic, WS, AudioContext)
-window.addEventListener('beforeunload', () => {
+const cleanupSession = () => {
+    modelLookup?.abort();
     if (session?.running) session.stop();
-});
+};
+window.addEventListener('beforeunload', cleanupSession);
+window.addEventListener('pagehide', cleanupSession);
 
 /* ---------- end of file ---------- */

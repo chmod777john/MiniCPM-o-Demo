@@ -66,3 +66,10 @@ User authorizes new CPU appctl workload o5-test to expose current Playground. Sc
 - Source commits will fast-forward demo-adapter-fc; deployment9040 uses separate snapshots. Deployment records remain outside Git.
 - Two2A100 instances in deploy; preserve existing services; HF/accel pinned to20261027.
 - Validation scope: source review and deployment readiness; no tests or model conversation probes requested.
+
+### Desktop discovery source review · 2026-10-29
+
+- Shared desktop helper resolves same-origin model catalog by audio/chat capability, preserving busy-model queueing and rejecting missing/ambiguous models.
+- Audio lookup happens before media/session setup; fixed URL reused on reconnect; timeout, duplicate starts, cancellation and pagehide handled.
+- Chat keeps its existing synchronous cancellation handle while discovering the model asynchronously; cancelled lookups cannot open a later socket or update a newer turn.
+- Source review only; no automated tests or media/model probes run.

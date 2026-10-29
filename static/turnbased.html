@@ -1056,6 +1056,7 @@
 <script src="/static/system-content-editor.js"></script>
 <script src="/static/user-content-editor.js"></script>
 <script src="/static/shared/client-identity.js"></script>
+<script src="/static/shared/local-model-discovery.js?v=desktop-model-20261029"></script>
 <script>
 // ============ 状态 ============
 // 默认 system content list（模型最佳实践：text + ref_audio + text）
@@ -2457,9 +2458,8 @@ function _buildChatWSBody(maxTokens, streaming) {
 }
 
 function _openRealtimeChatWS(body, handlers) {
-    const wsProto = location.protocol === 'https:' ? 'wss' : 'ws';
-    const chatWsUrl = `${wsProto}://${window.location.host}/v1/realtime?mode=chat`;
-    const ws = new WebSocket(window.ClientIdentity ? window.ClientIdentity.appendToUrl(chatWsUrl) : chatWsUrl);
+    const lookup = new AbortController();
+    let ws = null;
     let initSent = false;
     let inputSent = false;
     let closeSent = false;
@@ -2472,58 +2472,67 @@ function _openRealtimeChatWS(body, handlers) {
         callback?.(value);
     };
     const sendClose = (reason = 'turn_done') => {
-        if (closeSent || ws.readyState !== WebSocket.OPEN) return;
+        if (closeSent || !ws || ws.readyState !== WebSocket.OPEN) return;
         closeSent = true;
         ws.send(JSON.stringify({ type: 'session.close', reason }));
     };
     const connection = {
         cancel() {
             if (!current()) return;
+            lookup.abort();
             finish(handlers.onCancel);
-            if (inputSent && ws.readyState === WebSocket.OPEN) sendClose('client_cancel');
-            else ws.close();
+            if (inputSent && ws?.readyState === WebSocket.OPEN) sendClose('client_cancel');
+            else ws?.close();
         },
     };
     state.activeChat = connection;
 
-    ws.onmessage = (event) => {
-        const msg = JSON.parse(event.data);
-        // A cancelled/completed turn must never update the next turn's UI.
-        if (!current()) {
-            if (msg.type === 'session.closed') ws.close();
-            return;
-        }
-        if (msg.type === 'session.queue_done') {
-            if (!initSent) {
-                initSent = true;
-                ws.send(JSON.stringify({ type: 'session.init', payload: {} }));
+    window.LocalModelDiscovery.resolveRealtimeUrl('chat', { signal: lookup.signal }).then(url => {
+        if (!current()) return;
+        ws = new WebSocket(url);
+        ws.onmessage = (event) => {
+            const msg = JSON.parse(event.data);
+            // A cancelled/completed turn must never update the next turn's UI.
+            if (!current()) {
+                if (msg.type === 'session.closed') ws.close();
+                return;
             }
-        } else if (msg.type === 'session.created') {
-            if (!inputSent) {
-                inputSent = true;
-                ws.send(JSON.stringify({ type: 'input.append', input: body }));
+            if (msg.type === 'session.queue_done') {
+                if (!initSent) {
+                    initSent = true;
+                    ws.send(JSON.stringify({ type: 'session.init', payload: {} }));
+                }
+            } else if (msg.type === 'session.created') {
+                if (!inputSent) {
+                    inputSent = true;
+                    ws.send(JSON.stringify({ type: 'input.append', input: body }));
+                }
+            } else if (msg.type === 'response.output.delta') {
+                handlers.onDelta?.(msg);
+            } else if (msg.type === 'response.done') {
+                finish(handlers.onDone, msg);
+                sendClose();
+            } else if (msg.type === 'session.closed') {
+                const reason = msg.reason || '';
+                const error = msg.diagnostic?.message || msg.error?.message || msg.error ||
+                    (!['', 'turn_done', 'client_closed', 'client_cancel'].includes(reason) ? reason : '');
+                finish(error ? handlers.onError : handlers.onClosed, error || msg);
+                ws.close();
+            } else if (msg.type === 'error') {
+                finish(handlers.onError, msg.error?.message || msg.error || 'Unknown error');
+                sendClose('error');
             }
-        } else if (msg.type === 'response.output.delta') {
-            handlers.onDelta?.(msg);
-        } else if (msg.type === 'response.done') {
-            finish(handlers.onDone, msg);
-            sendClose();
-        } else if (msg.type === 'session.closed') {
-            const reason = msg.reason || '';
-            const error = msg.diagnostic?.message || msg.error?.message || msg.error ||
-                (!['', 'turn_done', 'client_closed', 'client_cancel'].includes(reason) ? reason : '');
-            finish(error ? handlers.onError : handlers.onClosed, error || msg);
+        };
+        ws.onerror = () => {
+            finish(handlers.onError, 'WebSocket error');
             ws.close();
-        } else if (msg.type === 'error') {
-            finish(handlers.onError, msg.error?.message || msg.error || 'Unknown error');
-            sendClose('error');
-        }
-    };
-    ws.onerror = () => {
-        finish(handlers.onError, 'WebSocket error');
-        ws.close();
-    };
-    ws.onclose = () => finish(handlers.onClosed);
+        };
+        ws.onclose = () => finish(handlers.onClosed);
+    }).catch(error => {
+        if (!current()) return;
+        finish(handlers.onError, error.message || 'Model lookup failed');
+        ws?.close();
+    });
     return connection;
 }
 
@@ -3180,6 +3189,9 @@ async function sendStreamingMessage(maxTokens) {
         setGenerating(false);
     }
 }
+
+// Cancel pending model discovery as well as an active connection when leaving.
+window.addEventListener('pagehide', () => state.activeChat?.cancel());
 
 // ============ 启动 ============
 init();
