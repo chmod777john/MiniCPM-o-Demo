@@ -222,7 +222,7 @@ async def lifespan(app: FastAPI):
     control_plane = None
     if GATEWAY_CONFIG.get("control_plane_root"):
         # 控制面：管理端点、Worker 模板与 Worker job 生命周期（cctl），与上面的端点池共用。
-        from control_plane.cctl import CctlRunner
+        from control_plane.cctl import CctlRunner, job_settings_from_env
         from control_plane.manager import ControlPlane
         from scripts.run_o5_api import load_o5_api_runtime_settings
 
@@ -230,7 +230,7 @@ async def lifespan(app: FastAPI):
             root=Path(GATEWAY_CONFIG["control_plane_root"]),
             registry=endpoint_registry,
             live_sessions=live_sessions,
-            jobs=CctlRunner(),
+            jobs=CctlRunner(settings=job_settings_from_env()),
             repo_dir=str(Path(__file__).resolve().parent),
             python=str(load_o5_api_runtime_settings().runtime_python),
         )

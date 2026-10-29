@@ -36,6 +36,33 @@ class JobSettings:
     priority: str = "NORMAL"
 
 
+_ENV_PREFIX = "CCTL_JOB_"
+_INT_FIELDS = frozenset({"gpu", "cpu", "memory_gi"})
+
+
+def job_settings_from_env() -> JobSettings:
+    """按环境变量覆盖 job 规格(不设任何变量时与 ``JobSettings()`` 完全一致)。
+
+    独立部署(如 human_eval_1029_rejection)用同一份代码起第二套网关,只通过 env
+    切换资源池 / 项目等;默认路径不读任何 env,行为不变。变量名 = ``CCTL_JOB_<字段名>``,
+    整数字段(gpu / cpu / memory_gi)按 int 解析,解析失败抛 CctlError。
+    """
+
+    overrides: dict = {}
+    for field_name in JobSettings.__dataclass_fields__:
+        raw = os.environ.get(_ENV_PREFIX + field_name.upper())
+        if raw is None or raw == "":
+            continue
+        if field_name in _INT_FIELDS:
+            try:
+                overrides[field_name] = int(raw)
+            except ValueError:
+                raise CctlError(f"{_ENV_PREFIX}{field_name.upper()} 不是整数: {raw!r}")
+        else:
+            overrides[field_name] = raw
+    return JobSettings(**overrides)
+
+
 class CctlError(RuntimeError):
     pass
 

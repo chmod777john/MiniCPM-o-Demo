@@ -47,3 +47,25 @@ def test_ready_file_roundtrip(tmp_path: Path) -> None:
 def test_job_spec_ids_are_validated(tmp_path: Path) -> None:
     with pytest.raises(ValidationError):
         WorkerJobSpec(worker_id="Bad/ID", endpoint="f9t4", template=WorkerTemplate(**TEMPLATE), run_dir=str(tmp_path))
+
+
+def test_job_settings_from_env_overrides_and_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
+    """不设 env 时与默认一致;设了 CCTL_JOB_* 只覆盖对应字段,整数解析失败报错。"""
+
+    from control_plane.cctl import CctlError, JobSettings, job_settings_from_env
+
+    # 清掉可能存在的同前缀变量,保证"不设 = 默认"可验证
+    for name in list(JobSettings.__dataclass_fields__):
+        monkeypatch.delenv("CCTL_JOB_" + name.upper(), raising=False)
+
+    assert job_settings_from_env() == JobSettings()
+
+    monkeypatch.setenv("CCTL_JOB_RESOURCE_POOL", "ocr-train")
+    monkeypatch.setenv("CCTL_JOB_MEMORY_GI", "128")
+    s = job_settings_from_env()
+    assert (s.resource_pool, s.memory_gi) == ("ocr-train", 128)
+    assert (s.project, s.gpu, s.cpu) == (JobSettings().project, 2, 16)  # 其余字段不动
+
+    monkeypatch.setenv("CCTL_JOB_CPU", "not-a-number")
+    with pytest.raises(CctlError):
+        job_settings_from_env()
