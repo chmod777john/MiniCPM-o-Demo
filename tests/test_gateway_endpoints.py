@@ -111,7 +111,7 @@ def _fake_worker_app(name: str) -> FastAPI:
     async def health():
         return {"worker_status": "idle"}
 
-    @app.websocket("/v1/worker/realtime")
+    @app.websocket("/v1/realtime")
     async def realtime(ws: WebSocket):
         await ws.accept()
         transport_mode = ws.query_params.get("mode")
@@ -219,6 +219,30 @@ def test_second_session_queues_until_the_worker_is_free(gw: TestClient) -> None:
         assert _until(second, "session.created")[-1]["worker"] == "A"
         cm2.__exit__(None, None, None)
 
+
+
+def test_session_recording_uses_configured_root(gw: TestClient, monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(config.get_config().recording, "enabled", True)
+    monkeypatch.setenv("O5_SESSION_DATA_DIR", str(tmp_path))
+    with _FakeWorker("A") as a:
+        _register(gw, "alpha", "wa", a.port)
+        with gw.websocket_connect("/e/alpha/v1/realtime?mode=audio") as ws:
+            assert ws.receive_json()["type"] == "session.queue_done"
+            ws.send_json({"type": "session.init"})
+            created = _until(ws, "session.created")[-1]
+            ws.send_json({"type": "session.close"})
+            _until(ws, "session.closed")
+
+    session_dir = tmp_path / created["session_id"]
+    deadline = time.monotonic() + 5
+    while not (session_dir / "meta.json").exists() and time.monotonic() < deadline:
+        time.sleep(0.02)
+    meta = json.loads((session_dir / "meta.json").read_text(encoding="utf-8"))
+    stream = (session_dir / "stream.jsonl").read_text(encoding="utf-8").splitlines()
+    assert meta["identity"]["session_id"] == created["session_id"]
+    assert meta["close_reason"] == "session_end"
+    assert any(json.loads(line)["frame"].get("type") == "session.created" for line in stream)
+    assert not list(tmp_path.glob("*/recording.json"))
 
 def test_force_close_ends_the_live_session(gw: TestClient) -> None:
     with _FakeWorker("A") as a:

@@ -30,7 +30,7 @@ request type and capacity policy.
 Every mode uses exactly one internal route:
 
 ```text
-/v1/worker/realtime
+/v1/realtime
 ```
 
 The original client query parameters are forwarded unchanged, with Gateway
@@ -46,7 +46,7 @@ The Gateway may emit its own scheduling frames before the Worker session starts:
 - Gateway-originated `session.closed` on timeout or forced drain
 
 Everything produced by the Worker is forwarded verbatim. Application APIs,
-presets, reference-audio storage and session recording are outside this service.
+presets and reference-audio storage are outside this service. Optional raw Session recording remains a side effect and supports a configurable root via `O5_SESSION_DATA_DIR`, `--session-dir`, or `recording.dir`.
 
 ## Worker lifecycle assumptions
 

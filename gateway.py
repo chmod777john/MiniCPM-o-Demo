@@ -18,6 +18,7 @@ import argparse
 import copy
 import logging
 import time
+import re
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 from contextlib import asynccontextmanager
@@ -49,6 +50,28 @@ logging.basicConfig(
 )
 logger = logging.getLogger("gateway")
 
+
+
+_BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+_SESSION_ID_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
+
+
+def _sanitize_session_id(session_id: str) -> str:
+    """Keep recorder directory names path-safe."""
+    return session_id if _SESSION_ID_RE.fullmatch(session_id) else re.sub(r"[^a-zA-Z0-9_-]", "_", session_id)
+
+
+def _sessions_root() -> str:
+    """Resolve the configured Session recording root.
+
+    ``O5_SESSION_DATA_DIR`` and ``--session-dir`` override config. Legacy
+    ``recording.dir`` and ``<service.data_dir>/sessions`` remain supported.
+    """
+    from config import get_config
+    cfg = get_config()
+    override = GATEWAY_CONFIG.get("session_dir") or os.environ.get("O5_SESSION_DATA_DIR")
+    raw = override or cfg.recording.dir or os.path.join(cfg.data_dir, "sessions")
+    return os.path.realpath(raw if os.path.isabs(raw) else os.path.join(_BASE_DIR, raw))
 
 
 def _ws_debug_enabled() -> bool:
@@ -194,7 +217,7 @@ internal_app = FastAPI(
 _API_ONLY = os.getenv("GATEWAY_API_ONLY", "").lower() in {"1", "true", "yes", "on"}
 _API_ONLY_PREFIXES = ("/e/",)
 _API_ONLY_EXACT = {"/health", "/v1/models"}
-_WORKER_REALTIME_PATH = "/v1/worker/realtime"
+_WORKER_REALTIME_PATH = "/v1/realtime"
 
 
 def api_only_allows(path: str) -> bool:
@@ -364,9 +387,46 @@ async def _api_worker_passthrough_ws(
 
     client_reader = asyncio.create_task(read_client())
 
+    # Recording is an operational side effect, not an application API. It is
+    # fail-safe and never changes the relayed frame or blocks the hot path.
+    recording_enabled = False
+    recorder_cls = None
+    session_root: Optional[str] = None
+    try:
+        from config import get_config
+        _cfg = get_config()
+        if _cfg.recording.enabled:
+            from gateway_modules.session_recording import SessionRecorder
+            recorder_cls = SessionRecorder
+            session_root = _sessions_root()
+            recording_enabled = True
+    except Exception as exc:
+        logger.warning("Session recording disabled: %s", exc)
+    recorder_mode = "turn_based" if request_type == "chat" else "full_duplex"
+    pending_records: List[tuple] = []
+    recorder = None
+
+    def record_or_buffer(direction: str, frame: Dict[str, Any], *, recv_ts: float,
+                         send_ts: Optional[float], src: str) -> None:
+        if not recording_enabled:
+            return
+        if recorder is None:
+            pending_records.append((direction, frame, recv_ts, send_ts, src))
+            return
+        try:
+            recorder.record(direction, frame, recv_ts=recv_ts, send_ts=send_ts, src=src)
+        except Exception:
+            pass
+
     async def gateway_send(frame: Dict[str, Any]) -> None:
-        """Send a Gateway-owned scheduling or lifecycle event."""
-        await ws.send_json(frame)
+        """Send and record a Gateway-owned scheduling or lifecycle event."""
+        produced = time.time()
+        sent: Optional[float] = None
+        try:
+            await ws.send_json(frame)
+            sent = time.time()
+        finally:
+            record_or_buffer("down", frame, recv_ts=produced, send_ts=sent, src="gateway")
 
     async def acquire_worker() -> Optional[tuple]:
         """排队直到分到一个 Worker；失败时已经通知客户端并关闭，返回 None。"""
@@ -483,6 +543,49 @@ async def _api_worker_passthrough_ws(
     session_closed = asyncio.Event()
     live = LiveSession(worker_id=worker.worker_id, ticket_id=ticket.ticket_id, endpoint=endpoint_name)
     live_sessions.register(live)
+    recorder_worker = {
+        "host": worker.host,
+        "port": worker.port,
+        "gpu_id": getattr(worker, "gpu_id", None),
+    }
+
+    def ensure_recorder(session_id: Optional[str]) -> None:
+        nonlocal recorder
+        if (not recording_enabled or recorder is not None or recorder_cls is None
+                or session_root is None or not session_id):
+            return
+        safe_session_id = _sanitize_session_id(str(session_id))
+        recording_identity = dict(identity)
+        recording_identity.update(session_id=safe_session_id, ticket_id=ticket.ticket_id)
+        try:
+            recorder = recorder_cls(
+                safe_session_id,
+                recorder_mode,
+                sessions_dir=session_root,
+                identity=recording_identity,
+                worker=recorder_worker,
+            )
+        except Exception as exc:
+            logger.warning("Session recorder initialization failed: %s", exc)
+            recorder = None
+            return
+        for direction, frame, recv_ts, send_ts, src in list(pending_records):
+            try:
+                recorder.record(direction, frame, recv_ts=recv_ts, send_ts=send_ts, src=src)
+            except Exception:
+                pass
+        pending_records.clear()
+
+    def as_frame(raw: Any) -> Dict[str, Any]:
+        if isinstance(raw, (bytes, bytearray)):
+            import base64 as _base64
+            return {"_raw_bytes_base64": _base64.b64encode(bytes(raw)).decode("ascii")}
+        try:
+            value = json.loads(raw)
+            return value if isinstance(value, dict) else {"_raw_json": value}
+        except Exception:
+            return {"_raw_text": str(raw)}
+
     try:
         # Include the handoff notification in the worker-release scope: an
         # ordinary client can leave while its connection is being assigned.
@@ -493,17 +596,29 @@ async def _api_worker_passthrough_ws(
                 item = await client_frames.get()
                 if item is None:
                     return                      # 客户端断开
-                _recv_ts, raw = item
-                await worker_ws.send(raw)
+                recv_ts, raw = item
+                sent: Optional[float] = None
+                try:
+                    await worker_ws.send(raw)
+                    sent = time.time()
+                finally:
+                    record_or_buffer("up", as_frame(raw), recv_ts=recv_ts,
+                                     send_ts=sent, src="client")
 
         async def worker_to_client() -> None:
             async for raw in worker_ws:
+                recv_ts = time.time()
+                frame = as_frame(raw)
+                if frame.get("type") == "session.created":
+                    ensure_recorder(frame.get("session_id"))
+                sent: Optional[float] = None
                 try:
-                    frame = json.loads(raw)
-                except (TypeError, ValueError):
-                    frame = {}
-                await ws.send_text(raw if isinstance(raw, str) else raw.decode("utf-8"))
-                if isinstance(frame, dict) and frame.get("type") == "session.closed":
+                    await ws.send_text(raw if isinstance(raw, str) else raw.decode("utf-8"))
+                    sent = time.time()
+                finally:
+                    record_or_buffer("down", frame, recv_ts=recv_ts,
+                                     send_ts=sent, src="worker")
+                if frame.get("type") == "session.closed":
                     session_closed.set()
                     return
 
@@ -549,6 +664,11 @@ async def _api_worker_passthrough_ws(
         except Exception:
             pass
     finally:
+        if recorder is not None:
+            try:
+                recorder.close(reason="session_end" if session_closed.is_set() else "disconnected")
+            except Exception:
+                pass
         if worker_ws:
             try:
                 await worker_ws.close()
@@ -825,6 +945,11 @@ def main():
                         help="内部注册接口绑定地址（默认同 --host；对外部署设 127.0.0.1，注册接口没有鉴权）")
     parser.add_argument("--max-queue-size", type=int, default=None, help="Max queue size")
     parser.add_argument("--timeout", type=float, default=None, help="Request timeout (s)")
+    parser.add_argument(
+        "--session-dir",
+        default=None,
+        help="Session recording root; overrides O5_SESSION_DATA_DIR and config recording.dir",
+    )
     # 协议选择：默认 HTTPS，--http 可降级为 HTTP
     proto_group = parser.add_mutually_exclusive_group()
     proto_group.add_argument("--https", action="store_true", default=True,
@@ -853,6 +978,7 @@ def main():
         "eta_ema_alpha": cfg.eta_ema_alpha,
         "eta_ema_min_samples": cfg.eta_ema_min_samples,
         "placement": cfg.placement,
+        "session_dir": args.session_dir or os.environ.get("O5_SESSION_DATA_DIR"),
     })
 
     proto_label = "HTTPS" if use_https else "HTTP"
