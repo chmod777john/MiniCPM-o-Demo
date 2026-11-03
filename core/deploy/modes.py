@@ -6,6 +6,7 @@ policy belong to accel; this module only loads assets and forwards configuration
 from __future__ import annotations
 import os
 import logging
+from contextlib import nullcontext
 from typing import Any, Dict
 
 import torch
@@ -108,14 +109,8 @@ def _checkpoint_vocab_size(state_dict: Dict[str, Any]) -> int:
     return embedding_rows
 
 
-def _enable_engine(model, *, tp: bool, cfg: Dict[str, Any]):
-    """Enable the deployed CUDA-graph optimization engine. Returns an engine-info dict.
-    TP synchronization is handled by the LLM/graph runner, not by decoder-level
-    sampling synchronization or backend method mirroring."""
-    if not os.environ.get("O5_ACCELERATION_PATH"):
-        return {"acceleration": "disabled", "tp": 2 if tp else 1}
-    from core.external_o5 import acceleration_module
-    accel = acceleration_module()
+def _acceleration_config(accel, *, tp: bool, cfg: Dict[str, Any], model):
+    """Build one config shared by initialization staging and attachment."""
     options = dict(cfg.get("acceleration_config", {}))
     options.setdefault("hardware", os.environ.get("O5_ACCELERATION_HARDWARE", "auto"))
     for option, env in (("llm_graph", "O5_LLM_GRAPH"), ("tts_graph", "O5_TTS_GRAPH"),
@@ -125,13 +120,43 @@ def _enable_engine(model, *, tp: bool, cfg: Dict[str, Any]):
     for option, env in (("tts_fa2_whole_decode", "O5_TTS_FA2_WHOLE_DECODE"),
                         ("canvas_window_exact_chain", "O5_CANVAS_WINDOW_EXACT_CHAIN")):
         options.setdefault(option, _env_flag(env, False))
+    for option, env in (("prefill_graph_max_graphs", "O5_PREFILL_GRAPH_MAX_GRAPHS"),
+                        ("t2w_max_graphs", "O5_T2W_MAX_GRAPHS")):
+        if os.environ.get(env) and option not in options:
+            options[option] = int(os.environ[env])
     options.setdefault("mode", cfg.get("parallel", "tp") if tp else "single")
     if tp:
         owner = int(cfg.get("gpu_id", 0))
         options.setdefault("devices", (f"cuda:{owner}", f"cuda:{owner + 1}"))
     else:
         options.setdefault("devices", (str(next(model.llm.parameters()).device),))
-    accel.attach(model, accel.AccelerationConfig(**options))
+    factory = getattr(accel, "make_config", None)
+    return factory(**options) if factory is not None else accel.AccelerationConfig(**options)
+
+
+def _acceleration_setup(model, *, tp: bool, cfg: Dict[str, Any]):
+    """Resolve optional accel once, returning its init context and attach config."""
+    if not os.environ.get("O5_ACCELERATION_PATH"):
+        return nullcontext(), None, None
+    from core.external_o5 import acceleration_module
+    accel = acceleration_module()
+    config = _acceleration_config(accel, tp=tp, cfg=cfg, model=model)
+    context_factory = getattr(accel, "initialization_context", None)
+    context = context_factory(model.llm, config) if context_factory is not None else nullcontext()
+    return context, accel, config
+
+
+def _enable_engine(model, *, tp: bool, cfg: Dict[str, Any], prepared=None):
+    """Enable the deployed CUDA-graph optimization engine. Returns an engine-info dict.
+    TP synchronization is handled by the LLM/graph runner, not by decoder-level
+    sampling synchronization or backend method mirroring."""
+    if prepared is None:
+        _, accel, config = _acceleration_setup(model, tp=tp, cfg=cfg)
+    else:
+        accel, config = prepared
+    if accel is None or config is None:
+        return {"acceleration": "disabled", "tp": 2 if tp else 1}
+    accel.attach(model, config)
     return {"acceleration": os.environ["O5_ACCELERATION_PATH"], "tp": 2 if tp else 1,
             "acceleration_info": dict(model._acceleration_info)}
 
@@ -156,8 +181,11 @@ def build_single_eager(cfg, rank=0, world_size=1) -> BuildResult:
 def build_single_opt(cfg, rank=0, world_size=1) -> BuildResult:
     dev = f"cuda:{cfg.get('gpu_id', 0)}"
     model = _load_full(cfg, dev)
-    _init_unified(model, cfg)
-    eng = _enable_engine(model, tp=False, cfg=cfg); eng["mode"] = "single_opt"
+    context, accel, config = _acceleration_setup(model, tp=False, cfg=cfg)
+    with context:
+        _init_unified(model, cfg)
+    eng = _enable_engine(model, tp=False, cfg=cfg, prepared=(accel, config))
+    eng["mode"] = "single_opt"
     return BuildResult(model=model, world_size=1, rank=0, is_driver=True, engine=eng)
 
 
@@ -175,12 +203,10 @@ def build_tp2(cfg, rank=0, world_size=2) -> BuildResult:
     if owner + 1 >= torch.cuda.device_count():
         raise RuntimeError("External TP/EP requires two visible GPUs")
     model = _load_full(cfg, f"cuda:{owner}")
-    from core.external_o5 import acceleration_module
-    acceleration_module()
-    from minicpm_o_accel.llm.initialization_memory import reserve_resize_memory
-    with reserve_resize_memory(model.llm):
+    context, accel, config = _acceleration_setup(model, tp=True, cfg=cfg)
+    with context:
         _init_unified(model, cfg)
-    eng = _enable_engine(model, tp=True, cfg=cfg)
+    eng = _enable_engine(model, tp=True, cfg=cfg, prepared=(accel, config))
     eng["mode"] = cfg["parallel"]
     return BuildResult(model=model, world_size=1, rank=0, is_driver=True, engine=eng)
 

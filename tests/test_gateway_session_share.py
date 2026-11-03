@@ -1,19 +1,21 @@
 from pathlib import Path
 
 
-def test_session_dir_maps_backend_session_id_directly(monkeypatch, tmp_path):
+def test_session_root_prefers_runtime_override(monkeypatch, tmp_path):
     import gateway
 
-    class _Service:
-        data_dir = "data"
+    expected = tmp_path / "configured-sessions"
+    monkeypatch.setitem(gateway.GATEWAY_CONFIG, "session_dir", str(expected))
+    monkeypatch.setenv("O5_SESSION_DATA_DIR", str(tmp_path / "environment-sessions"))
 
-    class _Config:
-        service = _Service()
-        data_dir = "data"
+    assert Path(gateway._sessions_root()) == expected.resolve()
 
-    backend_dir = tmp_path / "data" / "sessions" / "sess_abc"
 
-    monkeypatch.setattr(gateway, "_BASE_DIR", str(tmp_path))
-    monkeypatch.setattr(gateway, "get_config", lambda: _Config(), raising=False)
+def test_session_root_uses_environment_override(monkeypatch, tmp_path):
+    import gateway
 
-    assert Path(gateway._session_dir("sess_abc")) == backend_dir.resolve()
+    expected = tmp_path / "environment-sessions"
+    monkeypatch.setitem(gateway.GATEWAY_CONFIG, "session_dir", None)
+    monkeypatch.setenv("O5_SESSION_DATA_DIR", str(expected))
+
+    assert Path(gateway._sessions_root()) == expected.resolve()

@@ -5,6 +5,7 @@ import ast
 import os
 import sys
 from pathlib import Path
+from contextlib import nullcontext
 from types import ModuleType, SimpleNamespace
 from typing import Any, Dict
 from unittest.mock import patch
@@ -12,8 +13,10 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[1]
 source = ROOT / "core/deploy/modes.py"
 functions = [node for node in ast.parse(source.read_text()).body
-             if isinstance(node, ast.FunctionDef) and node.name in {"_env_flag", "_enable_engine"}]
-ns = dict(os=os, Any=Any, Dict=Dict)
+             if isinstance(node, ast.FunctionDef) and node.name in {
+                 "_env_flag", "_acceleration_config", "_acceleration_setup", "_enable_engine"
+             }]
+ns = dict(os=os, Any=Any, Dict=Dict, nullcontext=nullcontext)
 exec(compile(ast.Module(functions, type_ignores=[]), str(source), "exec"), ns)
 
 calls = []
@@ -56,8 +59,15 @@ with patch.dict(sys.modules, {"core.external_o5": module}):
     with patch.dict(os.environ, {**base, "O5_ACCELERATION_HARDWARE": "a100"}, clear=True):
         ns["_enable_engine"](model, tp=False, cfg={})
         assert calls[-1][1]["mode"] == "single" and calls[-1][1]["devices"] == ("cuda:3",)
+    with patch.dict(os.environ, {
+        **base, "O5_ACCELERATION_HARDWARE": "a100",
+        "O5_PREFILL_GRAPH_MAX_GRAPHS": "1", "O5_T2W_MAX_GRAPHS": "1",
+    }, clear=True):
+        ns["_enable_engine"](model, tp=False, cfg={})
+        assert calls[-1][1]["prefill_graph_max_graphs"] == 1
+        assert calls[-1][1]["t2w_max_graphs"] == 1
     with patch.dict(os.environ, {}, clear=True):
         before = len(calls)
         assert ns["_enable_engine"](model, tp=True, cfg={})["acceleration"] == "disabled"
         assert len(calls) == before
-print("EXTERNAL_ACCEL_OPTIONS_PASS: opt-in flags, defaults, config precedence, TP/EP/single, disabled")
+print("EXTERNAL_ACCEL_OPTIONS_PASS: opt-in flags, defaults, config precedence, TP/EP/single, caps, disabled")
