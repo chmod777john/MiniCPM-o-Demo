@@ -41,12 +41,9 @@ async def test_realtime_mode_and_timeout_survive_retained_transport(
 
     monkeypatch.setattr(gateway, "_api_worker_passthrough_ws", passthrough)
     monkeypatch.setattr(ordinary_reconnect, "serve", serve)
-    input_mode = mode if mode in ("audio", "omni") else None
     await gateway._realtime_entry(
         ws, pool=pool, endpoint_name="candidate", allow_chat=False,
-        input_mode=input_mode,
     )
-    assert captured["input_mode"] == input_mode
     assert captured["request_type"] == (
         "audio_duplex" if mode == "audio" else "omni_duplex"
     )
@@ -65,7 +62,7 @@ async def test_realtime_mode_and_timeout_survive_retained_transport(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("mode", ["audio", "video"])
-async def test_default_ordinary_route_does_not_stamp_fc_mode(monkeypatch, mode):
+async def test_default_ordinary_route_uses_common_transport(monkeypatch, mode):
     captured = {}
 
     async def passthrough(socket, **kwargs):
@@ -76,7 +73,7 @@ async def test_default_ordinary_route_does_not_stamp_fc_mode(monkeypatch, mode):
         SimpleNamespace(query_params={"mode": mode}),
         pool=object(), endpoint_name="default", allow_chat=True,
     )
-    assert captured["input_mode"] is None
+    assert "worker_path" not in captured
     assert captured["source_mode"] == mode
 
 
@@ -150,7 +147,7 @@ def test_named_mode_survives_real_retained_gateway_reconnect(gw, mode):
         with gw.websocket_connect(address) as first:
             first.send_json({"type": "session.init", "payload": {"protocol_version": "5"}})
             created = _until(first, "session.created")[-1]
-            assert created["input_mode"] == mode
+            assert created["transport_mode"] == mode
             token = created["reconnect_token"]
             assert token in ordinary_reconnect._sessions
         with gw.websocket_connect(f"{address}&reconnect_token={token}") as resumed:

@@ -86,8 +86,13 @@ User authorizes new CPU appctl workload o5-test to expose current Playground. Sc
 - Align legacy desktop HTML fallback with these presets. Reference audio paths and inference options unchanged.
 - Validation scope: source review and deployment HTTP/preset readiness only;no automated tests or media/inference probes requested.
 
-## Candidate worktree · 2026-11-03
+## Integration worktree · 2026-11-03
 
 - Base: `demo-adapter-fc` at `dd208705551e1ad0d7660ff8a263ea86f5b9a17f`
-- Branch: `worker/unified-realtime-20261103`
-- Purpose: unify the Worker realtime endpoint and move turn-based/full-duplex mode selection inside the Worker, without changing the shared mainline.
+- Branch: `integration/four-material-20261103`
+- Purpose: validate the independently developed Worker realtime entrypoint and thin Gateway together, without changing the shared mainline.
+- Worker source: `worker/unified-realtime-20261103` at `29ced479`.
+- Gateway source: `gateway/thin-realtime-20261103` at `de68633c`.
+- Both client and Worker use one `/v1/realtime` WebSocket. Chat/duplex mode is resolved by the Worker; Gateway scheduling frames are the only Gateway-generated data-plane events.
+- Gateway no longer serves HTML/static/application endpoints. Optional raw Session recording remains a side effect and is configurable with `O5_SESSION_DATA_DIR`, `--session-dir`, or `recording.dir`.
+- Local recording target for integration: `/user/weihongliang/o-sessions`.

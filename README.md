@@ -124,23 +124,11 @@ export FC_DEPLOYMENT_PROFILE=/path/to/fc-profile.json
 
 Profile 中的模型路径、权重和部署模式应与本次部署一致。字段定义见 [profiles.py](core/fc_duplex/profiles.py)。Gallery 页面从所选 API 的 `/v1/info` 读取模型默认参数，preset 主要描述 system 与参考音频。FC 协议见 [Realtime API v5](docs/fc-duplex/semantic-realtime-api-v5.md)。
 
-## 4. 打开页面
+## 4. API 与应用服务
 
-普通页面由上面的 gateway 提供：
+Gateway 现在只提供模型目录、命名实时端点和 Worker 调度，不再提供 HTML 页面或文档站。模型输入输出契约见 [Gateway Worker transport](docs/gateway-thin-transport.md)。
 
-| 页面 | 路径 |
-|---|---|
-| 首页 | `/` |
-| 单工 | `/turnbased` |
-| 普通音频双工 | `/audio_duplex` |
-| 普通视频双工 | `/omni` |
-| 移动端 | `/mobile/`、`/mobile-omni/` |
-
-例如本机访问 `https://localhost:8009/`。从源码部署移动端时，先在 `frontend/mobile` 中执行 `bun install --frozen-lockfile` 和 `bun run build:static`；工具版本与开发方式见 [移动端 README](frontend/mobile/README.md)。
-
-### 独立 FC Demo Gallery
-
-`demos/` 下的应用由 `demo_server.py` 单独提供页面与应用接口，通过 API 使用模型。在另一个终端执行（重新设置本终端的 `PROJECT_DIR` 和 `VENV_DIR`）：
+`demos/` 下的页面与应用接口由 `demo_server.py` 独立提供。浏览器从应用服务取得 HTML / JS，然后直接连接 Gateway 的 `/e/<endpoint>/v1/realtime?mode=audio|omni`。在另一个终端执行（重新设置本终端的 `PROJECT_DIR` 和 `VENV_DIR`）：
 
 ```bash
 export PROJECT_DIR=/path/to/o5/demo

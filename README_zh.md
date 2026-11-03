@@ -210,7 +210,7 @@ minicpmo45_service/
 │   └── processors/           # 推理处理器（UnifiedProcessor）
 │
 ├── MiniCPMO45/               # 模型核心推理代码
-├── static/                   # 前端页面
+├── static/                   # 独立 Demo / 应用服务使用的页面资产
 ├── resources/                # 资源文件（参考音频等）
 └── tmp/                      # 运行时日志和 PID 文件
 ```

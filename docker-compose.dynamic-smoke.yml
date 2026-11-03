@@ -62,7 +62,6 @@ services:
     expose:
       - "8007"
     volumes:
-      - ${DATA_HOST_PATH:-./data}:/app/data
       - ${CERTS_HOST_PATH:-./certs}:/app/certs:ro
     restart: unless-stopped
     logging:
