@@ -9,12 +9,10 @@
 
 from __future__ import annotations
 
-import json
 from typing import Any
 
 import pytest
 
-from gateway import _stamp_input_mode
 from py_backend.fc_duplex_runtime import (
     FcDuplexSessionRuntime,
     InputModeError,
@@ -137,25 +135,10 @@ def test_input_mode_error_maps_to_its_own_close_reason() -> None:
     assert reason == "input_mode_error" and diagnostic == {"message": "x"}
 
 
-# ---------------------------------------------------------------- 网关按 URL 写入模式
+# ---------------------------------------------------------------- 传输边界
 
-
-def test_gateway_stamps_url_mode_into_session_init() -> None:
-    raw = json.dumps({"type": "session.init", "payload": {"protocol_version": "5"}})
-    assert json.loads(_stamp_input_mode(raw, "omni"))["payload"]["input_mode"] == "omni"
-
-
-def test_gateway_keeps_matching_mode_and_flags_conflict() -> None:
-    same = json.dumps({"type": "session.init", "payload": {"input_mode": "audio"}})
-    assert json.loads(_stamp_input_mode(same, "audio"))["payload"] == {"input_mode": "audio"}
-    other = json.dumps({"type": "session.init", "payload": {"input_mode": "audio"}})
-    stamped = json.loads(_stamp_input_mode(other, "omni"))["payload"]
-    assert stamped["input_mode_conflict"] == {"url": "omni", "payload": "audio"}
-
-
-def test_gateway_leaves_other_frames_untouched() -> None:
-    raw = json.dumps({"type": "input.append", "input": {"input_id": "u0", "video_frames": ["x"]}})
-    assert _stamp_input_mode(raw, "omni") is raw
+# URL mode is forwarded to the Worker as query metadata. The Gateway does not
+# rewrite session.init; Worker-side v5 validation remains the single authority.
 
 
 # ---------------------------------------------------------------- 真实调用链的签名(不加载模型)

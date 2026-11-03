@@ -111,16 +111,17 @@ def _fake_worker_app(name: str) -> FastAPI:
     async def health():
         return {"worker_status": "idle"}
 
-    @app.websocket("/v1/worker/duplex")
-    async def duplex(ws: WebSocket):
+    @app.websocket("/v1/worker/realtime")
+    async def realtime(ws: WebSocket):
         await ws.accept()
+        transport_mode = ws.query_params.get("mode")
         try:
             async for raw in ws.iter_text():
                 frame = json.loads(raw)
                 if frame.get("type") == "session.init":
                     await ws.send_json({"type": "session.created", "session_id": f"s_{name}_{time.time_ns()}",
-                                        "worker": name,
-                                        "input_mode": (frame.get("payload") or {}).get("input_mode")})
+                                        "worker": name, "transport_mode": transport_mode,
+                                        "payload": frame.get("payload")})
                 elif frame.get("type") == "session.close":
                     await ws.send_json({"type": "session.closed", "reason": "client"})
                     return
@@ -287,6 +288,30 @@ def test_api_only_mode_hides_everything_else(gw: TestClient, monkeypatch) -> Non
         assert gw.get(path).status_code == 404, path
 
 
+def test_model_catalog_entry_uses_the_same_worker_transport(gw: TestClient) -> None:
+    with _FakeWorker("public") as worker:
+        _register(gw, "catalog", "catalog-worker", worker.port,
+                  model_id="public-model", profile_id="public-profile")
+        with gw.websocket_connect("/v1/realtime?model=public-model&mode=audio") as ws:
+            ws.send_json({"type": "session.init", "payload": {"protocol_version": "5"}})
+            created = _until(ws, "session.created")[-1]
+            assert created["worker"] == "public"
+            assert created["transport_mode"] == "audio"
+            ws.send_json({"type": "session.close"})
+            _until(ws, "session.closed")
+
+
+def test_gateway_does_not_serve_application_pages(gw: TestClient, monkeypatch) -> None:
+    monkeypatch.setattr(gateway, "_API_ONLY", False)
+    assert gw.get("/").json()["service"] == "o5-realtime-gateway"
+    for path in (
+        "/omni", "/audio_duplex", "/turnbased", "/mobile/", "/admin", "/docs/",
+        "/static/index.html", "/api/presets", "/api/assets/ref_audio",
+        "/api/sessions", "/api/apps", "/s/example",
+    ):
+        assert gw.get(path).status_code == 404, path
+
+
 def test_messages_sent_while_queued_are_forwarded_after_dispatch(gw: TestClient) -> None:
     """排队期间客户端连接也一直在读（否则 uvicorn 暂停读 socket、ping 得不到 pong）；提前发来的消息按序缓存转发。"""
 
@@ -343,13 +368,15 @@ def test_endpoint_only_accepts_audio_or_omni(gw: TestClient, query: str) -> None
 
 
 @pytest.mark.parametrize("mode", ["audio", "omni"])
-def test_url_mode_is_stamped_into_session_init(gw: TestClient, mode: str) -> None:
+def test_url_mode_reaches_worker_without_rewriting_the_frame(gw: TestClient, mode: str) -> None:
     with _FakeWorker("A") as a:
         _register(gw, "alpha", "wa", a.port)
         ws, cm = _open(gw, "alpha", mode=mode)
-        ws.send_json({"type": "session.init", "payload": {"protocol_version": "5"}})
+        payload = {"protocol_version": "5"}
+        ws.send_json({"type": "session.init", "payload": payload})
         created = _until(ws, "session.created")[-1]
-        assert created["input_mode"] == mode
+        assert created["transport_mode"] == mode
+        assert created["payload"] == payload
         ws.send_json({"type": "session.close"})
         _until(ws, "session.closed")
         cm.__exit__(None, None, None)

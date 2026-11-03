@@ -85,3 +85,20 @@ User authorizes new CPU appctl workload o5-test to expose current Playground. Sc
 - User requests the short prompt in9040;restore Chinese/English audio_duplex presets to `Streaming Omni Conversation.` (historical d068408b).
 - Align legacy desktop HTML fallback with these presets. Reference audio paths and inference options unchanged.
 - Validation scope: source review and deployment HTTP/preset readiness only;no automated tests or media/inference probes requested.
+
+## Candidate worktree · 2026-11-03
+
+- Base: `demo-adapter-fc` at `dd208705551e1ad0d7660ff8a263ea86f5b9a17f`
+- Branch: `gateway/thin-realtime-20261103`
+- Purpose: separate application/static serving from the realtime Gateway and retain only Worker scheduling plus transparent realtime forwarding.
+
+### Gateway transport implementation · 2026-11-03
+
+- Restored the `/e/{endpoint}/v1/realtime` and `/e/{endpoint}/v1/info` routes that were lost in the `dd208705` merge conflict resolution.
+- Unified chat, ordinary duplex, and FC duplex Gateway-to-Worker transport on `/v1/worker/realtime`.
+- Client and Worker protocol frames are now relayed without JSON field rewriting; mode/model/client identity remain query metadata.
+- Removed HTML, static asset, docs site, mobile shell, application APIs, session storage/recording, admin page, and control-panel routes from the Gateway.
+- Gateway startup no longer initializes the control plane. Worker registration, health, queueing, draining, force-close, watchdog and retained reconnect remain.
+- Gateway image no longer has mobile/docs Bun build stages.
+- Verification: `56 passed` across `test_gateway_endpoints.py`, `test_fc_api_v5_input_mode.py`, and `test_upstream_refresh_routing.py`.
+- Contract: `docs/gateway-thin-transport.md`.

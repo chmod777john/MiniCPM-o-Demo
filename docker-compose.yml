@@ -1,14 +1,14 @@
 # MiniCPM-o 多 worker 单 gateway 部署(docker compose)
 #
 # 架构:
-#   gateway        ×1   :8006   torch-free 控制面;/v1/realtime 入口 + 调度 + 录制
+#   gateway        ×1   :8006   torch-free API;/v1/realtime 入口 + Worker 调度
 #   worker-backend ×N   每个独占 1 张 GPU;容器内 backend(:22500)+ worker(:22400,纯转发)
 #
 # 拓扑要点:
 #   - 每个 worker-backend 显式绑定一张特定 GPU(device_ids),不能用 --scale(会抢同一张卡)。
 #   - 容器内 GPU 永远是 0(GPU_ID=0):reservation 决定它看到宿主机哪张卡,容器内就叫 cuda:0。
 #   - worker 启动后向 gateway 内部端口动态注册，gateway 不再持有静态 worker 列表。
-#   - worker-backend 挂模型(只读)、不挂 data(纯净);gateway 挂 data(录制持久化)、不要 GPU。
+#   - worker-backend 挂模型(只读)、不挂 data(纯净);gateway 不挂 data、不要 GPU。
 #   - 模型权重不进镜像,运行时挂载;路径由 MODEL_HOST_PATH 指定。
 #
 # 增减 GPU = 增删 worker-backend-N service；worker 会自动注册到 gateway。
@@ -112,7 +112,6 @@ services:
     expose:
       - "8007"
     volumes:
-      - ${DATA_HOST_PATH:-./data}:/app/data      # session 录制持久化到 host
       - ${CERTS_HOST_PATH:-./certs}:/app/certs:ro # TLS 证书从宿主机挂载(只读),不进镜像
     restart: unless-stopped
     logging:
