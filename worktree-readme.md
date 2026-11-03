@@ -85,3 +85,9 @@ User authorizes new CPU appctl workload o5-test to expose current Playground. Sc
 - User requests the short prompt in9040;restore Chinese/English audio_duplex presets to `Streaming Omni Conversation.` (historical d068408b).
 - Align legacy desktop HTML fallback with these presets. Reference audio paths and inference options unchanged.
 - Validation scope: source review and deployment HTTP/preset readiness only;no automated tests or media/inference probes requested.
+
+## Candidate worktree · 2026-11-03
+
+- Base: `demo-adapter-fc` at `dd208705551e1ad0d7660ff8a263ea86f5b9a17f`
+- Branch: `worker/unified-realtime-20261103`
+- Purpose: unify the Worker realtime endpoint and move turn-based/full-duplex mode selection inside the Worker, without changing the shared mainline.

@@ -5,16 +5,13 @@ backends.
 
 ## Current Shape
 
-The worker now exposes runtime-shaped internal endpoints for turn-based chat and
-duplex requests:
+The worker exposes one realtime endpoint for turn-based chat and duplex requests:
 
-- `/v1/worker/chat`
-- `/v1/worker/duplex`
+- `/v1/realtime`：Worker 根据 `session.init.payload.mode` / `input_mode` / query `mode` 内部选择 turn-based 或 full-duplex。
 
-Public pages and external clients should enter through the gateway, primarily
-`/ws/chat` for turn-based chat and `/v1/realtime` for duplex sessions.  The
-gateway handles queueing and translates public events into the worker runtime
-protocol.
+Public clients may enter through the Gateway at `/v1/realtime`. After Worker
+assignment, the Gateway forwards realtime frames without selecting by mode or
+translating the payload. The Worker resolves the session mode internally.
 
 Inside the worker, duplex sessions flow through:
 
@@ -37,7 +34,7 @@ is a compatibility-preserving boundary for future specialized runtimes.
 
 ### worker.py
 
-- Host worker-internal runtime WebSocket endpoints.
+- Host the unified Worker realtime WebSocket endpoint.
 - Parse worker runtime protocol messages.
 - Own worker process state and expose health/status endpoints.
 - Delegate inference lifecycle to runtime/backend boundaries.

@@ -205,14 +205,57 @@ async def health():
 
 
 
+_TURN_BASED_MODES = frozenset({"chat", "turn_based", "turn-based"})
+_REALTIME_ADMISSION_TIMEOUT_S = 30.0
+_REALTIME_ADMISSION_LOCK = asyncio.Lock()
+_FULL_DUPLEX_MODES = frozenset({"audio", "video", "omni", "duplex", "full_duplex", "full-duplex"})
+
+
+def _normalize_runtime_mode(value: Any, *, source: str) -> str:
+    """Map public mode spellings to the backend runtime's two native modes."""
+    mode = str(value or "").strip().lower()
+    if mode in _TURN_BASED_MODES:
+        return "turn_based"
+    if mode in _FULL_DUPLEX_MODES:
+        return "full_duplex"
+    raise RuntimeError(f"unsupported {source} mode: {value!r}")
+
+
+def _resolve_runtime_mode(first: Dict[str, Any], query_mode: Optional[str]) -> str:
+    """Resolve one Session's runtime mode entirely inside the Worker."""
+    if str(first.get("type") or "") != "session.init":
+        raise RuntimeError(
+            f"first message must be session.init, got: {first.get('type')!r}"
+        )
+    payload = _init_payload(first)
+    candidates = (
+        ("payload.mode", payload.get("mode")),
+        ("payload.input_mode", payload.get("input_mode")),
+        ("query mode", query_mode),
+    )
+    resolved = {
+        _normalize_runtime_mode(value, source=source)
+        for source, value in candidates
+        if value
+    }
+    if len(resolved) > 1:
+        raise RuntimeError(
+            "conflicting session modes: "
+            + ", ".join(f"{source}={value!r}" for source, value in candidates if value)
+        )
+    return next(iter(resolved), "full_duplex")
+
+
+def _runtime_status(mode: str) -> WorkerStatus:
+    return WorkerStatus.BUSY_CHAT if mode == "turn_based" else WorkerStatus.DUPLEX_ACTIVE
+
+
 async def _handle_remote_backend_runtime_ws(
     ws: WebSocket,
     *,
-    mode: str,
-    active_status: WorkerStatus,
-    idle_status: WorkerStatus,
+    query_mode: Optional[str],
 ) -> None:
-    """Bridge worker runtime WebSocket to backend_server.py."""
+    """Bridge the single Worker realtime endpoint to backend_server.py."""
 
     backend_url = _backend_server_url()
     if backend_url is None:
@@ -221,16 +264,46 @@ async def _handle_remote_backend_runtime_ws(
     if worker is None:
         await ws.close(code=1013, reason="Worker not ready")
         return
-    if not worker.state.is_idle:
-        await ws.close(code=1013, reason=f"Worker busy: {worker.state.status.value}")
-        return
+    # This Worker accepts one stateful realtime session at a time. Reserve the
+    # slot before the first frame arrives so concurrent connects cannot both
+    # observe IDLE while the accepted client is still choosing its mode.
+    await _REALTIME_ADMISSION_LOCK.acquire()
+    first: Dict[str, Any]
+    mode: str
+    try:
+        if not worker.state.is_idle:
+            await ws.close(code=1013, reason=f"Worker busy: {worker.state.status.value}")
+            return
+        await ws.accept()
+        try:
+            first_raw = await asyncio.wait_for(
+                ws.receive_text(), timeout=_REALTIME_ADMISSION_TIMEOUT_S
+            )
+            first = json.loads(first_raw)
+            if not isinstance(first, dict):
+                raise RuntimeError("first message must be a JSON object")
+            mode = _resolve_runtime_mode(first, query_mode)
+            worker.state.status = _runtime_status(mode)
+        except Exception as exc:
+            logger.error("Realtime session admission failed: %s", exc)
+            try:
+                await ws.send_json({
+                    "type": "session.closed",
+                    "session_id": None,
+                    "reason": "backend_error",
+                    "diagnostic": {"message": str(exc)},
+                })
+            except Exception:
+                pass
+            try:
+                await ws.close(code=1008, reason="invalid_session_init")
+            except Exception:
+                pass
+            return
+    finally:
+        _REALTIME_ADMISSION_LOCK.release()
 
-    await ws.accept()
-    worker.state.status = active_status
-    runtime = BackendRuntimeSession(
-        backend_base_url=backend_url,
-        mode=mode,
-    )
+    runtime: Optional[BackendRuntimeSession] = None
     backend_closed = False
 
     async def _send_runtime_event(event: Any) -> Dict[str, Any]:
@@ -239,27 +312,19 @@ async def _handle_remote_backend_runtime_ws(
         return payload
 
     try:
-        first = json.loads(await ws.receive_text())
-        first_type = str(first.get("type") or "")
-        pending_input: Optional[Dict[str, Any]] = None
+        runtime = BackendRuntimeSession(
+            backend_base_url=backend_url,
+            mode=mode,
+        )
 
-        if first_type == "session.init":
-            init_params = _init_payload(first)
-        elif first_type == "input.append":
-            init_params = {"mode": mode}
-            pending_input = _input_payload(first)
-        else:
-            raise RuntimeError(f"first message must initialize or push input, got: {first_type}")
-
-        init_params = dict(init_params)
-        init_params.setdefault("mode", mode)
+        init_params = dict(_init_payload(first))
+        # The Worker owns mode normalization. Backend Server only sees its two
+        # native modes, regardless of whether the client used chat/audio/video/omni.
+        init_params["mode"] = mode
         init_event = await _send_runtime_event(await runtime.init(init_params))
         if init_event.get("type") == "session.closed":
             backend_closed = True
             return
-
-        if pending_input is not None:
-            await runtime.push(pending_input)
 
         async def client_to_backend() -> None:
             nonlocal backend_closed
@@ -304,13 +369,11 @@ async def _handle_remote_backend_runtime_ws(
                     backend_closed = True
                     return
 
-        done, pending = await asyncio.wait(
-            [
-                asyncio.create_task(client_to_backend()),
-                asyncio.create_task(backend_to_client()),
-            ],
-            return_when=asyncio.FIRST_COMPLETED,
-        )
+        tasks = [
+            asyncio.create_task(client_to_backend()),
+            asyncio.create_task(backend_to_client()),
+        ]
+        done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
         for task in pending:
             task.cancel()
         for task in done:
@@ -323,19 +386,20 @@ async def _handle_remote_backend_runtime_ws(
         try:
             await ws.send_json({
                 "type": "session.closed",
-                "session_id": runtime.session_id,
+                "session_id": runtime.session_id if runtime is not None else None,
                 "reason": "backend_error",
                 "diagnostic": {"message": str(exc)},
             })
         except Exception:
             pass
     finally:
-        try:
-            if not backend_closed:
-                await runtime.unary("close", {"reason": "worker_disconnected"})
-        except Exception:
-            logger.exception("Remote backend runtime cleanup failed")
-        worker.state.status = idle_status
+        if runtime is not None:
+            try:
+                if not backend_closed:
+                    await runtime.unary("close", {"reason": "worker_disconnected"})
+            except Exception:
+                logger.exception("Remote backend runtime cleanup failed")
+        worker.state.status = WorkerStatus.IDLE
         worker.state.current_ticket_id = None
         try:
             await ws.close()
@@ -343,31 +407,12 @@ async def _handle_remote_backend_runtime_ws(
             pass
 
 
-@app.websocket("/v1/worker/chat")
-async def worker_chat_runtime_ws(ws: WebSocket):
-    """Worker-internal turn-based chat runtime protocol (backend-server only)."""
+@app.websocket("/v1/realtime")
+async def worker_realtime_runtime_ws(ws: WebSocket):
+    """Single realtime endpoint; Worker selects turn-based/duplex internally."""
     await _handle_remote_backend_runtime_ws(
         ws,
-        mode="turn_based",
-        active_status=WorkerStatus.BUSY_CHAT,
-        idle_status=WorkerStatus.IDLE,
-    )
-
-
-# ========== Duplex WebSocket ==========
-
-@app.websocket("/v1/worker/duplex")
-async def worker_duplex_runtime_ws(ws: WebSocket):
-    """Worker-internal duplex runtime protocol (backend-server only).
-
-    This endpoint is meant for gateway-worker communication and uses runtime
-    event payloads instead of page/demo-shaped result messages.
-    """
-    await _handle_remote_backend_runtime_ws(
-        ws,
-        mode="full_duplex",
-        active_status=WorkerStatus.DUPLEX_ACTIVE,
-        idle_status=WorkerStatus.IDLE,
+        query_mode=ws.query_params.get("mode"),
     )
 
 
