@@ -5,6 +5,8 @@
 # env 文件放仓库外（600 权限），可包含：
 #   API_GATEWAY_PORT         对外 HTTPS 端口（本机；再由 frpc 暴露到公网），默认 10029
 #   API_GATEWAY_INTERNAL_PORT  内部注册端口（只绑 127.0.0.1），默认 10050
+#   O5_SESSION_DATA_DIR        可选，Session 原始收发帧录制根目录；
+#                              例如 /user/weihongliang/o-sessions
 set -euo pipefail
 
 ENV_FILE="${1:?usage: $0 <env file>}"

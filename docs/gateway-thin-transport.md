@@ -48,6 +48,12 @@ The Gateway may emit its own scheduling frames before the Worker session starts:
 Everything produced by the Worker is forwarded verbatim. Application APIs,
 presets and reference-audio storage are outside this service. Optional raw Session recording remains a side effect and supports a configurable root via `O5_SESSION_DATA_DIR`, `--session-dir`, or `recording.dir`.
 
+```bash
+O5_SESSION_DATA_DIR=/user/weihongliang/o-sessions scripts/start_api_gateway.sh <env-file>
+```
+
+Each session writes to `<root>/<session_id>/`. The Gateway does not expose an HTTP API for reading these recordings.
+
 ## Worker lifecycle assumptions
 
 - A Worker accepts at most one active session at a time.
